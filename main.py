@@ -103,117 +103,129 @@ class BBSTerminalApp:
         self.members_listbox = tk.Listbox(members_frame, height=20, width=20)
         self.members_listbox.pack(fill=tk.BOTH, expand=True)
         
-        # Create the main UI frame on the LEFT using grid layout
+        # Create the main UI frame on the LEFT
         main_frame = ttk.Frame(container, name='main_frame')
         main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(0, weight=0)
-        main_frame.rowconfigure(1, weight=3)  # Paned container gets most space
-        main_frame.rowconfigure(2, weight=0)
         
-        # --- Row 0: Top frame (connection settings, username, password) ---
-        top_frame = ttk.Frame(main_frame)
-        top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        # 1.2.1️⃣ Connection settings
+        config_frame = ttk.LabelFrame(main_frame, text="Connection Settings")
+        config_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        # Connection settings example:
-        conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
-        conn_frame.pack(fill=tk.X, expand=True)
-        ttk.Label(conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
-        self.host_entry = ttk.Entry(conn_frame, textvariable=self.host, width=30)
+        ttk.Label(config_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
+        self.host_entry = ttk.Entry(config_frame, textvariable=self.host, width=30)
         self.host_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-        ttk.Label(conn_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
-        self.port_entry = ttk.Entry(conn_frame, textvariable=self.port, width=6)
+        self.create_context_menu(self.host_entry)
+        
+        ttk.Label(config_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
+        self.port_entry = ttk.Entry(config_frame, textvariable=self.port, width=6)
         self.port_entry.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        self.connect_button = ttk.Button(conn_frame, text="Connect", command=self.toggle_connection)
+        self.create_context_menu(self.port_entry)
+        
+        self.connect_button = ttk.Button(config_frame, text="Connect", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=4, padx=5, pady=5)
         
-        # Add the Favorites button
-        favorites_button = ttk.Button(conn_frame, text="Favorites", command=self.show_favorites_window)
+        # Favorites
+        favorites_button = ttk.Button(config_frame, text="Favorites", command=self.show_favorites_window)
         favorites_button.grid(row=0, column=5, padx=5, pady=5)
         
-        # Add the Settings button
-        settings_button = ttk.Button(conn_frame, text="Settings", command=self.show_settings_window)
-        settings_button.grid(row=0, column=6, padx=5, pady=5)
+        # MUD Mode
+        mud_mode_check = ttk.Checkbutton(config_frame, text="Mud Mode", variable=self.mud_mode)
+        mud_mode_check.grid(row=0, column=6, padx=5, pady=5)
         
-        # Add the Triggers button
-        triggers_button = ttk.Button(conn_frame, text="Triggers", command=self.show_triggers_window)
-        triggers_button.grid(row=0, column=7, padx=5, pady=5)
-        
-        # Add the Keep Alive checkbox
-        keep_alive_check = ttk.Checkbutton(conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
+        # Keep Alive checkbox
+        keep_alive_check = ttk.Checkbutton(config_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
         keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
         
-        # Add the Chatlog button
-        chatlog_button = ttk.Button(conn_frame, text="Chatlog", command=self.show_chatlog_window)
-        chatlog_button.grid(row=0, column=9, padx=5, pady=5)
+        # Add Triggers button
+        triggers_button = ttk.Button(config_frame, text="Triggers", command=self.show_triggers_window)
+        triggers_button.grid(row=0, column=9, padx=5, pady=5)
         
-        # Username frame
-        username_frame = ttk.LabelFrame(top_frame, text="Username")
-        username_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
+        # Add Chatlog button
+        chatlog_button = ttk.Button(config_frame, text="Chatlog", command=self.show_chatlog_window)
+        chatlog_button.grid(row=0, column=10, padx=5, pady=5)
+        
+        # 1.2.2️⃣ Username Frame
+        username_frame = ttk.LabelFrame(main_frame, text="Username")
+        username_frame.pack(fill=tk.X, padx=5, pady=5)
+        
         self.username_entry = ttk.Entry(username_frame, textvariable=self.username, width=30)
         self.username_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.username_entry)
-        self.remember_username_check = ttk.Checkbutton(username_frame, text="Remember", variable=self.remember_username)
+        
+        self.remember_username_check = ttk.Checkbutton(
+            username_frame, text="Remember", variable=self.remember_username)
         self.remember_username_check.pack(side=tk.LEFT, padx=5, pady=5)
+        
         self.send_username_button = ttk.Button(username_frame, text="Send", command=self.send_username)
         self.send_username_button.pack(side=tk.LEFT, padx=5, pady=5)
         
-        # Add Teleconference Action buttons
-        wave_button = ttk.Button(username_frame, text="Wave", command=lambda: self.send_action("wave"))
-        wave_button.pack(side=tk.LEFT, padx=5, pady=5)
-        smile_button = ttk.Button(username_frame, text="Smile", command=lambda: self.send_action("smile"))
-        smile_button.pack(side=tk.LEFT, padx=5, pady=5)
-        dance_button = ttk.Button(username_frame, text="Dance", command=lambda: self.send_action("dance"))
-        dance_button.pack(side=tk.LEFT, padx=5, pady=5)
-        bow_button = ttk.Button(username_frame, text="Bow", command=lambda: self.send_action("bow"))
-        bow_button.pack(side=tk.LEFT, padx=5, pady=5)
+        # 1.2.3️⃣ Password Frame
+        password_frame = ttk.LabelFrame(main_frame, text="Password")
+        password_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        # Password frame
-        password_frame = ttk.LabelFrame(top_frame, text="Password")
-        password_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
         self.password_entry = ttk.Entry(password_frame, textvariable=self.password, width=30, show="*")
         self.password_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.password_entry)
-        self.remember_password_check = ttk.Checkbutton(password_frame, text="Remember", variable=self.remember_password)
+        
+        self.remember_password_check = ttk.Checkbutton(
+            password_frame, text="Remember", variable=self.remember_password)
         self.remember_password_check.pack(side=tk.LEFT, padx=5, pady=5)
+        
         self.send_password_button = ttk.Button(password_frame, text="Send", command=self.send_password)
         self.send_password_button.pack(side=tk.LEFT, padx=5, pady=5)
         
-        # --- Row 1: Paned container for BBS Output and Messages to You ---
-        paned_container = ttk.Frame(main_frame)
-        paned_container.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-        paned_container.columnconfigure(0, weight=1)
-        paned_container.rowconfigure(0, weight=1)
+        # 1.2.4️⃣ Terminal Output
+        terminal_frame = ttk.LabelFrame(main_frame, text="BBS Output")
+        terminal_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        paned = ttk.PanedWindow(paned_container, orient=tk.VERTICAL)
-        paned.pack(fill=tk.BOTH, expand=True)
-        
-        # Top pane: BBS Output
-        output_frame = ttk.LabelFrame(paned, text="BBS Output")
-        paned.add(output_frame, weight=3)
-        self.terminal_display = tk.Text(output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black")
+        self.terminal_display = tk.Text(
+            terminal_frame,
+            wrap=tk.WORD,
+            height=15,
+            state=tk.DISABLED,
+            bg="black"
+        )
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll_bar = ttk.Scrollbar(output_frame, command=self.terminal_display.yview)
+        
+        scroll_bar = ttk.Scrollbar(terminal_frame, command=self.terminal_display.yview)
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
         self.terminal_display.configure(yscrollcommand=scroll_bar.set)
+        
         self.define_ansi_tags()
+
+        # 1.2.5️⃣ Messages to You Frame
+        directed_msg_frame = ttk.LabelFrame(main_frame, text="Messages to You")
+        directed_msg_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Bottom pane: Messages to You
-        messages_frame = ttk.LabelFrame(paned, text="Messages to You")
-        paned.add(messages_frame, weight=1)
-        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow")
-        self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
+        self.directed_msg_display = tk.Text(
+            directed_msg_frame,
+            wrap=tk.WORD,
+            height=10,
+            state=tk.DISABLED,
+            bg="lightyellow"
+        )
+        self.directed_msg_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # --- Row 2: Input frame for sending messages ---
+        directed_msg_scroll_bar = ttk.Scrollbar(directed_msg_frame, command=self.directed_msg_display.yview)
+        directed_msg_scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.directed_msg_display.configure(yscrollcommand=directed_msg_scroll_bar.set)
+
+        # 1.2.6️⃣ Input Frame
         input_frame = ttk.LabelFrame(main_frame, text="Send Message")
-        input_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
+        input_frame.pack(fill=tk.X, padx=5, pady=5)
+        
         self.input_var = tk.StringVar()
         self.input_box = ttk.Entry(input_frame, textvariable=self.input_var, width=80)
         self.input_box.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
         self.input_box.bind("<Return>", self.send_message)
         self.create_context_menu(self.input_box)
+        
         self.send_button = ttk.Button(input_frame, text="Send", command=self.send_message)
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # 1.2.7️⃣ Settings & Font
+        settings_button = ttk.Button(config_frame, text="Settings", command=self.show_settings_window)
+        settings_button.grid(row=0, column=7, padx=5, pady=5)
         
         self.update_display_font()
 
@@ -408,43 +420,40 @@ class BBSTerminalApp:
             self.master.after(100, self.process_incoming_messages)
 
     def process_data_chunk(self, data):
-        """Accumulate data, split on newlines, and process each complete line."""
-        # Normalize newlines
+        """Accumulate data, split on newlines, display in terminal."""
         data = data.replace('\r\n', '\n').replace('\r', '\n')
         self.partial_line += data
         lines = self.partial_line.split("\n")
         
-        # Precompile an ANSI escape code regex
-        ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
-        
         for line in lines[:-1]:
-            # Remove ANSI codes for filtering purposes only.
-            clean_line = ansi_regex.sub('', line).strip()
+            clean_line = line.strip()
             
             # --- Filter header lines ---
+            # If we're currently collecting header lines, add the line to the buffer and skip displaying it.
             if self.collecting_users:
                 self.user_list_buffer.append(line)
                 if "are here with you." in clean_line:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                continue  # Skip displaying header lines
+                continue  # Skip displaying this line
             
+            # If the line starts the header block, begin collecting and skip displaying.
             if clean_line.startswith("You are in"):
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                continue  # Skip displaying header line
+                continue  # Skip displaying this line
             
             # Skip the line immediately following the header block if it starts with "Just press"
             if clean_line.startswith("Just press") and not self.collecting_users:
-                continue
+                continue  # Skip displaying this line
             
             # --- Process directed messages ---
             directed_msg_match = re.match(r'^From\s+(\S+)\s+\((to you|whispered)\):\s*(.+)$', clean_line, re.IGNORECASE)
             if directed_msg_match:
                 sender, _, message = directed_msg_match.groups()
                 self.append_directed_message(f"From {sender}: {message}\n")
-                continue  # Skip displaying these in the main terminal
+                continue  # Skip displaying this line
             
             # --- Process and display non-header lines ---
             self.append_terminal_text(line + "\n", "normal")
@@ -452,7 +461,7 @@ class BBSTerminalApp:
             self.parse_and_save_chatlog_message(line)
             if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
                 self.detect_logon_prompt(line)
-        
+
         self.partial_line = lines[-1]
 
     def detect_logon_prompt(self, line):
@@ -546,14 +555,6 @@ class BBSTerminalApp:
         print(f"Sending custom message: {message}")
         asyncio.run_coroutine_threadsafe(self._send_message(message + "\r\n"), self.loop)
 
-    def send_action(self, action):
-        """Send an action to the BBS, optionally appending the highlighted username."""
-        selected_indices = self.members_listbox.curselection()
-        if selected_indices:
-            username = self.members_listbox.get(selected_indices[0])
-            action = f"{action} {username}"
-        asyncio.run_coroutine_threadsafe(self._send_message(action + "\r\n"), self.loop)
-
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
         """Send an <ENTER> keystroke every 10 seconds."""
@@ -561,7 +562,7 @@ class BBSTerminalApp:
             if self.connected and self.writer:
                 self.writer.write("\r\n")
                 await self.writer.drain()
-            await asyncio.sleep(60)
+            await asyncio.sleep(10)
 
     def start_keep_alive(self):
         """Start the keep-alive coroutine if enabled."""

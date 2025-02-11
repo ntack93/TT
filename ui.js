@@ -105,16 +105,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize the members list
     updateMembersDisplay();
-
-    // Ensure input field and Send button are always visible
-    const inputContainer = document.getElementById('inputContainer');
-    const sendButton = document.getElementById('sendButton');
-    window.addEventListener('resize', function() {
-        inputContainer.style.bottom = '0';
-        sendButton.style.bottom = '0';
-    });
-    inputContainer.style.bottom = '0';
-    sendButton.style.bottom = '0';
 });
 
 // Save settings when the "Save" button is clicked in the settings window
