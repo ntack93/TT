@@ -91,6 +91,12 @@ class BBSTerminalApp:
 
         self.preview_window = None  # Initialize the preview_window attribute
 
+        # Variables to track visibility of sections
+        self.show_connection_settings = tk.BooleanVar(value=True)
+        self.show_username = tk.BooleanVar(value=True)
+        self.show_password = tk.BooleanVar(value=True)
+        self.show_all = tk.BooleanVar(value=True)
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
@@ -124,68 +130,88 @@ class BBSTerminalApp:
         top_frame = ttk.Frame(main_frame)
         top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         
+        # Master checkbox to show/hide all sections
+        master_check = ttk.Checkbutton(top_frame, text="Show All", variable=self.show_all, command=self.toggle_all_sections)
+        master_check.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+
         # Connection settings example:
-        conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
-        conn_frame.pack(fill=tk.X, expand=True)
-        ttk.Label(conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
-        self.host_entry = ttk.Entry(conn_frame, textvariable=self.host, width=30)
+        self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
+        self.conn_frame.grid(row=1, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        ttk.Label(self.conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
+        self.host_entry = ttk.Entry(self.conn_frame, textvariable=self.host, width=30)
         self.host_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-        ttk.Label(conn_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
-        self.port_entry = ttk.Entry(conn_frame, textvariable=self.port, width=6)
+        ttk.Label(self.conn_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
+        self.port_entry = ttk.Entry(self.conn_frame, textvariable=self.port, width=6)
         self.port_entry.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        self.connect_button = ttk.Button(conn_frame, text="Connect", command=self.toggle_connection)
+        self.connect_button = ttk.Button(self.conn_frame, text="Connect", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=4, padx=5, pady=5)
         
         # Add the Favorites button
-        favorites_button = ttk.Button(conn_frame, text="Favorites", command=self.show_favorites_window)
+        favorites_button = ttk.Button(self.conn_frame, text="Favorites", command=self.show_favorites_window)
         favorites_button.grid(row=0, column=5, padx=5, pady=5)
         
         # Add the Settings button
-        settings_button = ttk.Button(conn_frame, text="Settings", command=self.show_settings_window)
+        settings_button = ttk.Button(self.conn_frame, text="Settings", command=self.show_settings_window)
         settings_button.grid(row=0, column=6, padx=5, pady=5)
         
         # Add the Triggers button
-        triggers_button = ttk.Button(conn_frame, text="Triggers", command=self.show_triggers_window)
+        triggers_button = ttk.Button(self.conn_frame, text="Triggers", command=self.show_triggers_window)
         triggers_button.grid(row=0, column=7, padx=5, pady=5)
         
         # Add the Keep Alive checkbox
-        keep_alive_check = ttk.Checkbutton(conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
+        keep_alive_check = ttk.Checkbutton(self.conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
         keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
         
         # Add the Chatlog button
-        chatlog_button = ttk.Button(conn_frame, text="Chatlog", command=self.show_chatlog_window)
+        chatlog_button = ttk.Button(self.conn_frame, text="Chatlog", command=self.show_chatlog_window)
         chatlog_button.grid(row=0, column=9, padx=5, pady=5)
+
+        # Checkbox frame for visibility toggles
+        checkbox_frame = ttk.Frame(top_frame)
+        checkbox_frame.grid(row=2, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+
+        # Checkbox to show/hide Connection Settings
+        conn_check = ttk.Checkbutton(checkbox_frame, text="Show Connection Settings", variable=self.show_connection_settings, command=self.toggle_connection_settings)
+        conn_check.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        
+        # Checkbox to show/hide Username
+        username_check = ttk.Checkbutton(checkbox_frame, text="Show Username", variable=self.show_username, command=self.toggle_username)
+        username_check.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        # Checkbox to show/hide Password
+        password_check = ttk.Checkbutton(checkbox_frame, text="Show Password", variable=self.show_password, command=self.toggle_password)
+        password_check.grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
         
         # Username frame
-        username_frame = ttk.LabelFrame(top_frame, text="Username")
-        username_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
-        self.username_entry = ttk.Entry(username_frame, textvariable=self.username, width=30)
+        self.username_frame = ttk.LabelFrame(top_frame, text="Username")
+        self.username_frame.grid(row=3, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        self.username_entry = ttk.Entry(self.username_frame, textvariable=self.username, width=30)
         self.username_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.username_entry)
-        self.remember_username_check = ttk.Checkbutton(username_frame, text="Remember", variable=self.remember_username)
+        self.remember_username_check = ttk.Checkbutton(self.username_frame, text="Remember", variable=self.remember_username)
         self.remember_username_check.pack(side=tk.LEFT, padx=5, pady=5)
-        self.send_username_button = ttk.Button(username_frame, text="Send", command=self.send_username)
+        self.send_username_button = ttk.Button(self.username_frame, text="Send", command=self.send_username)
         self.send_username_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         # Add Teleconference Action buttons
-        wave_button = ttk.Button(username_frame, text="Wave", command=lambda: self.send_action("wave"))
+        wave_button = ttk.Button(self.username_frame, text="Wave", command=lambda: self.send_action("wave"))
         wave_button.pack(side=tk.LEFT, padx=5, pady=5)
-        smile_button = ttk.Button(username_frame, text="Smile", command=lambda: self.send_action("smile"))
+        smile_button = ttk.Button(self.username_frame, text="Smile", command=lambda: self.send_action("smile"))
         smile_button.pack(side=tk.LEFT, padx=5, pady=5)
-        dance_button = ttk.Button(username_frame, text="Dance", command=lambda: self.send_action("dance"))
+        dance_button = ttk.Button(self.username_frame, text="Dance", command=lambda: self.send_action("dance"))
         dance_button.pack(side=tk.LEFT, padx=5, pady=5)
-        bow_button = ttk.Button(username_frame, text="Bow", command=lambda: self.send_action("bow"))
+        bow_button = ttk.Button(self.username_frame, text="Bow", command=lambda: self.send_action("bow"))
         bow_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         # Password frame
-        password_frame = ttk.LabelFrame(top_frame, text="Password")
-        password_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
-        self.password_entry = ttk.Entry(password_frame, textvariable=self.password, width=30, show="*")
+        self.password_frame = ttk.LabelFrame(top_frame, text="Password")
+        self.password_frame.grid(row=4, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        self.password_entry = ttk.Entry(self.password_frame, textvariable=self.password, width=30, show="*")
         self.password_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.password_entry)
-        self.remember_password_check = ttk.Checkbutton(password_frame, text="Remember", variable=self.remember_password)
+        self.remember_password_check = ttk.Checkbutton(self.password_frame, text="Remember", variable=self.remember_password)
         self.remember_password_check.pack(side=tk.LEFT, padx=5, pady=5)
-        self.send_password_button = ttk.Button(password_frame, text="Send", command=self.send_password)
+        self.send_password_button = ttk.Button(self.password_frame, text="Send", command=self.send_password)
         self.send_password_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         # --- Row 1: Paned container for BBS Output and Messages to You ---
@@ -194,16 +220,16 @@ class BBSTerminalApp:
         paned_container.columnconfigure(0, weight=1)
         paned_container.rowconfigure(0, weight=1)
         
-        paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, sashwidth=10, sashrelief=tk.RAISED)
-        paned.pack(fill=tk.BOTH, expand=True)
+        self.paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, sashwidth=10, sashrelief=tk.RAISED)
+        self.paned.pack(fill=tk.BOTH, expand=True)
         
         # Top pane: BBS Output
-        output_frame = ttk.LabelFrame(paned, text="BBS Output")
-        paned.add(output_frame)
-        paned.paneconfig(output_frame, minsize=200)  # Set minimum size for the top pane
-        self.terminal_display = tk.Text(output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
+        self.output_frame = ttk.LabelFrame(self.paned, text="BBS Output")
+        self.paned.add(self.output_frame)
+        self.paned.paneconfig(self.output_frame, minsize=200)  # Set minimum size for the top pane
+        self.terminal_display = tk.Text(self.output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll_bar = ttk.Scrollbar(output_frame, command=self.terminal_display.yview)
+        scroll_bar = ttk.Scrollbar(self.output_frame, command=self.terminal_display.yview)
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
         self.terminal_display.configure(yscrollcommand=scroll_bar.set)
         self.define_ansi_tags()
@@ -213,9 +239,9 @@ class BBSTerminalApp:
         self.terminal_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
         # Bottom pane: Messages to You
-        messages_frame = ttk.LabelFrame(paned, text="Messages to You")
-        paned.add(messages_frame)
-        paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
+        messages_frame = ttk.LabelFrame(self.paned, text="Messages to You")
+        self.paned.add(messages_frame)
+        self.paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
         self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10))
         self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
         
@@ -231,6 +257,51 @@ class BBSTerminalApp:
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         self.update_display_font()
+
+    def toggle_all_sections(self):
+        """Toggle visibility of all sections based on the master checkbox."""
+        show = self.show_all.get()
+        self.show_connection_settings.set(show)
+        self.show_username.set(show)
+        self.show_password.set(show)
+        self.toggle_connection_settings()
+        self.toggle_username()
+        self.toggle_password()
+
+    def toggle_connection_settings(self):
+        """Toggle visibility of the Connection Settings section."""
+        if self.show_connection_settings.get():
+            self.conn_frame.grid()
+        else:
+            self.conn_frame.grid_remove()
+        self.update_paned_size()
+
+    def toggle_username(self):
+        """Toggle visibility of the Username section."""
+        if self.show_username.get():
+            self.username_frame.grid()
+        else:
+            self.username_frame.grid_remove()
+        self.update_paned_size()
+
+    def toggle_password(self):
+        """Toggle visibility of the Password section."""
+        if self.show_password.get():
+            self.password_frame.grid()
+        else:
+            self.password_frame.grid_remove()
+        self.update_paned_size()
+
+    def update_paned_size(self):
+        """Update the size of the paned window based on the visibility of sections."""
+        total_height = 200  # Base height for the BBS Output pane
+        if not self.show_connection_settings.get():
+            total_height += 50
+        if not self.show_username.get():
+            total_height += 50
+        if not self.show_password.get():
+            total_height += 50
+        self.paned.paneconfig(self.output_frame, minsize=total_height)
 
     def create_context_menu(self, widget):
         """Create a right-click context menu for the given widget."""
