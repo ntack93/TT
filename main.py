@@ -86,6 +86,9 @@ class BBSTerminalApp:
         self.user_list_buffer = []
         self.collecting_users = False
 
+        self.cols = 136  # Set the number of columns
+        self.rows = 50   # Set the number of rows
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
@@ -189,13 +192,14 @@ class BBSTerminalApp:
         paned_container.columnconfigure(0, weight=1)
         paned_container.rowconfigure(0, weight=1)
         
-        paned = ttk.PanedWindow(paned_container, orient=tk.VERTICAL)
+        paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, sashwidth=10, sashrelief=tk.RAISED)
         paned.pack(fill=tk.BOTH, expand=True)
         
         # Top pane: BBS Output
         output_frame = ttk.LabelFrame(paned, text="BBS Output")
-        paned.add(output_frame, weight=3)
-        self.terminal_display = tk.Text(output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black")
+        paned.add(output_frame)
+        paned.paneconfig(output_frame, minsize=200)  # Set minimum size for the top pane
+        self.terminal_display = tk.Text(output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_bar = ttk.Scrollbar(output_frame, command=self.terminal_display.yview)
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -208,8 +212,9 @@ class BBSTerminalApp:
         
         # Bottom pane: Messages to You
         messages_frame = ttk.LabelFrame(paned, text="Messages to You")
-        paned.add(messages_frame, weight=1)
-        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow")
+        paned.add(messages_frame)
+        paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
+        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10))
         self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
         
         # --- Row 2: Input frame for sending messages ---
@@ -281,6 +286,7 @@ class BBSTerminalApp:
         """Update the Text widget's font."""
         new_font = (self.font_name.get(), self.font_size.get())
         self.terminal_display.configure(font=new_font)
+        self.directed_msg_display.configure(font=new_font)
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
@@ -316,7 +322,7 @@ class BBSTerminalApp:
     def toggle_connection(self):
         """Connect or disconnect from the BBS."""
         if self.connected:
-            asyncio.run_coroutine_threadsafe(self.disconnect_from_bbs(), self.loop).result()
+            self.send_custom_message('=x')
         else:
             self.start_connection()
 
@@ -342,8 +348,9 @@ class BBSTerminalApp:
                 host=host,
                 port=port,
                 term=self.terminal_mode.get().lower(),
-                encoding='cp437',
-                cols=132
+                encoding='cp437',  # Use 'latin1' if your BBS uses it
+                cols=self.cols,    # Use the configured number of columns
+                rows=self.rows     # Use the configured number of rows
             )
         except Exception as e:
             self.msg_queue.put_nowait(f"Connection failed: {e}\n")
@@ -436,16 +443,16 @@ class BBSTerminalApp:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                continue  # Skip displaying header lines
+                # continue  # Skip displaying header lines
             
             if clean_line.startswith("You are in"):
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                continue  # Skip displaying header line
+                # continue  # Skip displaying header line
             
             # Skip the line immediately following the header block if it starts with "Just press"
-            if clean_line.startswith("Just press") and not self.collecting_users:
-                continue
+            # if clean_line.startswith("Just press") and not self.collecting_users:
+            #     continue
             
             # --- Process directed messages ---
             directed_msg_match = re.match(r'^From\s+(\S+)\s+\((to you|whispered)\):\s*(.+)$', clean_line, re.IGNORECASE)
@@ -796,11 +803,90 @@ class BBSTerminalApp:
         if not end_index:
             end_index = self.terminal_display.index("end")
         url = self.terminal_display.get(start_index, end_index).strip()
-        self.show_preview(event, url)
+        self.show_thumbnail(url, event)
+
+    def show_thumbnail(self, url, event):
+        """Display a thumbnail preview near the mouse pointer."""
+        if self.preview_window is not None:
+            self.preview_window.destroy()
+
+        self.preview_window = tk.Toplevel(self.master)
+        self.preview_window.overrideredirect(True)
+        self.preview_window.attributes("-topmost", True)
+
+        # Position the preview window near the mouse pointer
+        x = self.master.winfo_pointerx() + 10
+        y = self.master.winfo_pointery() + 10
+        self.preview_window.geometry(f"+{x}+{y}")
+
+        label = tk.Label(self.preview_window, text="Loading preview...", background="white")
+        label.pack()
+
+        # Fetch and display the thumbnail in a separate thread
+        threading.Thread(target=self._fetch_and_display_thumbnail, args=(url, label), daemon=True).start()
+
+    def _fetch_and_display_thumbnail(self, url, label):
+        """Fetch and display the thumbnail. Handle GIFs and static images."""
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "")
+
+            # Check if the URL is a GIF or another image type
+            if "image" in content_type:
+                image_data = BytesIO(response.content)
+
+                # Process GIF
+                if "gif" in content_type or url.endswith(".gif"):
+                    gif = Image.open(image_data)
+                    frames = []
+                    try:
+                        while True:
+                            frame = gif.copy()
+                            frame.thumbnail((200, 150))  # Resize
+                            frames.append(ImageTk.PhotoImage(frame))
+                            gif.seek(len(frames))  # Move to next frame
+                    except EOFError:
+                        pass  # End of GIF frames
+
+                    if frames:
+                        self._display_animated_gif(frames, label)
+                    return
+
+                # Process static images
+                image = Image.open(image_data)
+                image.thumbnail((200, 150))
+                photo = ImageTk.PhotoImage(image)
+
+                def update_label():
+                    if self.preview_window and label.winfo_exists():
+                        label.config(image=photo, text="")
+                        label.image = photo  # Keep reference to avoid garbage collection
+                self.master.after(0, update_label)
+
+        except Exception as e:
+            print(f"DEBUG: Exception in _fetch_and_display_thumbnail: {e}")
+            def update_label_error():
+                if self.preview_window and label.winfo_exists():
+                    label.config(text="Preview not available")
+            self.master.after(0, update_label_error)
+
+    def _display_animated_gif(self, frames, label):
+        """Display animated GIF in the label."""
+        def animate(index):
+            if self.preview_window and label.winfo_exists():
+                label.config(image=frames[index])
+                index = (index + 1) % len(frames)
+                label.image = frames[index]  # Keep reference
+                label.after(100, animate, index)  # Adjust speed as needed
+
+        self.master.after(0, animate, 0)
 
     def hide_thumbnail_preview(self, event):
         """Hide the thumbnail preview."""
-        self.hide_preview(event)
+        if self.preview_window:
+            self.preview_window.destroy()
+            self.preview_window = None
 
     def get_thumbnail(self, url):
         """Attempt to load a thumbnail image from an image URL.
