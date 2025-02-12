@@ -115,6 +115,17 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     inputContainer.style.bottom = '0';
     sendButton.style.bottom = '0';
+
+    // Add event listener for hyperlink hover to show thumbnail preview
+    document.querySelectorAll('.hyperlink').forEach(link => {
+        link.addEventListener('mouseenter', function (event) {
+            const url = event.target.href;
+            showThumbnailPreview(url, event);
+        });
+        link.addEventListener('mouseleave', function (event) {
+            hideThumbnailPreview();
+        });
+    });
 });
 
 // Save settings when the "Save" button is clicked in the settings window
@@ -513,3 +524,45 @@ function extractUsernamesFromLines(lines) {
 
 // Call simulateChatroomData to test the functionality
 simulateChatroomData();
+
+function showThumbnailPreview(url, event) {
+    const previewWindow = document.createElement('div');
+    previewWindow.className = 'thumbnail-preview';
+    previewWindow.style.position = 'absolute';
+    previewWindow.style.top = `${event.clientY + 10}px`;
+    previewWindow.style.left = `${event.clientX + 10}px`;
+    previewWindow.style.backgroundColor = 'white';
+    previewWindow.style.border = '1px solid #ccc';
+    previewWindow.style.padding = '10px';
+    previewWindow.style.boxShadow = '0 0 10px rgba(0, 0, 0, 0.1)';
+    previewWindow.textContent = 'Loading preview...';
+
+    document.body.appendChild(previewWindow);
+
+    fetch(url)
+        .then(response => response.blob())
+        .then(blob => {
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(blob);
+            img.style.maxWidth = '200px';
+            img.style.maxHeight = '150px';
+            previewWindow.textContent = '';
+            previewWindow.appendChild(img);
+        })
+        .catch(error => {
+            console.error('Error fetching thumbnail:', error);
+            previewWindow.textContent = 'Preview not available';
+        });
+
+    document.addEventListener('mousemove', function movePreview(event) {
+        previewWindow.style.top = `${event.clientY + 10}px`;
+        previewWindow.style.left = `${event.clientX + 10}px`;
+    }, { once: true });
+}
+
+function hideThumbnailPreview() {
+    const previewWindow = document.querySelector('.thumbnail-preview');
+    if (previewWindow) {
+        previewWindow.remove();
+    }
+}

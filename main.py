@@ -89,6 +89,8 @@ class BBSTerminalApp:
         self.cols = 136  # Set the number of columns
         self.rows = 50   # Set the number of rows
 
+        self.preview_window = None  # Initialize the preview_window attribute
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
