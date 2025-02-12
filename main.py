@@ -134,9 +134,19 @@ class BBSTerminalApp:
         master_check = ttk.Checkbutton(top_frame, text="Show All", variable=self.show_all, command=self.toggle_all_sections)
         master_check.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
 
+        # Add Teleconference Action buttons
+        wave_button = ttk.Button(top_frame, text="Wave", command=lambda: self.send_action("wave"))
+        wave_button.grid(row=0, column=1, padx=5, pady=5)
+        smile_button = ttk.Button(top_frame, text="Smile", command=lambda: self.send_action("smile"))
+        smile_button.grid(row=0, column=2, padx=5, pady=5)
+        dance_button = ttk.Button(top_frame, text="Dance", command=lambda: self.send_action("dance"))
+        dance_button.grid(row=0, column=3, padx=5, pady=5)
+        bow_button = ttk.Button(top_frame, text="Bow", command=lambda: self.send_action("bow"))
+        bow_button.grid(row=0, column=4, padx=5, pady=5)
+
         # Connection settings example:
         self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
-        self.conn_frame.grid(row=1, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        self.conn_frame.grid(row=1, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
         ttk.Label(self.conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
         self.host_entry = ttk.Entry(self.conn_frame, textvariable=self.host, width=30)
         self.host_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
@@ -168,7 +178,7 @@ class BBSTerminalApp:
 
         # Checkbox frame for visibility toggles
         checkbox_frame = ttk.Frame(top_frame)
-        checkbox_frame.grid(row=2, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        checkbox_frame.grid(row=2, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
 
         # Checkbox to show/hide Connection Settings
         conn_check = ttk.Checkbutton(checkbox_frame, text="Show Connection Settings", variable=self.show_connection_settings, command=self.toggle_connection_settings)
@@ -184,7 +194,7 @@ class BBSTerminalApp:
         
         # Username frame
         self.username_frame = ttk.LabelFrame(top_frame, text="Username")
-        self.username_frame.grid(row=3, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        self.username_frame.grid(row=3, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
         self.username_entry = ttk.Entry(self.username_frame, textvariable=self.username, width=30)
         self.username_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.username_entry)
@@ -193,23 +203,9 @@ class BBSTerminalApp:
         self.send_username_button = ttk.Button(self.username_frame, text="Send", command=self.send_username)
         self.send_username_button.pack(side=tk.LEFT, padx=5, pady=5)
         
-        # Action buttons frame
-        action_buttons_frame = ttk.Frame(main_frame)
-        action_buttons_frame.grid(row=0, column=1, sticky="ne", padx=5, pady=5)
-
-        # Add Teleconference Action buttons
-        wave_button = ttk.Button(action_buttons_frame, text="Wave", command=lambda: self.send_action("wave"))
-        wave_button.pack(side=tk.TOP, padx=5, pady=5)
-        smile_button = ttk.Button(action_buttons_frame, text="Smile", command=lambda: self.send_action("smile"))
-        smile_button.pack(side=tk.TOP, padx=5, pady=5)
-        dance_button = ttk.Button(action_buttons_frame, text="Dance", command=lambda: self.send_action("dance"))
-        dance_button.pack(side=tk.TOP, padx=5, pady=5)
-        bow_button = ttk.Button(action_buttons_frame, text="Bow", command=lambda: self.send_action("bow"))
-        bow_button.pack(side=tk.TOP, padx=5, pady=5)
-        
         # Password frame
         self.password_frame = ttk.LabelFrame(top_frame, text="Password")
-        self.password_frame.grid(row=4, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        self.password_frame.grid(row=4, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
         self.password_entry = ttk.Entry(self.password_frame, textvariable=self.password, width=30, show="*")
         self.password_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.password_entry)
