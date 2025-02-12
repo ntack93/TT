@@ -8,120 +8,10 @@ import queue
 import re
 import json
 import os
-import webbrowser
-from PIL import Image, ImageTk  # Pillow for image handling
-import requests
-from io import BytesIO
-import urllib.parse
 
 ###############################################################################
 #                         BBS Telnet App (No Chatbot)
 ###############################################################################
-
-class HyperlinkManager:
-    def __init__(self, text):
-        self.text = text
-        # Configure the default hyperlink appearance
-        self.text.tag_configure("hyperlink", foreground="blue", underline=1)
-        self.text.tag_bind("hyperlink", "<Enter>", lambda e: self.text.config(cursor="hand2"))
-        self.text.tag_bind("hyperlink", "<Leave>", lambda e: self.text.config(cursor=""))
-        self.text.tag_bind("hyperlink", "<Button-1>", self._click)
-        self.links = {}
-        self.preview_window = None  # For the thumbnail preview
-
-    def add(self, action, url):
-        """Return a tuple of tags to apply for a hyperlink.
-           'action' is a function to call when the hyperlink is clicked."""
-        tag = f"hyperlink-{len(self.links)}"
-        self.links[tag] = (action, url)
-        # Bind additional hover events on this unique tag:
-        self.text.tag_bind(tag, "<Enter>", self._on_enter)
-        self.text.tag_bind(tag, "<Leave>", self._on_leave)
-        return ("hyperlink", tag)
-
-    def _click(self, event):
-        # Find the hyperlink tag that was clicked and call its action
-        for tag in self.text.tag_names("current"):
-            if tag.startswith("hyperlink-"):
-                action, url = self.links[tag]
-                action(url)
-                return
-
-    def _on_enter(self, event):
-        self.text.config(cursor="hand2")
-        # Identify which hyperlink tag triggered this event:
-        for tag in self.text.tag_names("current"):
-            if tag.startswith("hyperlink-"):
-                _, url = self.links[tag]
-                self.show_thumbnail(url, event)
-                break
-
-    def _on_leave(self, event):
-        self.text.config(cursor="")
-        self.hide_thumbnail()
-
-    def show_thumbnail(self, url, event):
-        """Display a thumbnail preview near the mouse pointer."""
-        # Remove any existing preview window
-        if self.preview_window is not None:
-            self.preview_window.destroy()
-
-        self.preview_window = tk.Toplevel(self.text)
-        self.preview_window.overrideredirect(True)  # No window decorations
-        self.preview_window.attributes("-topmost", True)
-
-        # Position the preview window near the mouse pointer
-        x = self.text.winfo_pointerx() + 10
-        y = self.text.winfo_pointery() + 10
-        self.preview_window.geometry(f"+{x}+{y}")
-
-        # Display a temporary label
-        label = tk.Label(self.preview_window, text="Loading preview...", background="white")
-        label.pack()
-
-        # Fetch and display the thumbnail in a separate thread (to avoid UI freeze)
-        threading.Thread(target=self._fetch_and_display_thumbnail, args=(url, label), daemon=True).start()
-
-    def _fetch_and_display_thumbnail(self, url, label):
-        """
-        Fetch the thumbnail for the URL. If the URL returns an image, use it.
-        """
-        try:
-            # Attempt to fetch the target URL directly.
-            response = requests.get(url, timeout=5)
-            response.raise_for_status()
-            content_type = response.headers.get("Content-Type", "")
-
-            if "image" in content_type:
-                image_data = BytesIO(response.content)
-            else:
-                raise Exception("URL did not return an image.")
-
-            # Process the image data.
-            image = Image.open(image_data)
-            image.thumbnail((200, 150))
-            photo = ImageTk.PhotoImage(image)
-
-            def update_label():
-                if self.preview_window and label.winfo_exists():
-                    label.config(image=photo, text="")
-                    label.image = photo  # Keep a reference to avoid garbage collection.
-
-            self.text.after(0, update_label)
-
-        except Exception as e:
-            print(f"DEBUG: Exception in _fetch_and_display_thumbnail: {e}")
-
-            def update_label_error():
-                if self.preview_window and label.winfo_exists():
-                    label.config(text="Preview not available")
-            self.text.after(0, update_label_error)
-
-    def hide_thumbnail(self):
-        """Destroy the thumbnail preview window if it exists."""
-        if self.preview_window is not None:
-            self.preview_window.destroy()
-            self.preview_window = None
 
 class BBSTerminalApp:
     def __init__(self, master):
@@ -268,6 +158,16 @@ class BBSTerminalApp:
         self.send_username_button = ttk.Button(username_frame, text="Send", command=self.send_username)
         self.send_username_button.pack(side=tk.LEFT, padx=5, pady=5)
         
+        # Add Teleconference Action buttons
+        wave_button = ttk.Button(username_frame, text="Wave", command=lambda: self.send_action("wave"))
+        wave_button.pack(side=tk.LEFT, padx=5, pady=5)
+        smile_button = ttk.Button(username_frame, text="Smile", command=lambda: self.send_action("smile"))
+        smile_button.pack(side=tk.LEFT, padx=5, pady=5)
+        dance_button = ttk.Button(username_frame, text="Dance", command=lambda: self.send_action("dance"))
+        dance_button.pack(side=tk.LEFT, padx=5, pady=5)
+        bow_button = ttk.Button(username_frame, text="Bow", command=lambda: self.send_action("bow"))
+        bow_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
         # Password frame
         password_frame = ttk.LabelFrame(top_frame, text="Password")
         password_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
@@ -297,9 +197,6 @@ class BBSTerminalApp:
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
         self.terminal_display.configure(yscrollcommand=scroll_bar.set)
         self.define_ansi_tags()
-        
-        # 👉 NEW: Instantiate the Hyperlink Manager!
-        self.hyperlink_manager = HyperlinkManager(self.terminal_display)
         
         # Bottom pane: Messages to You
         messages_frame = ttk.LabelFrame(paned, text="Messages to You")
@@ -511,40 +408,43 @@ class BBSTerminalApp:
             self.master.after(100, self.process_incoming_messages)
 
     def process_data_chunk(self, data):
-        """Accumulate data, split on newlines, display in terminal."""
+        """Accumulate data, split on newlines, and process each complete line."""
+        # Normalize newlines
         data = data.replace('\r\n', '\n').replace('\r', '\n')
         self.partial_line += data
         lines = self.partial_line.split("\n")
         
+        # Precompile an ANSI escape code regex
+        ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
+        
         for line in lines[:-1]:
-            clean_line = line.strip()
+            # Remove ANSI codes for filtering purposes only.
+            clean_line = ansi_regex.sub('', line).strip()
             
             # --- Filter header lines ---
-            # If we're currently collecting header lines, add the line to the buffer and skip displaying it.
             if self.collecting_users:
                 self.user_list_buffer.append(line)
                 if "are here with you." in clean_line:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                continue  # Skip displaying this line
+                continue  # Skip displaying header lines
             
-            # If the line starts the header block, begin collecting and skip displaying.
             if clean_line.startswith("You are in"):
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                continue  # Skip displaying this line
+                continue  # Skip displaying header line
             
             # Skip the line immediately following the header block if it starts with "Just press"
             if clean_line.startswith("Just press") and not self.collecting_users:
-                continue  # Skip displaying this line
+                continue
             
             # --- Process directed messages ---
             directed_msg_match = re.match(r'^From\s+(\S+)\s+\((to you|whispered)\):\s*(.+)$', clean_line, re.IGNORECASE)
             if directed_msg_match:
                 sender, _, message = directed_msg_match.groups()
                 self.append_directed_message(f"From {sender}: {message}\n")
-                continue  # Skip displaying this line
+                continue  # Skip displaying these in the main terminal
             
             # --- Process and display non-header lines ---
             self.append_terminal_text(line + "\n", "normal")
@@ -552,7 +452,7 @@ class BBSTerminalApp:
             self.parse_and_save_chatlog_message(line)
             if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
                 self.detect_logon_prompt(line)
-
+        
         self.partial_line = lines[-1]
 
     def detect_logon_prompt(self, line):
@@ -646,6 +546,14 @@ class BBSTerminalApp:
         print(f"Sending custom message: {message}")
         asyncio.run_coroutine_threadsafe(self._send_message(message + "\r\n"), self.loop)
 
+    def send_action(self, action):
+        """Send an action to the BBS, optionally appending the highlighted username."""
+        selected_indices = self.members_listbox.curselection()
+        if selected_indices:
+            username = self.members_listbox.get(selected_indices[0])
+            action = f"{action} {username}"
+        asyncio.run_coroutine_threadsafe(self._send_message(action + "\r\n"), self.loop)
+
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
         """Send an <ENTER> keystroke every 10 seconds."""
@@ -653,7 +561,7 @@ class BBSTerminalApp:
             if self.connected and self.writer:
                 self.writer.write("\r\n")
                 await self.writer.drain()
-            await asyncio.sleep(10)
+            await asyncio.sleep(60)
 
     def start_keep_alive(self):
         """Start the keep-alive coroutine if enabled."""
@@ -822,7 +730,7 @@ class BBSTerminalApp:
         self.terminal_display.configure(state=tk.DISABLED)
 
     def parse_ansi_and_insert(self, text_data):
-        """Minimal parser for ANSI color codes (foreground only) with hyperlink detection."""
+        """Minimal parser for ANSI color codes (foreground only)."""
         ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
         last_end = 0
         current_tag = "normal"
@@ -830,13 +738,13 @@ class BBSTerminalApp:
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
             if start > last_end:
-                segment = text_data[last_end:start]
-                self.insert_with_possible_hyperlinks(segment, current_tag)
+                self.terminal_display.insert(tk.END, text_data[last_end:start], current_tag)
             code_string = match.group(1)
             codes = code_string.split(';')
             if '0' in codes:
                 current_tag = "normal"
                 codes.remove('0')
+
             for c in codes:
                 mapped_tag = self.map_code_to_tag(c)
                 if mapped_tag:
@@ -844,27 +752,7 @@ class BBSTerminalApp:
             last_end = end
 
         if last_end < len(text_data):
-            segment = text_data[last_end:]
-            self.insert_with_possible_hyperlinks(segment, current_tag)
-
-    def insert_with_possible_hyperlinks(self, text_segment, tag):
-        """Insert text segments into the terminal_display.
-           If a URL is detected, insert it with hyperlink tags so it becomes clickable."""
-        hyperlink_pattern = re.compile(r'(https?://[^\s]+)')
-        pos = 0
-        for match in hyperlink_pattern.finditer(text_segment):
-            start, end = match.span()
-            # Insert text before the URL (if any)
-            if start > pos:
-                self.terminal_display.insert(tk.END, text_segment[pos:start], tag)
-            url = match.group(0)
-            # Get a tuple of tags for the hyperlink (combining the default tag and hyperlink tags)
-            hyperlink_tags = self.hyperlink_manager.add(self.open_url, url)
-            self.terminal_display.insert(tk.END, url, (tag, *hyperlink_tags))
-            pos = end
-        # Insert any remaining text after the last URL
-        if pos < len(text_segment):
-            self.terminal_display.insert(tk.END, text_segment[pos:], tag)
+            self.terminal_display.insert(tk.END, text_data[last_end:], current_tag)
 
     def map_code_to_tag(self, color_code):
         """Map numeric color code to a defined Tk tag."""
@@ -887,10 +775,6 @@ class BBSTerminalApp:
             '97': 'bright_white',
         }
         return valid_codes.get(color_code, None)
-
-    def open_url(self, url):
-        """Open the given URL in the default web browser."""
-        webbrowser.open(url)
 
     def save_chatlog_message(self, username, message):
         """Save a message to the chatlog."""

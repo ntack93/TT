@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>BBS Terminal UI</title>
@@ -16,20 +17,25 @@
             padding: 20px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
+
         #favoritesWindow h2 {
             margin-top: 0;
         }
+
         #favoritesWindow ul {
             list-style-type: none;
             padding: 0;
         }
+
         #favoritesWindow li {
             padding: 5px;
             cursor: pointer;
         }
+
         #favoritesWindow li.selected {
             background-color: #ddd;
         }
+
         /* Context menu styling */
         .context-menu {
             position: absolute;
@@ -38,27 +44,34 @@
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             z-index: 1000;
         }
+
         .context-menu div {
             padding: 5px 10px;
             cursor: pointer;
         }
+
         .context-menu div:hover {
             background-color: #ddd;
         }
+
         /* Trigger/Response Section styling */
         #triggerSection {
             margin-top: 20px;
         }
+
         .triggerRow {
             display: flex;
             align-items: center;
         }
+
         .triggerRow input {
             margin-right: 5px;
         }
+
         .triggerRow button {
             margin-left: 5px;
         }
+
         /* Chatroom Members panel styling */
         #membersPanel {
             position: fixed;
@@ -71,24 +84,29 @@
             padding: 10px;
             box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
         }
+
         #membersPanel h2 {
             margin-top: 0;
         }
+
         #membersList {
             list-style-type: none;
             padding: 0;
             height: calc(100% - 40px);
             overflow-y: auto;
         }
+
         #membersList li {
             padding: 5px;
             cursor: pointer;
         }
+
         #membersList li.selected {
             background-color: #ddd;
         }
     </style>
 </head>
+
 <body>
     <!-- Toggle Mode and Favorites buttons -->
     <button id="toggleModeButton">Toggle Mode</button>
@@ -180,8 +198,8 @@
                     <td><input type="text" class="responseInput" style="width:95%;" /></td>
                 </tr>
                 <tr></tr>
-                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
-                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                <td><input type="text" class="responseInput" style="width:95%;" /></td>
                 </tr>
                 <tr>
                     <td><input type="text" class="triggerInput" style="width:95%;" /></td>
@@ -218,7 +236,8 @@
     <button id="chatlogButton">Chatlog</button>
 
     <!-- Chatlog Window (initially hidden) -->
-    <div id="chatlogWindow" style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    <div id="chatlogWindow"
+        style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
         background-color: white; border: 1px solid #ccc; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); width: 80%; height: 80%; overflow: hidden;">
         <h2>Chatlog</h2>
         <div style="display: flex; height: 100%;">
@@ -266,14 +285,15 @@
         <button id="saveSettingsButton">Save</button>
     </div>
 
-    <!-- BBS input field -->
-    <input type="text" id="inputBox" placeholder="Enter message">
-
     <!-- Main container for dynamic content -->
     <div id="mainContainer">
         <!-- Main content will be rendered here -->
     </div>
 
+    <!-- BBS input field -->
+    <input type="text" id="inputBox" placeholder="Enter message">
+
     <script src="ui.js"></script>
 </body>
+
 </html>

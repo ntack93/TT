@@ -2,7 +2,7 @@
 let triggers = [];
 
 // Wait for the DOM to be fully loaded
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     // Set initial checkbox and input values from localStorage
     const rememberUsername = localStorage.getItem('rememberUsername') === 'true';
     const rememberPassword = localStorage.getItem('rememberPassword') === 'true';
@@ -60,10 +60,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Attach the keydown listener to the inputBox after DOM loads
     const inputBox = document.getElementById('inputBox');
-    inputBox.addEventListener('keydown', function(event) {
+    inputBox.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
             event.preventDefault(); // Prevent default behavior (e.g., form submission)
-            
+
             // Get the current value (without trimming here if you want to allow spaces)
             const text = inputBox.value;
 
@@ -84,19 +84,19 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('addTriggerButton').addEventListener('click', addTriggerRow);
 
     // Add event listener for the "Triggers" button in the main UI
-    document.getElementById('triggersButton').addEventListener('click', function() {
+    document.getElementById('triggersButton').addEventListener('click', function () {
         document.getElementById('triggersWindow').style.display = 'block';
         loadTriggersIntoUI();
     });
 
     // Add event listener for the "Save" button in the triggers window
-    document.getElementById('saveTriggersButton').addEventListener('click', function() {
+    document.getElementById('saveTriggersButton').addEventListener('click', function () {
         saveTriggersFromUI();
         alert('Triggers saved!');
     });
 
     // Add event listener for the "Close" button in the triggers window
-    document.getElementById('closeTriggersButton').addEventListener('click', function() {
+    document.getElementById('closeTriggersButton').addEventListener('click', function () {
         document.getElementById('triggersWindow').style.display = 'none';
     });
 
@@ -105,6 +105,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize the members list
     updateMembersDisplay();
+
+    // Ensure input field and Send button are always visible
+    const inputContainer = document.getElementById('inputContainer');
+    const sendButton = document.getElementById('sendButton');
+    window.addEventListener('resize', function () {
+        inputContainer.style.bottom = '0';
+        sendButton.style.bottom = '0';
+    });
+    inputContainer.style.bottom = '0';
+    sendButton.style.bottom = '0';
 });
 
 // Save settings when the "Save" button is clicked in the settings window
@@ -169,7 +179,7 @@ function sendMessage(typeOrCommand) {
 }
 
 // Add event listener for the input box to handle Enter key press
-document.getElementById('inputBox').addEventListener('keypress', function(event) {
+document.getElementById('inputBox').addEventListener('keypress', function (event) {
     if (event.key === 'Enter') {
         sendMessage('message');
         event.preventDefault(); // Prevent the default action to avoid form submission
@@ -178,7 +188,7 @@ document.getElementById('inputBox').addEventListener('keypress', function(event)
 
 // Context Menu implementation for input fields
 function addContextMenu(inputElement) {
-    inputElement.addEventListener('contextmenu', function(event) {
+    inputElement.addEventListener('contextmenu', function (event) {
         event.preventDefault();
         const contextMenu = document.createElement('div');
         contextMenu.className = 'context-menu';
@@ -187,7 +197,7 @@ function addContextMenu(inputElement) {
 
         const cutOption = document.createElement('div');
         cutOption.textContent = 'Cut';
-        cutOption.addEventListener('click', function() {
+        cutOption.addEventListener('click', function () {
             document.execCommand('cut');
             document.body.removeChild(contextMenu);
         });
@@ -195,7 +205,7 @@ function addContextMenu(inputElement) {
 
         const copyOption = document.createElement('div');
         copyOption.textContent = 'Copy';
-        copyOption.addEventListener('click', function() {
+        copyOption.addEventListener('click', function () {
             document.execCommand('copy');
             document.body.removeChild(contextMenu);
         });
@@ -203,7 +213,7 @@ function addContextMenu(inputElement) {
 
         const pasteOption = document.createElement('div');
         pasteOption.textContent = 'Paste';
-        pasteOption.addEventListener('click', function() {
+        pasteOption.addEventListener('click', function () {
             document.execCommand('paste');
             document.body.removeChild(contextMenu);
         });
@@ -211,7 +221,7 @@ function addContextMenu(inputElement) {
 
         const selectAllOption = document.createElement('div');
         selectAllOption.textContent = 'Select All';
-        selectAllOption.addEventListener('click', function() {
+        selectAllOption.addEventListener('click', function () {
             document.execCommand('selectAll');
             document.body.removeChild(contextMenu);
         });
@@ -220,7 +230,7 @@ function addContextMenu(inputElement) {
         document.body.appendChild(contextMenu);
 
         // Remove the context menu when clicking elsewhere
-        document.addEventListener('click', function() {
+        document.addEventListener('click', function () {
             if (contextMenu) {
                 if (document.body.contains(contextMenu)) {
                     document.body.removeChild(contextMenu);
@@ -249,7 +259,7 @@ function loadFavorites() {
     favorites.forEach(address => {
         const li = document.createElement('li');
         li.textContent = address;
-        li.addEventListener('click', function() {
+        li.addEventListener('click', function () {
             // When a favorite is clicked, set the host input field
             document.getElementById('hostInput').value = address;
             // Mark as selected
@@ -321,7 +331,7 @@ function renderTriggerList() {
         triggerInput.placeholder = 'Trigger Text';
         triggerInput.value = trigger.trigger;
         triggerInput.style.marginRight = '5px';
-        triggerInput.addEventListener('input', function() {
+        triggerInput.addEventListener('input', function () {
             triggers[index].trigger = triggerInput.value;
             saveTriggers();
         });
@@ -333,7 +343,7 @@ function renderTriggerList() {
         responseInput.placeholder = 'Response Text';
         responseInput.value = trigger.response;
         responseInput.style.marginRight = '5px';
-        responseInput.addEventListener('input', function() {
+        responseInput.addEventListener('input', function () {
             triggers[index].response = responseInput.value;
             saveTriggers();
         });
@@ -342,7 +352,7 @@ function renderTriggerList() {
         // Remove button
         const removeBtn = document.createElement('button');
         removeBtn.textContent = 'Remove';
-        removeBtn.addEventListener('click', function() {
+        removeBtn.addEventListener('click', function () {
             triggers.splice(index, 1);
             saveTriggers();
             renderTriggerList();
@@ -389,7 +399,7 @@ function sendCustomMessage(message) {
 function loadTriggersIntoUI() {
     let stored = localStorage.getItem('triggers');
     let triggersData = stored ? JSON.parse(stored) : [];
-    
+
     // Ensure we have exactly 10 rows
     while (triggersData.length < 10) {
         triggersData.push({ trigger: "", response: "" });
@@ -397,7 +407,7 @@ function loadTriggersIntoUI() {
     if (triggersData.length > 10) {
         triggersData = triggersData.slice(0, 10);
     }
-    
+
     // Populate the table rows
     const rows = document.querySelectorAll('#triggersTable tbody tr');
     rows.forEach((row, index) => {
