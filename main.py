@@ -782,7 +782,7 @@ class BBSTerminalApp:
         """Open the hyperlink in a web browser."""
         index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
         start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-        end_index = self.terminal_display.search(" ", index, stopindex="end")
+        end_index = self.terminal_display.search(r"\s", index, stopindex="end", regexp=True)
         if not end_index:
             end_index = self.terminal_display.index("end")
         url = self.terminal_display.get(start_index, end_index).strip()
@@ -792,7 +792,7 @@ class BBSTerminalApp:
         """Show a thumbnail preview of the hyperlink."""
         index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
         start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-        end_index = self.terminal_display.search(" ", index, stopindex="end")
+        end_index = self.terminal_display.search(r"\s", index, stopindex="end", regexp=True)
         if not end_index:
             end_index = self.terminal_display.index("end")
         url = self.terminal_display.get(start_index, end_index).strip()
