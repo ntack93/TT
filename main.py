@@ -8,6 +8,10 @@ import queue
 import re
 import json
 import os
+import webbrowser
+from PIL import Image, ImageTk
+import requests
+from io import BytesIO
 
 ###############################################################################
 #                         BBS Telnet App (No Chatbot)
@@ -197,6 +201,10 @@ class BBSTerminalApp:
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
         self.terminal_display.configure(yscrollcommand=scroll_bar.set)
         self.define_ansi_tags()
+        self.terminal_display.tag_configure("hyperlink", foreground="blue", underline=True)
+        self.terminal_display.tag_bind("hyperlink", "<Button-1>", self.open_hyperlink)
+        self.terminal_display.tag_bind("hyperlink", "<Enter>", self.show_thumbnail_preview)
+        self.terminal_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
         # Bottom pane: Messages to You
         messages_frame = ttk.LabelFrame(paned, text="Messages to You")
@@ -732,13 +740,15 @@ class BBSTerminalApp:
     def parse_ansi_and_insert(self, text_data):
         """Minimal parser for ANSI color codes (foreground only)."""
         ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
+        url_regex = re.compile(r'(https?://\S+)')
         last_end = 0
         current_tag = "normal"
 
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
             if start > last_end:
-                self.terminal_display.insert(tk.END, text_data[last_end:start], current_tag)
+                segment = text_data[last_end:start]
+                self.insert_with_hyperlinks(segment, current_tag)
             code_string = match.group(1)
             codes = code_string.split(';')
             if '0' in codes:
@@ -752,7 +762,80 @@ class BBSTerminalApp:
             last_end = end
 
         if last_end < len(text_data):
-            self.terminal_display.insert(tk.END, text_data[last_end:], current_tag)
+            segment = text_data[last_end:]
+            self.insert_with_hyperlinks(segment, current_tag)
+
+    def insert_with_hyperlinks(self, text, tag):
+        """Insert text with hyperlinks detected and tagged."""
+        url_regex = re.compile(r'(https?://\S+)')
+        last_end = 0
+        for match in url_regex.finditer(text):
+            start, end = match.span()
+            if start > last_end:
+                self.terminal_display.insert(tk.END, text[last_end:start], tag)
+            self.terminal_display.insert(tk.END, text[start:end], ("hyperlink", tag))
+            last_end = end
+        if last_end < len(text):
+            self.terminal_display.insert(tk.END, text[last_end:], tag)
+
+    def open_hyperlink(self, event):
+        """Open the hyperlink in a web browser."""
+        index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
+        start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+        end_index = self.terminal_display.search(" ", index, stopindex="end")
+        if not end_index:
+            end_index = self.terminal_display.index("end")
+        url = self.terminal_display.get(start_index, end_index).strip()
+        webbrowser.open(url)
+
+    def show_thumbnail_preview(self, event):
+        """Show a thumbnail preview of the hyperlink."""
+        index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
+        start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+        end_index = self.terminal_display.search(" ", index, stopindex="end")
+        if not end_index:
+            end_index = self.terminal_display.index("end")
+        url = self.terminal_display.get(start_index, end_index).strip()
+        self.show_preview(event, url)
+
+    def hide_thumbnail_preview(self, event):
+        """Hide the thumbnail preview."""
+        self.hide_preview(event)
+
+    def get_thumbnail(self, url):
+        """Attempt to load a thumbnail image from an image URL.
+           Returns a PhotoImage if successful, otherwise None.
+        """
+        if any(url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif"]):
+            try:
+                response = requests.get(url, timeout=5)
+                image_data = response.content
+                image = Image.open(BytesIO(image_data))
+                image.thumbnail((200, 200))  # Set thumbnail size as needed.
+                return ImageTk.PhotoImage(image)
+            except Exception as e:
+                print("Error loading thumbnail:", e)
+        return None
+
+    def show_preview(self, event, url):
+        """Display a live preview thumbnail in a small Toplevel near the mouse pointer."""
+        photo = self.get_thumbnail(url)
+        if photo:
+            self.preview_window = tk.Toplevel(self.master)
+            self.preview_window.overrideredirect(True)
+            self.preview_window.attributes("-topmost", True)
+            label = tk.Label(self.preview_window, image=photo, bd=1, relief="solid")
+            label.image = photo  # keep a reference to avoid garbage collection
+            label.pack()
+            x = event.x_root + 10
+            y = event.y_root + 10
+            self.preview_window.geometry(f"+{x}+{y}")
+
+    def hide_preview(self, event):
+        """Hide the preview window if it exists."""
+        if hasattr(self, 'preview_window') and self.preview_window:
+            self.preview_window.destroy()
+            self.preview_window = None
 
     def map_code_to_tag(self, color_code):
         """Map numeric color code to a defined Tk tag."""
