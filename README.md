@@ -95,15 +95,6 @@ requests
    ```
 3. The desktop window (Tkinter UI) should open, displaying connection settings, chat output, input fields, and additional panels (chatlog, triggers, favorites, etc.).
 
----
-
-## Running the Web UI
-
-1. Open the **ui.html** file in your favorite browser.
-2. The web UI displays various controls (Favorites, Triggers, Chatlog, etc.) along with a terminal-like output area.
-3. Use the provided buttons and input fields to simulate or send messages.
-
----
 
 ## Usage
 
