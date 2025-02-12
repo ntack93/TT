@@ -8,10 +8,120 @@ import queue
 import re
 import json
 import os
+import webbrowser
+from PIL import Image, ImageTk  # Pillow for image handling
+import requests
+from io import BytesIO
+import urllib.parse
 
 ###############################################################################
 #                         BBS Telnet App (No Chatbot)
 ###############################################################################
+
+class HyperlinkManager:
+    def __init__(self, text):
+        self.text = text
+        # Configure the default hyperlink appearance
+        self.text.tag_configure("hyperlink", foreground="blue", underline=1)
+        self.text.tag_bind("hyperlink", "<Enter>", lambda e: self.text.config(cursor="hand2"))
+        self.text.tag_bind("hyperlink", "<Leave>", lambda e: self.text.config(cursor=""))
+        self.text.tag_bind("hyperlink", "<Button-1>", self._click)
+        self.links = {}
+        self.preview_window = None  # For the thumbnail preview
+
+    def add(self, action, url):
+        """Return a tuple of tags to apply for a hyperlink.
+           'action' is a function to call when the hyperlink is clicked."""
+        tag = f"hyperlink-{len(self.links)}"
+        self.links[tag] = (action, url)
+        # Bind additional hover events on this unique tag:
+        self.text.tag_bind(tag, "<Enter>", self._on_enter)
+        self.text.tag_bind(tag, "<Leave>", self._on_leave)
+        return ("hyperlink", tag)
+
+    def _click(self, event):
+        # Find the hyperlink tag that was clicked and call its action
+        for tag in self.text.tag_names("current"):
+            if tag.startswith("hyperlink-"):
+                action, url = self.links[tag]
+                action(url)
+                return
+
+    def _on_enter(self, event):
+        self.text.config(cursor="hand2")
+        # Identify which hyperlink tag triggered this event:
+        for tag in self.text.tag_names("current"):
+            if tag.startswith("hyperlink-"):
+                _, url = self.links[tag]
+                self.show_thumbnail(url, event)
+                break
+
+    def _on_leave(self, event):
+        self.text.config(cursor="")
+        self.hide_thumbnail()
+
+    def show_thumbnail(self, url, event):
+        """Display a thumbnail preview near the mouse pointer."""
+        # Remove any existing preview window
+        if self.preview_window is not None:
+            self.preview_window.destroy()
+
+        self.preview_window = tk.Toplevel(self.text)
+        self.preview_window.overrideredirect(True)  # No window decorations
+        self.preview_window.attributes("-topmost", True)
+
+        # Position the preview window near the mouse pointer
+        x = self.text.winfo_pointerx() + 10
+        y = self.text.winfo_pointery() + 10
+        self.preview_window.geometry(f"+{x}+{y}")
+
+        # Display a temporary label
+        label = tk.Label(self.preview_window, text="Loading preview...", background="white")
+        label.pack()
+
+        # Fetch and display the thumbnail in a separate thread (to avoid UI freeze)
+        threading.Thread(target=self._fetch_and_display_thumbnail, args=(url, label), daemon=True).start()
+
+    def _fetch_and_display_thumbnail(self, url, label):
+        """
+        Fetch the thumbnail for the URL. If the URL returns an image, use it.
+        """
+        try:
+            # Attempt to fetch the target URL directly.
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "")
+
+            if "image" in content_type:
+                image_data = BytesIO(response.content)
+            else:
+                raise Exception("URL did not return an image.")
+
+            # Process the image data.
+            image = Image.open(image_data)
+            image.thumbnail((200, 150))
+            photo = ImageTk.PhotoImage(image)
+
+            def update_label():
+                if self.preview_window and label.winfo_exists():
+                    label.config(image=photo, text="")
+                    label.image = photo  # Keep a reference to avoid garbage collection.
+
+            self.text.after(0, update_label)
+
+        except Exception as e:
+            print(f"DEBUG: Exception in _fetch_and_display_thumbnail: {e}")
+
+            def update_label_error():
+                if self.preview_window and label.winfo_exists():
+                    label.config(text="Preview not available")
+            self.text.after(0, update_label_error)
+
+    def hide_thumbnail(self):
+        """Destroy the thumbnail preview window if it exists."""
+        if self.preview_window is not None:
+            self.preview_window.destroy()
+            self.preview_window = None
 
 class BBSTerminalApp:
     def __init__(self, master):
@@ -103,129 +213,110 @@ class BBSTerminalApp:
         self.members_listbox = tk.Listbox(members_frame, height=20, width=20)
         self.members_listbox.pack(fill=tk.BOTH, expand=True)
         
-        # Create the main UI frame on the LEFT
+        # Create the main UI frame on the LEFT using grid layout
         main_frame = ttk.Frame(container, name='main_frame')
         main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=0)
+        main_frame.rowconfigure(1, weight=3)  # Paned container gets most space
+        main_frame.rowconfigure(2, weight=0)
         
-        # 1.2.1️⃣ Connection settings
-        config_frame = ttk.LabelFrame(main_frame, text="Connection Settings")
-        config_frame.pack(fill=tk.X, padx=5, pady=5)
+        # --- Row 0: Top frame (connection settings, username, password) ---
+        top_frame = ttk.Frame(main_frame)
+        top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         
-        ttk.Label(config_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
-        self.host_entry = ttk.Entry(config_frame, textvariable=self.host, width=30)
+        # Connection settings example:
+        conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
+        conn_frame.pack(fill=tk.X, expand=True)
+        ttk.Label(conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
+        self.host_entry = ttk.Entry(conn_frame, textvariable=self.host, width=30)
         self.host_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-        self.create_context_menu(self.host_entry)
-        
-        ttk.Label(config_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
-        self.port_entry = ttk.Entry(config_frame, textvariable=self.port, width=6)
+        ttk.Label(conn_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
+        self.port_entry = ttk.Entry(conn_frame, textvariable=self.port, width=6)
         self.port_entry.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        self.create_context_menu(self.port_entry)
-        
-        self.connect_button = ttk.Button(config_frame, text="Connect", command=self.toggle_connection)
+        self.connect_button = ttk.Button(conn_frame, text="Connect", command=self.toggle_connection)
         self.connect_button.grid(row=0, column=4, padx=5, pady=5)
         
-        # Favorites
-        favorites_button = ttk.Button(config_frame, text="Favorites", command=self.show_favorites_window)
+        # Add the Favorites button
+        favorites_button = ttk.Button(conn_frame, text="Favorites", command=self.show_favorites_window)
         favorites_button.grid(row=0, column=5, padx=5, pady=5)
         
-        # MUD Mode
-        mud_mode_check = ttk.Checkbutton(config_frame, text="Mud Mode", variable=self.mud_mode)
-        mud_mode_check.grid(row=0, column=6, padx=5, pady=5)
+        # Add the Settings button
+        settings_button = ttk.Button(conn_frame, text="Settings", command=self.show_settings_window)
+        settings_button.grid(row=0, column=6, padx=5, pady=5)
         
-        # Keep Alive checkbox
-        keep_alive_check = ttk.Checkbutton(config_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
+        # Add the Triggers button
+        triggers_button = ttk.Button(conn_frame, text="Triggers", command=self.show_triggers_window)
+        triggers_button.grid(row=0, column=7, padx=5, pady=5)
+        
+        # Add the Keep Alive checkbox
+        keep_alive_check = ttk.Checkbutton(conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
         keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
         
-        # Add Triggers button
-        triggers_button = ttk.Button(config_frame, text="Triggers", command=self.show_triggers_window)
-        triggers_button.grid(row=0, column=9, padx=5, pady=5)
+        # Add the Chatlog button
+        chatlog_button = ttk.Button(conn_frame, text="Chatlog", command=self.show_chatlog_window)
+        chatlog_button.grid(row=0, column=9, padx=5, pady=5)
         
-        # Add Chatlog button
-        chatlog_button = ttk.Button(config_frame, text="Chatlog", command=self.show_chatlog_window)
-        chatlog_button.grid(row=0, column=10, padx=5, pady=5)
-        
-        # 1.2.2️⃣ Username Frame
-        username_frame = ttk.LabelFrame(main_frame, text="Username")
-        username_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+        # Username frame
+        username_frame = ttk.LabelFrame(top_frame, text="Username")
+        username_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
         self.username_entry = ttk.Entry(username_frame, textvariable=self.username, width=30)
         self.username_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.username_entry)
-        
-        self.remember_username_check = ttk.Checkbutton(
-            username_frame, text="Remember", variable=self.remember_username)
+        self.remember_username_check = ttk.Checkbutton(username_frame, text="Remember", variable=self.remember_username)
         self.remember_username_check.pack(side=tk.LEFT, padx=5, pady=5)
-        
         self.send_username_button = ttk.Button(username_frame, text="Send", command=self.send_username)
         self.send_username_button.pack(side=tk.LEFT, padx=5, pady=5)
         
-        # 1.2.3️⃣ Password Frame
-        password_frame = ttk.LabelFrame(main_frame, text="Password")
-        password_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+        # Password frame
+        password_frame = ttk.LabelFrame(top_frame, text="Password")
+        password_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
         self.password_entry = ttk.Entry(password_frame, textvariable=self.password, width=30, show="*")
         self.password_entry.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_context_menu(self.password_entry)
-        
-        self.remember_password_check = ttk.Checkbutton(
-            password_frame, text="Remember", variable=self.remember_password)
+        self.remember_password_check = ttk.Checkbutton(password_frame, text="Remember", variable=self.remember_password)
         self.remember_password_check.pack(side=tk.LEFT, padx=5, pady=5)
-        
         self.send_password_button = ttk.Button(password_frame, text="Send", command=self.send_password)
         self.send_password_button.pack(side=tk.LEFT, padx=5, pady=5)
         
-        # 1.2.4️⃣ Terminal Output
-        terminal_frame = ttk.LabelFrame(main_frame, text="BBS Output")
-        terminal_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # --- Row 1: Paned container for BBS Output and Messages to You ---
+        paned_container = ttk.Frame(main_frame)
+        paned_container.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        paned_container.columnconfigure(0, weight=1)
+        paned_container.rowconfigure(0, weight=1)
         
-        self.terminal_display = tk.Text(
-            terminal_frame,
-            wrap=tk.WORD,
-            height=15,
-            state=tk.DISABLED,
-            bg="black"
-        )
+        paned = ttk.PanedWindow(paned_container, orient=tk.VERTICAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+        
+        # Top pane: BBS Output
+        output_frame = ttk.LabelFrame(paned, text="BBS Output")
+        paned.add(output_frame, weight=3)
+        self.terminal_display = tk.Text(output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black")
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        scroll_bar = ttk.Scrollbar(terminal_frame, command=self.terminal_display.yview)
+        scroll_bar = ttk.Scrollbar(output_frame, command=self.terminal_display.yview)
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
         self.terminal_display.configure(yscrollcommand=scroll_bar.set)
-        
         self.define_ansi_tags()
-
-        # 1.2.5️⃣ Messages to You Frame
-        directed_msg_frame = ttk.LabelFrame(main_frame, text="Messages to You")
-        directed_msg_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        self.directed_msg_display = tk.Text(
-            directed_msg_frame,
-            wrap=tk.WORD,
-            height=10,
-            state=tk.DISABLED,
-            bg="lightyellow"
-        )
-        self.directed_msg_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 👉 NEW: Instantiate the Hyperlink Manager!
+        self.hyperlink_manager = HyperlinkManager(self.terminal_display)
         
-        directed_msg_scroll_bar = ttk.Scrollbar(directed_msg_frame, command=self.directed_msg_display.yview)
-        directed_msg_scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.directed_msg_display.configure(yscrollcommand=directed_msg_scroll_bar.set)
-
-        # 1.2.6️⃣ Input Frame
+        # Bottom pane: Messages to You
+        messages_frame = ttk.LabelFrame(paned, text="Messages to You")
+        paned.add(messages_frame, weight=1)
+        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow")
+        self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
+        
+        # --- Row 2: Input frame for sending messages ---
         input_frame = ttk.LabelFrame(main_frame, text="Send Message")
-        input_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+        input_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
         self.input_var = tk.StringVar()
         self.input_box = ttk.Entry(input_frame, textvariable=self.input_var, width=80)
         self.input_box.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
         self.input_box.bind("<Return>", self.send_message)
         self.create_context_menu(self.input_box)
-        
         self.send_button = ttk.Button(input_frame, text="Send", command=self.send_message)
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
-        
-        # 1.2.7️⃣ Settings & Font
-        settings_button = ttk.Button(config_frame, text="Settings", command=self.show_settings_window)
-        settings_button.grid(row=0, column=7, padx=5, pady=5)
         
         self.update_display_font()
 
@@ -731,7 +822,7 @@ class BBSTerminalApp:
         self.terminal_display.configure(state=tk.DISABLED)
 
     def parse_ansi_and_insert(self, text_data):
-        """Minimal parser for ANSI color codes (foreground only)."""
+        """Minimal parser for ANSI color codes (foreground only) with hyperlink detection."""
         ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
         last_end = 0
         current_tag = "normal"
@@ -739,13 +830,13 @@ class BBSTerminalApp:
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
             if start > last_end:
-                self.terminal_display.insert(tk.END, text_data[last_end:start], current_tag)
+                segment = text_data[last_end:start]
+                self.insert_with_possible_hyperlinks(segment, current_tag)
             code_string = match.group(1)
             codes = code_string.split(';')
             if '0' in codes:
                 current_tag = "normal"
                 codes.remove('0')
-
             for c in codes:
                 mapped_tag = self.map_code_to_tag(c)
                 if mapped_tag:
@@ -753,7 +844,27 @@ class BBSTerminalApp:
             last_end = end
 
         if last_end < len(text_data):
-            self.terminal_display.insert(tk.END, text_data[last_end:], current_tag)
+            segment = text_data[last_end:]
+            self.insert_with_possible_hyperlinks(segment, current_tag)
+
+    def insert_with_possible_hyperlinks(self, text_segment, tag):
+        """Insert text segments into the terminal_display.
+           If a URL is detected, insert it with hyperlink tags so it becomes clickable."""
+        hyperlink_pattern = re.compile(r'(https?://[^\s]+)')
+        pos = 0
+        for match in hyperlink_pattern.finditer(text_segment):
+            start, end = match.span()
+            # Insert text before the URL (if any)
+            if start > pos:
+                self.terminal_display.insert(tk.END, text_segment[pos:start], tag)
+            url = match.group(0)
+            # Get a tuple of tags for the hyperlink (combining the default tag and hyperlink tags)
+            hyperlink_tags = self.hyperlink_manager.add(self.open_url, url)
+            self.terminal_display.insert(tk.END, url, (tag, *hyperlink_tags))
+            pos = end
+        # Insert any remaining text after the last URL
+        if pos < len(text_segment):
+            self.terminal_display.insert(tk.END, text_segment[pos:], tag)
 
     def map_code_to_tag(self, color_code):
         """Map numeric color code to a defined Tk tag."""
@@ -776,6 +887,10 @@ class BBSTerminalApp:
             '97': 'bright_white',
         }
         return valid_codes.get(color_code, None)
+
+    def open_url(self, url):
+        """Open the given URL in the default web browser."""
+        webbrowser.open(url)
 
     def save_chatlog_message(self, username, message):
         """Save a message to the chatlog."""
