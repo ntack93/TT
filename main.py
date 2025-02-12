@@ -193,15 +193,19 @@ class BBSTerminalApp:
         self.send_username_button = ttk.Button(self.username_frame, text="Send", command=self.send_username)
         self.send_username_button.pack(side=tk.LEFT, padx=5, pady=5)
         
+        # Action buttons frame
+        action_buttons_frame = ttk.Frame(main_frame)
+        action_buttons_frame.grid(row=0, column=1, sticky="ne", padx=5, pady=5)
+
         # Add Teleconference Action buttons
-        wave_button = ttk.Button(self.username_frame, text="Wave", command=lambda: self.send_action("wave"))
-        wave_button.pack(side=tk.LEFT, padx=5, pady=5)
-        smile_button = ttk.Button(self.username_frame, text="Smile", command=lambda: self.send_action("smile"))
-        smile_button.pack(side=tk.LEFT, padx=5, pady=5)
-        dance_button = ttk.Button(self.username_frame, text="Dance", command=lambda: self.send_action("dance"))
-        dance_button.pack(side=tk.LEFT, padx=5, pady=5)
-        bow_button = ttk.Button(self.username_frame, text="Bow", command=lambda: self.send_action("bow"))
-        bow_button.pack(side=tk.LEFT, padx=5, pady=5)
+        wave_button = ttk.Button(action_buttons_frame, text="Wave", command=lambda: self.send_action("wave"))
+        wave_button.pack(side=tk.TOP, padx=5, pady=5)
+        smile_button = ttk.Button(action_buttons_frame, text="Smile", command=lambda: self.send_action("smile"))
+        smile_button.pack(side=tk.TOP, padx=5, pady=5)
+        dance_button = ttk.Button(action_buttons_frame, text="Dance", command=lambda: self.send_action("dance"))
+        dance_button.pack(side=tk.TOP, padx=5, pady=5)
+        bow_button = ttk.Button(action_buttons_frame, text="Bow", command=lambda: self.send_action("bow"))
+        bow_button.pack(side=tk.TOP, padx=5, pady=5)
         
         # Password frame
         self.password_frame = ttk.LabelFrame(top_frame, text="Password")
@@ -216,7 +220,7 @@ class BBSTerminalApp:
         
         # --- Row 1: Paned container for BBS Output and Messages to You ---
         paned_container = ttk.Frame(main_frame)
-        paned_container.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        paned_container.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
         paned_container.columnconfigure(0, weight=1)
         paned_container.rowconfigure(0, weight=1)
         
@@ -247,7 +251,7 @@ class BBSTerminalApp:
         
         # --- Row 2: Input frame for sending messages ---
         input_frame = ttk.LabelFrame(main_frame, text="Send Message")
-        input_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
+        input_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         self.input_var = tk.StringVar()
         self.input_box = ttk.Entry(input_frame, textvariable=self.input_var, width=80)
         self.input_box.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
