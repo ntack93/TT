@@ -117,7 +117,8 @@ class BBSTerminalApp:
         members_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
         self.members_listbox = tk.Listbox(members_frame, height=20, width=20)
         self.members_listbox.pack(fill=tk.BOTH, expand=True)
-        
+        self.create_members_context_menu()
+
         # Create the main UI frame on the LEFT using grid layout
         main_frame = ttk.Frame(container, name='main_frame')
         main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -242,7 +243,7 @@ class BBSTerminalApp:
         messages_frame = ttk.LabelFrame(self.paned, text="Messages to You")
         self.paned.add(messages_frame)
         self.paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
-        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10))
+        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10, "bold"))
         self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
         
         # --- Row 2: Input frame for sending messages ---
@@ -257,6 +258,91 @@ class BBSTerminalApp:
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         self.update_display_font()
+
+    def toggle_all_sections(self):
+        """Toggle visibility of all sections based on the master checkbox."""
+        show = self.show_all.get()
+        self.show_connection_settings.set(show)
+        self.show_username.set(show)
+        self.show_password.set(show)
+        self.toggle_connection_settings()
+        self.toggle_username()
+        self.toggle_password()
+
+    def toggle_connection_settings(self):
+        """Toggle visibility of the Connection Settings section."""
+        if self.show_connection_settings.get():
+            self.conn_frame.grid()
+        else:
+            self.conn_frame.grid_remove()
+        self.update_paned_size()
+
+    def toggle_username(self):
+        """Toggle visibility of the Username section."""
+        if self.show_username.get():
+            self.username_frame.grid()
+        else:
+            self.username_frame.grid_remove()
+        self.update_paned_size()
+
+    def toggle_password(self):
+        """Toggle visibility of the Password section."""
+        if self.show_password.get():
+            self.password_frame.grid()
+        else:
+            self.password_frame.grid_remove()
+        self.update_paned_size()
+
+    def update_paned_size(self):
+        """Update the size of the paned window based on the visibility of sections."""
+        total_height = 200  # Base height for the BBS Output pane
+        if not self.show_connection_settings.get():
+            total_height += 50
+        if not self.show_username.get():
+            total_height += 50
+        if not self.show_password.get():
+            total_height += 50
+        self.paned.paneconfig(self.output_frame, minsize=total_height)
+
+    def create_context_menu(self, widget):
+        """Create a right-click context menu for the given widget."""
+        menu = tk.Menu(widget, tearoff=0)
+        menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
+        menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
+        menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
+        menu.add_command(label="Select All", command=lambda: widget.event_generate("<<SelectAll>>"))
+
+        def show_context_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+
+        widget.bind("<Button-3>", show_context_menu)
+
+    def create_members_context_menu(self):
+        """Create a right-click context menu for the members listbox."""
+        menu = tk.Menu(self.members_listbox, tearoff=0)
+        menu.add_command(label="Chatlog", command=self.show_member_chatlog)
+
+        def show_context_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+
+        self.members_listbox.bind("<Button-3>", show_context_menu)
+
+    def show_member_chatlog(self):
+        """Show the chatlog for the selected member."""
+        selected_index = self.members_listbox.curselection()
+        if selected_index:
+            username = self.members_listbox.get(selected_index)
+            self.show_chatlog_window()
+            self.select_chatlog_user(username)
+
+    def select_chatlog_user(self, username):
+        """Select the specified user in the chatlog listbox."""
+        for i in range(self.chatlog_listbox.size()):
+            if self.chatlog_listbox.get(i) == username:
+                self.chatlog_listbox.selection_set(i)
+                self.chatlog_listbox.see(i)
+                self.display_chatlog_messages(None)
+                break
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -1086,7 +1172,7 @@ class BBSTerminalApp:
         self.chatlog_listbox.grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.N+tk.S)
         self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
 
-        self.chatlog_display = tk.Text(chatlog_frame, wrap=tk.WORD, state=tk.DISABLED, bg="white")
+        self.chatlog_display = tk.Text(chatlog_frame, wrap=tk.WORD, state=tk.DISABLED, bg="white", font=("Courier New", 10, "bold"))
         self.chatlog_display.grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.N+tk.S+tk.E+tk.W)
 
         chatlog_scrollbar = ttk.Scrollbar(chatlog_frame, command=self.chatlog_display.yview)
