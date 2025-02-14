@@ -449,7 +449,6 @@ class BBSTerminalApp:
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
-        """Define text tags for basic ANSI foreground colors (30-37, 90-97)."""
         self.terminal_display.tag_configure("normal", foreground="white")
 
         color_map = {
@@ -457,7 +456,7 @@ class BBSTerminalApp:
             '31': 'red',
             '32': 'green',
             '33': 'yellow',
-            '34': 'blue',
+            '34': 'blue',  # This is the one we'll override
             '35': 'magenta',
             '36': 'cyan',
             '37': 'white',
@@ -470,12 +469,17 @@ class BBSTerminalApp:
             '96': 'bright_cyan',
             '97': 'bright_white'
         }
-        for code, color_name in color_map.items():
-            if color_name.startswith("bright_"):
-                base_color = color_name.split("_", 1)[1]
-                self.terminal_display.tag_configure(color_name, foreground=base_color)
+
+        for code, tag in color_map.items():
+            if tag == 'blue':
+                # Use a lighter blue instead of the default dark blue
+                self.terminal_display.tag_configure(tag, foreground="#3399FF")  # 💙✨
+            elif tag.startswith("bright_"):
+                base_color = tag.split("_", 1)[1]
+                self.terminal_display.tag_configure(tag, foreground=base_color)
             else:
-                self.terminal_display.tag_configure(color_name, foreground=color_name)
+                self.terminal_display.tag_configure(tag, foreground=tag)
+
 
     # 1.5️⃣ CONNECT / DISCONNECT
     def toggle_connection(self):
@@ -1221,25 +1225,36 @@ class BBSTerminalApp:
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Combined user lines: {combined_clean}")
 
-        # Use regex to capture email addresses in the user list.
-        addresses = re.findall(r'\b\S+@\S+\.\S+\b', combined_clean)
-        print(f"[DEBUG] Regex match addresses: {addresses}")
+        # Extract the relevant section of the banner
+        match = re.search(r'Topic:\s*General Chat\s*(.*?)\s*are here with you\.', combined_clean, re.DOTALL | re.IGNORECASE)
+        if match:
+            user_section = match.group(1)
+        else:
+            user_section = combined_clean
 
-        # Extract usernames (the part before the '@')
-        usernames = [address.split('@')[0] for address in addresses]
+        # Normalize the list by replacing "and" with a comma
+        user_section = user_section.replace("and", ",")
+        print(f"[DEBUG] User section: {user_section}")
 
-        # In some cases, the last username might be listed without an email,
-        # so we can try an additional search.
-        last_user_match = re.search(r'and (\S+) are here with you\.', combined_clean)
-        if last_user_match:
-            usernames.append(last_user_match.group(1))
+        # Refined regex pattern for valid usernames and email addresses
+        username_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+(?:@[A-Za-z0-9.-]+\.[A-Za-z]{2,})?\b')
 
-        # Also check for lines like "<username> is here with you."
-        user_without_domain_matches = re.findall(r'\b(\S+)\s+is here with you\.', combined_clean)
-        usernames.extend(user_without_domain_matches)
+        # Find all tokens that look like valid usernames
+        extracted_users = username_pattern.findall(user_section)
 
-        print(f"[DEBUG] Extracted usernames: {usernames}")
-        self.chat_members = set(usernames)
+        final_usernames = []
+        for user in extracted_users:
+            # If it's an email, only keep the local part
+            if "@" in user:
+                user = user.split("@")[0]
+            final_usernames.append(user.strip())
+
+        # Remove any unwanted common words
+        common_words = {"and", "are", "here", "with", "you", "topic", "general", "channel", "majorlink"}
+        final_usernames = {user for user in final_usernames if user.lower() not in common_words}
+
+        print(f"[DEBUG] Extracted usernames: {final_usernames}")
+        self.chat_members = final_usernames
 
         # Optionally update last seen timestamps
         current_time = int(time.time())
