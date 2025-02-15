@@ -449,6 +449,7 @@ class BBSTerminalApp:
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
+        """Define text tags for basic ANSI foreground colors (30-37, 90-97) and custom colors."""
         self.terminal_display.tag_configure("normal", foreground="white")
 
         color_map = {
@@ -456,7 +457,7 @@ class BBSTerminalApp:
             '31': 'red',
             '32': 'green',
             '33': 'yellow',
-            '34': 'blue',  # This is the one we'll override
+            '34': 'blue',
             '35': 'magenta',
             '36': 'cyan',
             '37': 'white',
@@ -467,19 +468,22 @@ class BBSTerminalApp:
             '94': 'bright_blue',
             '95': 'bright_magenta',
             '96': 'bright_cyan',
-            '97': 'bright_white'
+            '97': 'bright_white',
+            '38': 'grey'  # Custom tag for grey color
         }
 
         for code, tag in color_map.items():
             if tag == 'blue':
                 # Use a lighter blue instead of the default dark blue
-                self.terminal_display.tag_configure(tag, foreground="#3399FF")  # 💙✨
+                self.terminal_display.tag_configure(tag, foreground="#3399FF")
+            elif tag == 'grey':
+                # Set grey color to a visible shade
+                self.terminal_display.tag_configure(tag, foreground="#B0B0B0")
             elif tag.startswith("bright_"):
                 base_color = tag.split("_", 1)[1]
                 self.terminal_display.tag_configure(tag, foreground=base_color)
             else:
                 self.terminal_display.tag_configure(tag, foreground=tag)
-
 
     # 1.5️⃣ CONNECT / DISCONNECT
     def toggle_connection(self):
@@ -718,6 +722,22 @@ class BBSTerminalApp:
             if trigger_obj['trigger'] and trigger_obj['trigger'].lower() in message.lower():
                 # Send the associated response
                 self.send_custom_message(trigger_obj['response'])
+
+        # Check for the !blaz trigger
+        if message.lower().startswith('!blaz '):
+            call_letters = message[6:].strip().upper()
+            radio_station_urls = {
+                'WSWT': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WSWTFM.mp3',
+                'WMBD': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WMBDAM.mp3',
+                'WIRL': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WIRLAM.mp3',
+                'WXCL': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WXCLFM.mp3',
+                'WKZF': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WKZFFM.mp3'
+            }
+            if call_letters in radio_station_urls:
+                response = f"Listen to {call_letters} live: {radio_station_urls[call_letters]}"
+                self.send_custom_message(response)
+            else:
+                self.send_custom_message(f"Sorry, no live stream found for {call_letters}.")
 
     def send_custom_message(self, message):
         """Send a custom message (for trigger responses)."""
