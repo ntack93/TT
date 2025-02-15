@@ -723,22 +723,6 @@ class BBSTerminalApp:
                 # Send the associated response
                 self.send_custom_message(trigger_obj['response'])
 
-        # Check for the !blaz trigger
-        if message.lower().startswith('!blaz '):
-            call_letters = message[6:].strip().upper()
-            radio_station_urls = {
-                'WSWT': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WSWTFM.mp3',
-                'WMBD': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WMBDAM.mp3',
-                'WIRL': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WIRLAM.mp3',
-                'WXCL': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WXCLFM.mp3',
-                'WKZF': 'https://playerservices.streamtheworld.com/api/livestream-redirect/WKZFFM.mp3'
-            }
-            if call_letters in radio_station_urls:
-                response = f"Listen to {call_letters} live: {radio_station_urls[call_letters]}"
-                self.send_custom_message(response)
-            else:
-                self.send_custom_message(f"Sorry, no live stream found for {call_letters}.")
-
     def send_custom_message(self, message):
         """Send a custom message (for trigger responses)."""
         print(f"Sending custom message: {message}")
