@@ -982,6 +982,8 @@ class BBSTerminalApp:
         """Open the hyperlink in a web browser."""
         index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
         start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+        if not start_index:
+            start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
         end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
         if not end_index:
             end_index = self.terminal_display.index("end")
@@ -992,6 +994,8 @@ class BBSTerminalApp:
         """Open the hyperlink in a web browser from directed messages."""
         index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
         start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+        if not start_index:
+            start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
         end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
         if not end_index:
             end_index = self.directed_msg_display.index("end")
