@@ -12,6 +12,7 @@ import webbrowser
 from PIL import Image, ImageTk
 import requests
 from io import BytesIO
+import winsound  # Import winsound for playing sound effects on Windows
 
 ###############################################################################
 #                         BBS Telnet App (No Chatbot)
@@ -245,6 +246,10 @@ class BBSTerminalApp:
         self.paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
         self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10, "bold"))
         self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
+        self.directed_msg_display.tag_configure("hyperlink", foreground="blue", underline=True)
+        self.directed_msg_display.tag_bind("hyperlink", "<Button-1>", self.open_directed_message_hyperlink)
+        self.directed_msg_display.tag_bind("hyperlink", "<Enter>", self.show_directed_message_thumbnail_preview)
+        self.directed_msg_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
         # --- Row 2: Input frame for sending messages ---
         input_frame = ttk.LabelFrame(main_frame, text="Send Message")
@@ -626,6 +631,7 @@ class BBSTerminalApp:
             if directed_msg_match:
                 sender, _, message = directed_msg_match.groups()
                 self.append_directed_message(f"From {sender}: {message}\n")
+                self.play_ding_sound()  # Play ding sound for directed messages
                 continue  # Skip displaying these in the main terminal
             
             # --- Process and display non-header lines ---
@@ -634,6 +640,10 @@ class BBSTerminalApp:
             self.parse_and_save_chatlog_message(line)
             if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
                 self.detect_logon_prompt(line)
+            
+            # Play ding sound for any message
+            if re.match(r'^From\s+\S+', clean_line, re.IGNORECASE):
+                self.play_ding_sound()
         
         self.partial_line = lines[-1]
 
@@ -647,7 +657,7 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, line):
-        """Parse and save chat messages in formats:
+        """Parse and save chat messages with timestamps in formats:
            - Public: 'From <username>: <message>'
            - DM:     'From <username> (to <recipient>): <message>'
         """
@@ -668,7 +678,8 @@ class BBSTerminalApp:
                 recipient = self.username.get()
             
             # Log the message only under the sender.
-            self.save_chatlog_message(sender, message)
+            timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+            self.save_chatlog_message(sender, timestamp + message)
             
             # Save the last parsed DM info for later continuation lines.
             self.last_message_info = (sender, None)  # No recipient logged
@@ -952,6 +963,19 @@ class BBSTerminalApp:
         if last_end < len(text):
             self.terminal_display.insert(tk.END, text[last_end:], tag)
 
+    def insert_directed_message_with_hyperlinks(self, text, tag):
+        """Insert directed message text with hyperlinks detected and tagged."""
+        url_regex = re.compile(r'(https?://\S+)')
+        last_end = 0
+        for match in url_regex.finditer(text):
+            start, end = match.span()
+            if start > last_end:
+                self.directed_msg_display.insert(tk.END, text[last_end:start], tag)
+            self.directed_msg_display.insert(tk.END, text[start:end], ("hyperlink", tag))
+            last_end = end
+        if last_end < len(text):
+            self.directed_msg_display.insert(tk.END, text[last_end:], tag)
+
     def open_hyperlink(self, event):
         """Open the hyperlink in a web browser."""
         index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
@@ -962,6 +986,16 @@ class BBSTerminalApp:
         url = self.terminal_display.get(start_index, end_index).strip()
         webbrowser.open(url)
 
+    def open_directed_message_hyperlink(self, event):
+        """Open the hyperlink in a web browser from directed messages."""
+        index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
+        start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+        end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
+        if not end_index:
+            end_index = self.directed_msg_display.index("end")
+        url = self.directed_msg_display.get(start_index, end_index).strip()
+        webbrowser.open(url)
+
     def show_thumbnail_preview(self, event):
         """Show a thumbnail preview of the hyperlink."""
         index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
@@ -970,6 +1004,16 @@ class BBSTerminalApp:
         if not end_index:
             end_index = self.terminal_display.index("end")
         url = self.terminal_display.get(start_index, end_index).strip()
+        self.show_thumbnail(url, event)
+
+    def show_directed_message_thumbnail_preview(self, event):
+        """Show a thumbnail preview of the hyperlink from directed messages."""
+        index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
+        start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+        end_index = self.directed_msg_display.search(r"\s", index, stopindex="end", regexp=True)
+        if not end_index:
+            end_index = self.directed_msg_display.index("end")
+        url = self.directed_msg_display.get(start_index, end_index).strip()
         self.show_thumbnail(url, event)
 
     def show_thumbnail(self, url, event):
@@ -1316,11 +1360,16 @@ class BBSTerminalApp:
         self.master.after(5000, self.refresh_chat_members)
 
     def append_directed_message(self, text):
-        """Append text to the directed messages display."""
+        """Append text to the directed messages display with a timestamp."""
+        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
         self.directed_msg_display.configure(state=tk.NORMAL)
-        self.directed_msg_display.insert(tk.END, text)
+        self.insert_directed_message_with_hyperlinks(timestamp + text + "\n", "normal")
         self.directed_msg_display.see(tk.END)
         self.directed_msg_display.configure(state=tk.DISABLED)
+
+    def play_ding_sound(self):
+        """Play a standard ding sound effect."""
+        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
 
 def main():
     root = tk.Tk()
