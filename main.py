@@ -632,7 +632,9 @@ class BBSTerminalApp:
                 sender, _, message = directed_msg_match.groups()
                 self.append_directed_message(f"From {sender}: {message}\n")
                 self.play_ding_sound()  # Play ding sound for directed messages
-                continue  # Skip displaying these in the main terminal
+                # Display directed messages in the main terminal as well
+                self.append_terminal_text(line + "\n", "normal")
+                continue
             
             # --- Process and display non-header lines ---
             self.append_terminal_text(line + "\n", "normal")
