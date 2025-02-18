@@ -115,6 +115,9 @@ class BBSTerminalApp:
 
     def build_ui(self):
         """Creates all the frames and widgets for the UI."""
+        # Configure button styles
+        self.configure_button_styles()
+        
         # Create a container frame that will hold both the main UI and the members panel
         container = ttk.Frame(self.master)
         container.pack(fill=tk.BOTH, expand=True)
@@ -152,17 +155,17 @@ class BBSTerminalApp:
         master_check.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
 
         # Add Teleconference Action buttons
-        wave_button = ttk.Button(top_frame, text="Wave", command=lambda: self.send_action("wave"))
+        wave_button = ttk.Button(top_frame, text="Wave", command=lambda: self.send_action("wave"), style="Wave.TButton")
         wave_button.grid(row=0, column=1, padx=5, pady=5)
-        smile_button = ttk.Button(top_frame, text="Smile", command=lambda: self.send_action("smile"))
+        smile_button = ttk.Button(top_frame, text="Smile", command=lambda: self.send_action("smile"), style="Smile.TButton")
         smile_button.grid(row=0, column=2, padx=5, pady=5)
-        dance_button = ttk.Button(top_frame, text="Dance", command=lambda: self.send_action("dance"))
+        dance_button = ttk.Button(top_frame, text="Dance", command=lambda: self.send_action("dance"), style="Dance.TButton")
         dance_button.grid(row=0, column=3, padx=5, pady=5)
-        bow_button = ttk.Button(top_frame, text="Bow", command=lambda: self.send_action("bow"))
+        bow_button = ttk.Button(top_frame, text="Bow", command=lambda: self.send_action("bow"), style="Bow.TButton")
         bow_button.grid(row=0, column=4, padx=5, pady=5)
         
         # Add the Chatlog button
-        chatlog_button = ttk.Button(top_frame, text="Chatlog", command=self.show_chatlog_window)
+        chatlog_button = ttk.Button(top_frame, text="Chatlog", command=self.show_chatlog_window, style="Chatlog.TButton")
         chatlog_button.grid(row=0, column=5, padx=5, pady=5)
 
         # Connection settings example:
@@ -174,19 +177,19 @@ class BBSTerminalApp:
         ttk.Label(self.conn_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
         self.port_entry = ttk.Entry(self.conn_frame, textvariable=self.port, width=6)
         self.port_entry.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        self.connect_button = ttk.Button(self.conn_frame, text="Connect", command=self.toggle_connection)
+        self.connect_button = ttk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, style="Connect.TButton")
         self.connect_button.grid(row=0, column=4, padx=5, pady=5)
         
         # Add the Favorites button
-        favorites_button = ttk.Button(self.conn_frame, text="Favorites", command=self.show_favorites_window)
+        favorites_button = ttk.Button(self.conn_frame, text="Favorites", command=self.show_favorites_window, style="Favorites.TButton")
         favorites_button.grid(row=0, column=5, padx=5, pady=5)
         
         # Add the Settings button
-        settings_button = ttk.Button(self.conn_frame, text="Settings", command=self.show_settings_window)
+        settings_button = ttk.Button(self.conn_frame, text="Settings", command=self.show_settings_window, style="Settings.TButton")
         settings_button.grid(row=0, column=6, padx=5, pady=5)
         
         # Add the Triggers button
-        triggers_button = ttk.Button(self.conn_frame, text="Triggers", command=self.show_triggers_window)
+        triggers_button = ttk.Button(self.conn_frame, text="Triggers", command=self.show_triggers_window, style="Triggers.TButton")
         triggers_button.grid(row=0, column=7, padx=5, pady=5)
         
         # Add the Keep Alive checkbox
@@ -278,6 +281,53 @@ class BBSTerminalApp:
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         self.update_display_font()
+
+    def configure_button_styles(self):
+        """Configure custom styles for buttons."""
+        style = ttk.Style()
+        
+        # Enable themed widgets to use ttk styles
+        style.theme_use('default')
+        
+        # Configure default style settings for all states
+        def configure_button_style(name, bg, fg="white"):
+            # Create custom style
+            style.configure(
+                f"{name}.TButton",
+                foreground=fg,
+                background=bg,
+                bordercolor=bg,
+                darkcolor=bg,
+                lightcolor=bg,
+                font=("Arial", 9, "bold"),
+                relief="raised",
+                padding=(10, 5)
+            )
+            
+            # Map the same colors to all states
+            style.map(
+                f"{name}.TButton",
+                foreground=[("pressed", fg), ("active", fg)],
+                background=[("pressed", bg), ("active", bg)],
+                bordercolor=[("pressed", bg), ("active", bg)],
+                relief=[("pressed", "sunken"), ("active", "raised")]
+            )
+        
+        # Connection button styles (dynamic green/red)
+        configure_button_style("Connect", "#28a745")  # Green
+        configure_button_style("Disconnect", "#dc3545")  # Red
+        
+        # Action buttons (playful colors)
+        configure_button_style("Wave", "#17a2b8")     # Blue
+        configure_button_style("Smile", "#ffc107", "black")  # Yellow with black text
+        configure_button_style("Dance", "#e83e8c")    # Pink
+        configure_button_style("Bow", "#6f42c1")      # Purple
+        
+        # Utility buttons
+        configure_button_style("Chatlog", "#007bff")   # Blue
+        configure_button_style("Favorites", "#fd7e14")  # Orange
+        configure_button_style("Settings", "#6c757d")   # Gray
+        configure_button_style("Triggers", "#20c997")   # Teal
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -462,10 +512,12 @@ class BBSTerminalApp:
         window.destroy()
 
     def update_display_font(self):
-        """Update the Text widget's font."""
+        """Update all text widgets' fonts."""
         new_font = (self.font_name.get(), self.font_size.get())
         self.terminal_display.configure(font=new_font)
         self.directed_msg_display.configure(font=new_font)
+        self.members_listbox.configure(font=new_font)
+        self.actions_listbox.configure(font=new_font)
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
@@ -509,8 +561,10 @@ class BBSTerminalApp:
     def toggle_connection(self):
         """Connect or disconnect from the BBS."""
         if self.connected:
+            self.connect_button.configure(style="Disconnect.TButton")
             self.send_custom_message('=x')
         else:
+            self.connect_button.configure(style="Connect.TButton")
             self.start_connection()
 
     def start_connection(self):
@@ -1513,21 +1567,28 @@ class BBSTerminalApp:
             self.bg_listbox.see(bg_colors.index(current_bg))
 
     def save_font_settings(self, window):
-        """Save the selected font settings and apply them to the chatlog display."""
+        """Save the selected font settings and apply them to all text displays."""
         try:
-            # Use stored selections instead of getting current selections
             if not all(self.current_selections.values()):
                 tk.messagebox.showerror("Error", "Please select an option from each list")
                 return
                 
-            # Apply settings
-            self.chatlog_display.configure(
-                font=(self.current_selections['font'], self.current_selections['size']),
-                fg=self.current_selections['color'],
-                bg=self.current_selections['bg']
-            )
+            # Create font settings dictionary
+            font_settings = {
+                'font': (self.current_selections['font'], self.current_selections['size']),
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
             
-            # Close the window
+            # Apply to all text displays
+            self.chatlog_display.configure(**font_settings)
+            self.directed_msg_display.configure(**font_settings)
+            self.members_listbox.configure(**font_settings)
+            self.actions_listbox.configure(**font_settings)
+            
+            # Store settings for future use
+            self.current_font_settings = font_settings
+            
             window.destroy()
         except Exception as e:
             tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
@@ -1611,40 +1672,42 @@ class BBSTerminalApp:
         """Update the chat members based on the provided lines."""
         combined = " ".join(lines_with_users)
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
-        print(f"[DEBUG] Combined user lines: {combined_clean}")
-
-        # Extract the relevant section of the banner
-        match = re.search(r'Topic:\s*General Chat\s*(.*?)\s*are here with you\.', combined_clean, re.DOTALL | re.IGNORECASE)
-        if match:
-            user_section = match.group(1)
-        else:
-            user_section = combined_clean
-
-        # Normalize the list by replacing "and" with a comma
-        user_section = user_section.replace("and", ",")
-        print(f"[DEBUG] User section: {user_section}")
-
-        # Refined regex pattern for valid usernames and email addresses
-        username_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+(?:@[A-Za-z0-9.-]+\.[A-Za-z]{2,})?\b')
-
-        # Find all tokens that look like valid usernames
-        extracted_users = username_pattern.findall(user_section)
-
-        final_usernames = []
-        for user in extracted_users:
-            # If it's an email, only keep the local part
-            if "@" in user:
-                user = user.split("@")[0]
-            final_usernames.append(user.strip())
-
-        # Remove any unwanted common words
-        common_words = {"and", "are", "here", "with", "you", "topic", "general", "channel", "majorlink"}
-        final_usernames = {user for user in final_usernames if user.lower() not in common_words}
+        
+        # First extract the section between "Topic:" and "are here with you"
+        match = re.search(r'Topic:.*?(?=\s+are here with you\.)', combined_clean, re.DOTALL | re.IGNORECASE)
+        if not match:
+            return
+            
+        user_section = match.group(0)
+        
+        # Remove the "Topic:" part and any parenthetical content
+        user_section = re.sub(r'Topic:.*?\)', '', user_section, flags=re.DOTALL)
+        user_section = re.sub(r'\(.*?\)', '', user_section)
+        
+        # Split by commas and "and", clean up each part
+        parts = re.split(r',\s*|\s+and\s+', user_section)
+        
+        final_usernames = set()
+        for part in parts:
+            # Extract username part from email-like format
+            username = part.strip()
+            if '@' in username:
+                username = username.split('@')[0]
+            
+            # Only accept usernames that:
+            # 1. Are not common words
+            # 2. Are at least 2 characters
+            # 3. Start with a letter
+            # 4. Contain only letters, numbers, dots, underscores
+            if (len(username) >= 2 and 
+                username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic'} and
+                re.match(r'^[A-Za-z][A-Za-z0-9._]*$', username)):
+                final_usernames.add(username)
 
         print(f"[DEBUG] Extracted usernames: {final_usernames}")
         self.chat_members = final_usernames
 
-        # Optionally update last seen timestamps
+        # Update last seen timestamps
         current_time = int(time.time())
         for member in self.chat_members:
             self.last_seen[member.lower()] = current_time
