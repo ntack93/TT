@@ -60,29 +60,42 @@ requests
 
 ### Python Virtual Environment (Windows/PowerShell)
 
-1. **Open PowerShell** and navigate to your project directory:
-   ```powershell
-   cd path\to\your\project
-   ```
+1. **Download and Install Python:**
+   - Go to the [Python website](https://www.python.org/downloads/) and download the latest version of Python.
+   - Run the installer and make sure to check the box that says "Add Python to PATH" before clicking "Install Now".
 
-2. **Create the Virtual Environment:**
-   ```powershell
-   python -m venv venv
-   ```
+2. **Open PowerShell:**
+   - Press `Win + X` and select "Windows PowerShell" from the menu.
 
-3. **Activate the Virtual Environment:**
-   ```powershell
-   .\venv\Scripts\Activate.ps1
-   ```
-   _If you get a script execution policy error, run:_
-   ```powershell
-   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-   ```
+3. **Navigate to Your Project Directory:**
+   - Type the following command and press `Enter`:
+     ```powershell
+     cd path\to\your\project
+     ```
+   - Replace `path\to\your\project` with the actual path to the folder where you saved the project files.
 
-4. **Install Dependencies:**
-   ```powershell
-   pip install -r requirements.txt
-   ```
+4. **Create the Virtual Environment:**
+   - Type the following command and press `Enter`:
+     ```powershell
+     python -m venv venv
+     ```
+
+5. **Activate the Virtual Environment:**
+   - Type the following command and press `Enter`:
+     ```powershell
+     .\venv\Scripts\Activate.ps1
+     ```
+   - If you get a script execution policy error, type the following command and press `Enter`:
+     ```powershell
+     Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+     ```
+   - Then, try activating the virtual environment again.
+
+6. **Install Dependencies:**
+   - Type the following command and press `Enter`:
+     ```powershell
+     pip install -r requirements.txt
+     ```
 
 ---
 
@@ -90,16 +103,19 @@ requests
 
 1. **Ensure your virtual environment is activated.**
 2. **Run the main Python script:**
-   ```powershell
-   python main.py
-   ```
+   - Type the following command and press `Enter`:
+     ```powershell
+     python main.py
+     ```
 3. The desktop window (Tkinter UI) should open, displaying connection settings, chat output, input fields, and additional panels (chatlog, triggers, favorites, etc.).
 
 ---
 
 ## Running the Web UI
 
-1. Open the **ui.html** file in your favorite browser.
+1. **Open the `ui.html` file:**
+   - Navigate to the folder where you saved the project files.
+   - Double-click on the `ui.html` file to open it in your default web browser.
 2. The web UI displays various controls (Favorites, Triggers, Chatlog, etc.) along with a terminal-like output area.
 3. Use the provided buttons and input fields to simulate or send messages.
 
@@ -107,29 +123,29 @@ requests
 
 ## Usage
 
-- **Connecting:**  
-  Enter the BBS host and port in the connection settings, then click **Connect**. The **Connect** button will change to **Disconnect** when connected.
+- **Connecting:**
+  - Enter the BBS host and port in the connection settings, then click **Connect**. The **Connect** button will change to **Disconnect** when connected.
 
-- **Username/Password:**  
-  Use the Username and Password fields to send your credentials. You can enable “Remember” to store these locally.
+- **Username/Password:**
+  - Use the Username and Password fields to send your credentials. You can enable “Remember” to store these locally.
 
-- **Sending Messages:**  
-  Type a message into the input field at the bottom. Press **Enter** to send. If the input is empty, an ENTER (newline) keystroke will be sent.
+- **Sending Messages:**
+  - Type a message into the input field at the bottom. Press **Enter** to send. If the input is empty, an ENTER (newline) keystroke will be sent.
 
-- **Triggers:**  
-  Click the **Triggers** button to open a small window with 10 rows (2 columns: Trigger and Response). Fill in your automation pairs and click **Save**. When a message received in the terminal matches any trigger (case‑insensitive), the associated response is automatically sent.
+- **Triggers:**
+  - Click the **Triggers** button to open a small window with 10 rows (2 columns: Trigger and Response). Fill in your automation pairs and click **Save**. When a message received in the terminal matches any trigger (case‑insensitive), the associated response is automatically sent.
 
-- **Chatlog:**  
-  Click the **Chatlog** button to view a chatlog window. The left pane lists users who have sent messages, and clicking a username displays their messages in the right pane. Use the **Clear** button to clear the log for the selected user.
+- **Chatlog:**
+  - Click the **Chatlog** button to view a chatlog window. The left pane lists users who have sent messages, and clicking a username displays their messages in the right pane. Use the **Clear** button to clear the log for the selected user.
 
-- **Favorites:**  
-  Use the **Favorites** button to manage and quickly select favorite BBS addresses.
+- **Favorites:**
+  - Use the **Favorites** button to manage and quickly select favorite BBS addresses.
 
-- **Additional Controls:**  
-  Options like **MUD Mode**, **Keep Alive**, and action buttons (Wave, Smile, Dance, Bow) are available to customize your experience.
+- **Additional Controls:**
+  - Options like **MUD Mode**, **Keep Alive**, and action buttons (Wave, Smile, Dance, Bow) are available to customize your experience.
 
-- **Chatroom Members:**  
-  The chat members panel (on the right side of the desktop app) shows active members.
+- **Chatroom Members:**
+  - The chat members panel (on the right side of the desktop app) shows active members.
 
 ---
 
@@ -152,21 +168,20 @@ requests
 
 ## Troubleshooting
 
-- **No Chat Messages Displayed:**  
-  Ensure that your regex filters (in `process_data_chunk`) match the format of incoming messages. For public messages, the expected format is `From <username>: <message>` (or similar). Adjust the regex if needed.
+- **No Chat Messages Displayed:**
+  - Ensure that your regex filters (in `process_data_chunk`) match the format of incoming messages. For public messages, the expected format is `From <username>: <message>` (or similar). Adjust the regex if needed.
 
-- **Triggers Not Firing:**  
-  Verify that your trigger strings exactly match parts of the incoming message (case-insensitive). You can test by manually injecting sample messages into the terminal.
+- **Triggers Not Firing:**
+  - Verify that your trigger strings exactly match parts of the incoming message (case-insensitive). You can test by manually injecting sample messages into the terminal.
 
-- **UI Elements Not Visible:**  
-  Do a hard refresh in your browser or restart the desktop app to ensure that the latest HTML/CSS/JS changes are loaded.
+- **UI Elements Not Visible:**
+  - Do a hard refresh in your browser or restart the desktop app to ensure that the latest HTML/CSS/JS changes are loaded.
 
-- **Connection Issues:**  
-  Check that the BBS host and port are correct. Use debugging messages (printed to the console) to see connection status.
+- **Connection Issues:**
+  - Check that the BBS host and port are correct. Use debugging messages (printed to the console) to see connection status.
 
 ---
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-```
