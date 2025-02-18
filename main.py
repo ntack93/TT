@@ -26,6 +26,16 @@ class BBSTerminalApp:
         self.master = master
         self.master.title("Retro BBS Terminal")
 
+        # Load saved font settings or use defaults
+        saved_font_settings = self.load_font_settings()
+        self.font_name = tk.StringVar(value=saved_font_settings.get('font_name', "Courier New"))
+        self.font_size = tk.IntVar(value=saved_font_settings.get('font_size', 10))
+        self.current_font_settings = {
+            'font': (self.font_name.get(), self.font_size.get()),
+            'fg': saved_font_settings.get('fg', 'white'),
+            'bg': saved_font_settings.get('bg', 'black')
+        }
+
         # 1.1️⃣ 🎉 CONFIGURABLE VARIABLES
         self.host = tk.StringVar(value="bbs.example.com")
         self.port = tk.IntVar(value=23)
@@ -512,12 +522,19 @@ class BBSTerminalApp:
         window.destroy()
 
     def update_display_font(self):
-        """Update all text widgets' fonts."""
-        new_font = (self.font_name.get(), self.font_size.get())
-        self.terminal_display.configure(font=new_font)
-        self.directed_msg_display.configure(font=new_font)
-        self.members_listbox.configure(font=new_font)
-        self.actions_listbox.configure(font=new_font)
+        """Update all text widgets' fonts with current settings."""
+        try:
+            font_settings = {
+                'font': (self.font_name.get(), self.font_size.get()),
+                'fg': self.current_font_settings.get('fg', 'white'),
+                'bg': self.current_font_settings.get('bg', 'black')
+            }
+            self.terminal_display.configure(**font_settings)
+            self.directed_msg_display.configure(**font_settings)
+            self.members_listbox.configure(**font_settings)
+            self.actions_listbox.configure(**font_settings)
+        except Exception as e:
+            print(f"Error updating display font: {e}")
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
@@ -1589,6 +1606,16 @@ class BBSTerminalApp:
             # Store settings for future use
             self.current_font_settings = font_settings
             
+            # Save to file
+            settings_to_save = {
+                'font_name': self.current_selections['font'],
+                'font_size': self.current_selections['size'],
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
+            with open("font_settings.json", "w") as file:
+                json.dump(settings_to_save, file)
+            
             window.destroy()
         except Exception as e:
             tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
@@ -1890,6 +1917,21 @@ class BBSTerminalApp:
         """Deselect user and show all messages combined."""
         self.chatlog_listbox.selection_clear(0, tk.END)
         self.display_chatlog_messages(None)
+
+    def load_font_settings(self):
+        """Load font settings from a local file or return defaults."""
+        try:
+            if os.path.exists("font_settings.json"):
+                with open("font_settings.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading font settings: {e}")
+        return {
+            'font_name': "Courier New",
+            'font_size': 10,
+            'fg': 'white',
+            'bg': 'black'
+        }
 
 def main():
     root = tk.Tk()
