@@ -98,6 +98,10 @@ class BBSTerminalApp:
         self.show_password = tk.BooleanVar(value=True)
         self.show_all = tk.BooleanVar(value=True)
 
+        # Action list
+        self.actions = []
+        self.collecting_actions = False
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
@@ -112,11 +116,20 @@ class BBSTerminalApp:
         # Create a container frame that will hold both the main UI and the members panel
         container = ttk.Frame(self.master)
         container.pack(fill=tk.BOTH, expand=True)
-        
+
+        # Create the Actions listbox on the RIGHT, just to the left of the Chatroom Members Panel
+        actions_frame = ttk.LabelFrame(container, text="Actions")
+        actions_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
+        self.actions_listbox = tk.Listbox(actions_frame, height=20, width=20, exportselection=False)  # Add exportselection=False
+        self.actions_listbox.pack(fill=tk.BOTH, expand=True)
+        self.actions_listbox.bind("<Double-Button-1>", self.on_action_select)
+        self.actions_listbox.bind("<Return>", self.on_action_select)
+        self.actions_listbox.bind("<Button-1>", self.on_action_select)
+
         # Create the Chatroom Members panel on the RIGHT
         members_frame = ttk.LabelFrame(container, text="Chatroom Members")
         members_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
-        self.members_listbox = tk.Listbox(members_frame, height=20, width=20)
+        self.members_listbox = tk.Listbox(members_frame, height=20, width=20, exportselection=False)  # Add exportselection=False
         self.members_listbox.pack(fill=tk.BOTH, expand=True)
         self.create_members_context_menu()
 
@@ -636,6 +649,20 @@ class BBSTerminalApp:
                 self.append_terminal_text(line + "\n", "normal")
                 continue
             
+            # --- Detect and update Action List ---
+            if clean_line.startswith("Action listing for:"):
+                self.actions = []
+                self.collecting_actions = True
+                continue
+            if clean_line == ":" and self.collecting_actions:
+                self.update_actions_listbox()
+                self.collecting_actions = False
+                continue
+            if self.collecting_actions:
+                self.actions.extend(clean_line.split())
+                self.update_actions_listbox()
+                continue
+            
             # --- Process and display non-header lines ---
             self.append_terminal_text(line + "\n", "normal")
             self.check_triggers(line)
@@ -678,6 +705,9 @@ class BBSTerminalApp:
             # Replace "you" with your local username if applicable:
             if recipient and recipient.lower() == "you":
                 recipient = self.username.get()
+            
+            # Store any hyperlinks found in the message
+            self.parse_and_store_hyperlinks(message, sender)
             
             # Log the message only under the sender.
             timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
@@ -1214,38 +1244,107 @@ class BBSTerminalApp:
             self.display_chatlog_messages(None)  # Refresh the display
 
     def show_chatlog_window(self):
-        """Open a Toplevel window to manage chatlog."""
+        """Open a Toplevel window to manage chatlog and hyperlinks."""
         if self.chatlog_window and self.chatlog_window.winfo_exists():
             self.chatlog_window.lift()
             return
 
         self.chatlog_window = tk.Toplevel(self.master)
         self.chatlog_window.title("Chatlog")
+        self.chatlog_window.geometry("1200x600")  # Slightly wider default size
+        
+        # Make the window resizable
+        self.chatlog_window.columnconfigure(0, weight=1)
+        self.chatlog_window.rowconfigure(0, weight=1)
 
-        row_index = 0
-        chatlog_frame = ttk.Frame(self.chatlog_window)
-        chatlog_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        main_frame = ttk.Frame(self.chatlog_window)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=1)
 
-        self.chatlog_listbox = tk.Listbox(chatlog_frame, height=10, width=30)
-        self.chatlog_listbox.grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.N+tk.S)
+        # Create paned window to hold all panels
+        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        paned.grid(row=0, column=0, sticky="nsew")
+
+        # Left panel - Users list (25% width)
+        users_frame = ttk.Frame(paned)
+        users_frame.columnconfigure(0, weight=1)
+        users_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(users_frame, text="Users").grid(row=0, column=0, sticky="w")
+        self.chatlog_listbox = tk.Listbox(users_frame, height=10)
+        self.chatlog_listbox.grid(row=1, column=0, sticky="nsew")
+        users_scrollbar = ttk.Scrollbar(users_frame, command=self.chatlog_listbox.yview)
+        users_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
         self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
+        
+        paned.add(users_frame, weight=25)
 
-        self.chatlog_display = tk.Text(chatlog_frame, wrap=tk.WORD, state=tk.DISABLED, bg="white", font=("Courier New", 10, "bold"))
-        self.chatlog_display.grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.N+tk.S+tk.E+tk.W)
+        # Middle panel - Messages (50% width)
+        messages_frame = ttk.Frame(paned)
+        messages_frame.columnconfigure(0, weight=1)
+        messages_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(messages_frame, text="Messages").grid(row=0, column=0, sticky="w")
+        self.chatlog_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED,
+                                     bg="white", font=("Courier New", 10))
+        self.chatlog_display.grid(row=1, column=0, sticky="nsew")
+        messages_scrollbar = ttk.Scrollbar(messages_frame, command=self.chatlog_display.yview)
+        messages_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.chatlog_display.configure(yscrollcommand=messages_scrollbar.set)
+        
+        paned.add(messages_frame, weight=50)
 
-        chatlog_scrollbar = ttk.Scrollbar(chatlog_frame, command=self.chatlog_display.yview)
-        chatlog_scrollbar.grid(row=row_index, column=2, sticky=tk.N+tk.S)
-        self.chatlog_display.configure(yscrollcommand=chatlog_scrollbar.set)
+        # Right panel - Hyperlinks (25% width)
+        links_frame = ttk.Frame(paned)
+        links_frame.columnconfigure(0, weight=1)
+        links_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(links_frame, text="Hyperlinks").grid(row=0, column=0, sticky="w")
+        self.links_display = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED,
+                                   bg="lightyellow", font=("Courier New", 10))
+        self.links_display.grid(row=1, column=0, sticky="nsew")
+        links_scrollbar = ttk.Scrollbar(links_frame, command=self.links_display.yview)
+        links_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.links_display.configure(yscrollcommand=links_scrollbar.set)
+        
+        self.links_display.tag_configure("hyperlink", foreground="blue", underline=True)
+        self.links_display.tag_bind("hyperlink", "<Button-1>", self.open_chatlog_hyperlink)
+        self.links_display.tag_bind("hyperlink", "<Enter>", self.show_chatlog_thumbnail_preview)
+        self.links_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
+        
+        paned.add(links_frame, weight=25)
+
+        # Buttons frame at bottom
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.grid(row=1, column=0, sticky="ew", pady=5)
+        
+        ttk.Button(buttons_frame, text="Clear Chat", command=self.confirm_clear_chatlog).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Clear Links", command=self.confirm_clear_links).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Close", command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
 
         self.load_chatlog_list()
+        self.display_stored_links()
 
-        # Add Clear and Close buttons below the chatlog display.
-        row_index += 1
-        clear_button = ttk.Button(chatlog_frame, text="Clear", command=self.clear_active_chatlog)
-        clear_button.grid(row=row_index, column=0, columnspan=3, pady=5)
+    def confirm_clear_chatlog(self):
+        """Show confirmation dialog before clearing chatlog."""
+        selected_index = self.chatlog_listbox.curselection()
+        if not selected_index:
+            return
+            
+        username = self.chatlog_listbox.get(selected_index)
+        if tk.messagebox.askyesno("Confirm Clear", 
+                                 f"Are you sure you want to clear the chatlog for {username}?",
+                                 icon='warning'):
+            self.clear_active_chatlog()
 
-        close_button = ttk.Button(chatlog_frame, text="Close", command=self.chatlog_window.destroy)
-        close_button.grid(row=row_index+1, column=0, columnspan=3, pady=10)
+    def confirm_clear_links(self):
+        """Show confirmation dialog before clearing links history."""
+        if tk.messagebox.askyesno("Confirm Clear", 
+                                 "Are you sure you want to clear all stored hyperlinks?",
+                                 icon='warning'):
+            self.clear_links_history()
 
     def load_chatlog_list(self):
         """Load chatlog from a local file and populate the listbox."""
@@ -1376,6 +1475,127 @@ class BBSTerminalApp:
     def play_ding_sound(self):
         """Play a standard ding sound effect."""
         winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+
+    def update_actions_listbox(self):
+        """Update the Actions listbox with the current actions."""
+        self.actions_listbox.delete(0, tk.END)
+        for action in self.actions:
+            self.actions_listbox.insert(tk.END, action)
+
+    def on_action_select(self, event):
+        """Handle action selection and send the action to the highlighted username."""
+        selected_action_index = self.actions_listbox.curselection()
+        selected_member_index = self.members_listbox.curselection()
+        
+        if selected_action_index and selected_member_index:
+            action = self.actions_listbox.get(selected_action_index[0])
+            username = self.members_listbox.get(selected_member_index[0])
+            
+            # Format and send the action command
+            action_command = f"{action} {username}"
+            if self.connected and self.writer:
+                asyncio.run_coroutine_threadsafe(
+                    self._send_message(action_command + "\r\n"), 
+                    self.loop
+                )
+                
+                # Maintain selections after sending
+                self.master.after(100, self._maintain_selections, selected_action_index[0], selected_member_index[0])
+
+    def _maintain_selections(self, action_index, member_index):
+        """Helper method to maintain listbox selections."""
+        self.actions_listbox.selection_clear(0, tk.END)
+        self.actions_listbox.selection_set(action_index)
+        self.actions_listbox.activate(action_index)
+        
+        self.members_listbox.selection_clear(0, tk.END)
+        self.members_listbox.selection_set(member_index)
+        self.members_listbox.activate(member_index)
+
+    def store_hyperlink(self, url, sender="Unknown", timestamp=None):
+        """Store a hyperlink with metadata."""
+        if timestamp is None:
+            timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+        
+        links = self.load_links_history()
+        links.append({
+            "url": url,
+            "sender": sender,
+            "timestamp": timestamp
+        })
+        self.save_links_history(links)
+        
+        # Update links display if window is open
+        if self.chatlog_window and self.chatlog_window.winfo_exists():
+            self.display_stored_links()
+
+    def load_links_history(self):
+        """Load stored hyperlinks from file."""
+        if os.path.exists("hyperlinks.json"):
+            with open("hyperlinks.json", "r") as file:
+                return json.load(file)
+        return []
+
+    def save_links_history(self, links):
+        """Save hyperlinks to file."""
+        with open("hyperlinks.json", "w") as file:
+            json.dump(links, file)
+
+    def clear_links_history(self):
+        """Clear all stored hyperlinks."""
+        self.save_links_history([])
+        if self.chatlog_window and self.chatlog_window.winfo_exists():
+            self.display_stored_links()
+
+    def display_stored_links(self):
+        """Display stored hyperlinks in the links panel."""
+        if not hasattr(self, 'links_display'):
+            return
+
+        self.links_display.configure(state=tk.NORMAL)
+        self.links_display.delete(1.0, tk.END)
+        
+        links = self.load_links_history()
+        for link in links:
+            timestamp = link.get("timestamp", "")
+            sender = link.get("sender", "Unknown")
+            url = link.get("url", "")
+            
+            self.links_display.insert(tk.END, f"{timestamp} from {sender}:\n")
+            self.links_display.insert(tk.END, f"{url}\n\n", "hyperlink")
+        
+        self.links_display.configure(state=tk.DISABLED)
+
+    def open_chatlog_hyperlink(self, event):
+        """Handle clicking a hyperlink in the chatlog links panel."""
+        index = self.links_display.index("@%s,%s" % (event.x, event.y))
+        for tag_name in self.links_display.tag_names(index):
+            if tag_name == "hyperlink":
+                line_start = self.links_display.index(f"{index} linestart")
+                line_end = self.links_display.index(f"{index} lineend")
+                url = self.links_display.get(line_start, line_end).strip()
+                webbrowser.open(url)
+                break
+
+    def show_chatlog_thumbnail_preview(self, event):
+        """Show thumbnail preview for links in the chatlog links panel."""
+        index = self.links_display.index("@%s,%s" % (event.x, event.y))
+        for tag_name in self.links_display.tag_names(index):
+            if tag_name == "hyperlink":
+                line_start = self.links_display.index(f"{index} linestart")
+                line_end = self.links_display.index(f"{index} lineend")
+                url = self.links_display.get(line_start, line_end).strip()
+                self.show_thumbnail(url, event)
+                break
+
+    def parse_and_store_hyperlinks(self, message, sender=None):
+        """Extract and store hyperlinks from a message."""
+        url_pattern = re.compile(r'(https?://\S+)')
+        urls = url_pattern.findall(message)
+        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+        
+        for url in urls:
+            self.store_hyperlink(url, sender, timestamp)
 
 def main():
     root = tk.Tk()
