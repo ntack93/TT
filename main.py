@@ -1570,12 +1570,23 @@ class BBSTerminalApp:
             username = self.chatlog_listbox.get(selected_index)
             messages = chatlog.get(username, [])
             for message in messages:
+                # Format: [timestamp] From <username>: message
+                if not message.strip().startswith('['):  # Add timestamp if missing
+                    message = time.strftime("[%Y-%m-%d %H:%M:%S] ") + message
+                if not "From" in message[:message.find(':') if ':' in message else len(message)]:
+                    message = message.replace(']', '] From ' + username + ':')
                 self.chatlog_display.insert(tk.END, message + "\n")
         else:
             # Show all messages sorted by timestamp
             all_messages = []
             for username, messages in chatlog.items():
-                all_messages.extend((msg, username) for msg in messages)
+                for msg in messages:
+                    # Format: [timestamp] From <username>: message
+                    if not msg.strip().startswith('['):  # Add timestamp if missing
+                        msg = time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg
+                    if not "From" in msg[:msg.find(':') if ':' in msg else len(msg)]:
+                        msg = msg.replace(']', '] From ' + username + ':')
+                    all_messages.append((msg, username))
             
             # Sort messages by timestamp
             def get_timestamp(msg_tuple):
@@ -1585,7 +1596,7 @@ class BBSTerminalApp:
             all_messages.sort(key=lambda x: get_timestamp(x))
             
             # Display all messages
-            for message, username in all_messages:
+            for message, _ in all_messages:
                 self.chatlog_display.insert(tk.END, f"{message}\n")
         
         self.chatlog_display.configure(state=tk.DISABLED)
