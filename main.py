@@ -285,9 +285,11 @@ class BBSTerminalApp:
         self.input_var = tk.StringVar()
         self.input_box = ttk.Entry(input_frame, textvariable=self.input_var, width=80)
         self.input_box.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
+        # Only bind Return event, remove any other bindings
         self.input_box.bind("<Return>", self.send_message)
         self.create_context_menu(self.input_box)
-        self.send_button = ttk.Button(input_frame, text="Send", command=self.send_message)
+        # Make send button use command instead of bind
+        self.send_button = ttk.Button(input_frame, text="Send", command=lambda: self.send_message(None))
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         self.update_display_font()
@@ -492,7 +494,34 @@ class BBSTerminalApp:
 
         # Font Name
         ttk.Label(settings_win, text="Font Name:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
-        font_options = ["Courier New", "Consolas", "Lucida Console", "Terminus (TTF)"]
+        # Extended font list with DOS/Terminal themed fonts
+        font_options = [
+            "Courier New",
+            "Consolas", 
+            "Terminal",
+            "Fixedsys",
+            "System",
+            "Modern DOS 8x16",
+            "Modern DOS 8x8",
+            "Perfect DOS VGA 437",
+            "MS Gothic",
+            "SimSun-ExtB",
+            "NSimSun",
+            "Lucida Console",
+            "OCR A Extended",
+            "Prestige Elite Std",
+            "Letter Gothic Std",
+            "FreeMono",
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "IBM Plex Mono",
+            "PT Mono",
+            "Share Tech Mono",
+            "VT323",
+            "Press Start 2P",
+            "DOS/V",
+            "TerminalVector"
+        ]
         font_dropdown = ttk.Combobox(settings_win, textvariable=self.font_name, values=font_options, state="readonly")
         font_dropdown.grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
         row_index += 1
@@ -759,48 +788,38 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, line):
-        """Parse and save chat messages with timestamps in formats:
-           - Public: 'From <username>: <message>'
-           - DM:     'From <username> (to <recipient>): <message>'
-        """
-        # Remove any ANSI escape sequences that might interfere with matching.
+        """Parse and save chat messages with timestamps."""
+        # Remove any ANSI escape sequences
         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
         
-        # Skip non-user messages
-        if any(phrase in clean_line for phrase in [
-            "You are in the", "There is currently no one else here with you.", 
-            'Just press "?" if you need any assistance.', ":join main"
-        ]):
+        # Skip system messages and banner info
+        skip_patterns = [
+            r"You are in the",
+            r"Topic:",
+            r"Just press",
+            r"are here with you",
+            r"^\s*$",  # Empty lines
+            r"^\s*:.*$",  # Lines starting with colon (commands)
+            r"^\s*\(.*\)\s*$"  # Lines containing only parenthetical content
+        ]
+        
+        if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
             return
-        
-        # Check if the line starts with "From <username>"
-        match = re.match(r'^\s*From\s+(\S+)', clean_line, re.IGNORECASE)
-        
-        if match:
-            sender = match.group(1)
-            self.last_message_info = (sender, "")
-            self.append_to_last_chatlog_message(sender, clean_line)
-        elif self.last_message_info:
-            sender, message = self.last_message_info
-            if ':' in clean_line:
-                # Append the line to the current message
-                self.append_to_last_chatlog_message(sender, clean_line)
-                # Check if this line contains the second colon
-                if message.count(':') >= 2:
-                    self.last_message_info = None
-            else:
-                # Append the line to the current message
-                self.append_to_last_chatlog_message(sender, clean_line)
 
-    def append_to_last_chatlog_message(self, username, extra_text):
-        """Append extra_text to the last message logged for username."""
-        chatlog = self.load_chatlog()
-        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
-        if username in chatlog and chatlog[username]:
-            chatlog[username][-1] += "\n" + timestamp + extra_text
-        else:
-            chatlog[username] = [timestamp + extra_text]
-        self.save_chatlog(chatlog)
+        # Try to extract message format "From <username>: <message>"
+        message_match = re.match(r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$', clean_line)
+        if message_match:
+            sender = message_match.group(1)
+            message = message_match.group(2)
+            
+            # Add timestamp if not present
+            if not clean_line.strip().startswith('['):
+                clean_line = time.strftime("[%Y-%m-%d %H:%M:%S] ") + clean_line
+
+            # Save to chatlog
+            self.save_chatlog_message(sender, clean_line)
+            # Extract any URLs
+            self.parse_and_store_hyperlinks(clean_line, sender)
 
     def send_message(self, event=None):
         """Send the user's typed message to the BBS."""
@@ -808,33 +827,49 @@ class BBSTerminalApp:
             self.append_terminal_text("Not connected to any BBS.\n", "normal")
             return
 
-        user_input = self.input_var.get()
+        user_input = self.input_var.get().strip()
+        # Clear input before sending to prevent duplicates
         self.input_var.set("")
-        prefix = "Gos " if self.mud_mode.get() else ""
-        # If there is no text, send only a carriage return (newline)
-        if user_input.strip() == "":
+        
+        if not user_input:
+            # If empty/whitespace, just send newline
             message = "\r\n"
         else:
+            # Add prefix if mud mode enabled
+            prefix = "Gos " if self.mud_mode.get() else ""
             message = prefix + user_input + "\r\n"
-        asyncio.run_coroutine_threadsafe(self._send_message(message), self.loop)
-
-    async def _send_message(self, message):
-        self.writer.write(message)
-        await self.writer.drain()
+            
+        # Send message
+        if self.connected and self.writer:
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+            except Exception as e:
+                print(f"Error sending message: {e}")
 
     def send_username(self):
         """Send the username to the BBS."""
         if self.connected and self.writer:
-            asyncio.run_coroutine_threadsafe(self._send_message(self.username.get() + "\r\n"), self.loop)
-            if self.remember_username.get():
-                self.save_username()
+            message = self.username.get() + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+                if self.remember_username.get():
+                    self.save_username()
+            except Exception as e:
+                print(f"Error sending username: {e}")
 
     def send_password(self):
         """Send the password to the BBS."""
         if self.connected and self.writer:
-            asyncio.run_coroutine_threadsafe(self._send_message(self.password.get() + "\r\n"), self.loop)
-            if self.remember_password.get():
-                self.save_password()
+            message = self.password.get() + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+                if self.remember_password.get():
+                    self.save_password()
+            except Exception as e:
+                print(f"Error sending password: {e}")
 
     def check_triggers(self, message):
         """Check incoming messages for triggers and send automated response if matched."""
@@ -847,20 +882,33 @@ class BBSTerminalApp:
 
     def send_custom_message(self, message):
         """Send a custom message (for trigger responses)."""
-        print(f"Sending custom message: {message}")
-        asyncio.run_coroutine_threadsafe(self._send_message(message + "\r\n"), self.loop)
+        if self.connected and self.writer:
+            message = message + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+            except Exception as e:
+                print(f"Error sending custom message: {e}")
 
     def send_action(self, action):
         """Send an action to the BBS, optionally appending the highlighted username."""
+        if not self.connected or not self.writer:
+            return
+            
         selected_indices = self.members_listbox.curselection()
         if selected_indices:
             username = self.members_listbox.get(selected_indices[0])
             action = f"{action} {username}"
-        asyncio.run_coroutine_threadsafe(self._send_message(action + "\r\n"), self.loop)
-        
-        # Deselect the action after sending
-        self.actions_listbox.selection_clear(0, tk.END)
-        self.members_listbox.selection_clear(0, tk.END)
+            
+        message = action + "\r\n"
+        self.writer.write(message)
+        try:
+            self.loop.call_soon_threadsafe(self.writer.drain)
+            # Deselect the action after sending
+            self.actions_listbox.selection_clear(0, tk.END)
+            self.members_listbox.selection_clear(0, tk.END)
+        except Exception as e:
+            print(f"Error sending action: {e}")
 
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
@@ -1362,6 +1410,20 @@ class BBSTerminalApp:
         self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
         self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
         
+        # Create context menu for users list
+        users_menu = tk.Menu(self.chatlog_listbox, tearoff=0)
+        users_menu.add_command(label="Delete", command=self.delete_selected_user)
+
+        def show_users_menu(event):
+            try:
+                self.chatlog_listbox.selection_clear(0, tk.END)
+                self.chatlog_listbox.selection_set(self.chatlog_listbox.nearest(event.y))
+                users_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                users_menu.grab_release()
+
+        self.chatlog_listbox.bind("<Button-3>", show_users_menu)
+        
         paned.add(users_frame, weight=25)
 
         # Middle panel - Messages (50% width)
@@ -1646,48 +1708,37 @@ class BBSTerminalApp:
         for username in chatlog.keys():
             self.chatlog_listbox.insert(tk.END, username)
 
-    def display_chatlog_messages(self, event):
+    def display_chatlog_messages(self, event=None):
         """Display messages for the selected user or all messages if no user is selected."""
-        selected_index = self.chatlog_listbox.curselection()
         chatlog = self.load_chatlog()
         self.chatlog_display.configure(state=tk.NORMAL)
         self.chatlog_display.delete(1.0, tk.END)
         
-        if selected_index:
-            # Show messages for selected user
-            username = self.chatlog_listbox.get(selected_index)
-            messages = chatlog.get(username, [])
-            for message in messages:
-                # Format: [timestamp] From <username>: message
-                if not message.strip().startswith('['):  # Add timestamp if missing
-                    message = time.strftime("[%Y-%m-%d %H:%M:%S] ") + message
-                if not "From" in message[:message.find(':') if ':' in message else len(message)]:
-                    message = message.replace(']', '] From ' + username + ':')
-                self.chatlog_display.insert(tk.END, message + "\n")
-        else:
-            # Show all messages sorted by timestamp
+        if event is None or not self.chatlog_listbox.curselection():
+            # Show all messages combined chronologically
             all_messages = []
             for username, messages in chatlog.items():
-                for msg in messages:
-                    # Format: [timestamp] From <username>: message
-                    if not msg.strip().startswith('['):  # Add timestamp if missing
-                        msg = time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg
-                    if not "From" in msg[:msg.find(':') if ':' in msg else len(msg)]:
-                        msg = msg.replace(']', '] From ' + username + ':')
-                    all_messages.append((msg, username))
+                all_messages.extend(messages)
             
-            # Sort messages by timestamp
-            def get_timestamp(msg_tuple):
-                timestamp_match = re.match(r'\[(.*?)\]', msg_tuple[0])
-                return timestamp_match.group(1) if timestamp_match else ""
+            # Sort by timestamp
+            def get_timestamp(msg):
+                match = re.match(r'\[(.*?)\]', msg)
+                return match.group(1) if match else "0"
+            all_messages.sort(key=get_timestamp)
             
-            all_messages.sort(key=lambda x: get_timestamp(x))
-            
-            # Display all messages
-            for message, _ in all_messages:
-                self.chatlog_display.insert(tk.END, f"{message}\n")
+            for message in all_messages:
+                self.chatlog_display.insert(tk.END, message + "\n")
+        else:
+            # Show messages for selected user
+            selected_index = self.chatlog_listbox.curselection()
+            username = self.chatlog_listbox.get(selected_index)
+            messages = chatlog.get(username, [])
+            messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x).group(1) if re.match(r'\[(.*?)\]', x) else "0")
+            for message in messages:
+                self.chatlog_display.insert(tk.END, message + "\n")
         
         self.chatlog_display.configure(state=tk.DISABLED)
+        self.chatlog_display.see(tk.END)
 
     def update_members_display(self):
         """Update the chat members Listbox with the current chat_members set."""
@@ -1825,6 +1876,10 @@ class BBSTerminalApp:
         self.actions_listbox.delete(0, tk.END)
         for action in self.actions:
             self.actions_listbox.insert(tk.END, action)
+        
+        # After populating actions, send an Enter keystroke to resume BBS output
+        if self.connected and self.writer:
+            asyncio.run_coroutine_threadsafe(self._send_message("\r\n"), self.loop)
 
     def on_action_select(self, event):
         """Handle action selection and send the action to the highlighted username."""
@@ -1951,6 +2006,28 @@ class BBSTerminalApp:
             'fg': 'white',
             'bg': 'black'
         }
+
+    def delete_selected_user(self):
+        """Delete the selected user from the chatlog and users list."""
+        selected = self.chatlog_listbox.curselection()
+        if not selected:
+            return
+            
+        username = self.chatlog_listbox.get(selected)
+        if tk.messagebox.askyesno("Confirm Delete", 
+                                 f"Are you sure you want to delete {username} and their chat logs?",
+                                 icon='warning'):
+            # Remove from chatlog
+            chatlog = self.load_chatlog()
+            if username in chatlog:
+                del chatlog[username]
+                self.save_chatlog(chatlog)
+            
+            # Remove from listbox
+            self.chatlog_listbox.delete(selected)
+            
+            # Show all messages after deletion
+            self.display_chatlog_messages(None)
 
 def main():
     root = tk.Tk()
