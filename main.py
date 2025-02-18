@@ -128,34 +128,34 @@ class BBSTerminalApp:
         # Configure button styles
         self.configure_button_styles()
         
-        # Create a container frame that will hold both the main UI and the members panel
-        container = ttk.Frame(self.master)
+        # Create a main PanedWindow container
+        container = ttk.PanedWindow(self.master, orient=tk.HORIZONTAL)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Create the Actions listbox on the RIGHT, just to the left of the Chatroom Members Panel
+        # Create the main UI frame on the LEFT
+        main_frame = ttk.Frame(container, name='main_frame')
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=0)
+        main_frame.rowconfigure(1, weight=3)
+        main_frame.rowconfigure(2, weight=0)
+        container.add(main_frame, weight=1)
+
+        # Create the Chatroom Members panel in the MIDDLE
+        members_frame = ttk.LabelFrame(container, text="Chatroom Members")
+        self.members_listbox = tk.Listbox(members_frame, height=20, width=20, exportselection=False)
+        self.members_listbox.pack(fill=tk.BOTH, expand=True)
+        self.create_members_context_menu()
+        container.add(members_frame, weight=0)
+
+        # Create the Actions listbox on the RIGHT
         actions_frame = ttk.LabelFrame(container, text="Actions")
-        actions_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
-        self.actions_listbox = tk.Listbox(actions_frame, height=20, width=20, exportselection=False)  # Add exportselection=False
+        self.actions_listbox = tk.Listbox(actions_frame, height=20, width=20, exportselection=False)
         self.actions_listbox.pack(fill=tk.BOTH, expand=True)
         self.actions_listbox.bind("<Double-Button-1>", self.on_action_select)
         self.actions_listbox.bind("<Return>", self.on_action_select)
         self.actions_listbox.bind("<Button-1>", self.on_action_select)
+        container.add(actions_frame, weight=0)
 
-        # Create the Chatroom Members panel on the RIGHT
-        members_frame = ttk.LabelFrame(container, text="Chatroom Members")
-        members_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
-        self.members_listbox = tk.Listbox(members_frame, height=20, width=20, exportselection=False)  # Add exportselection=False
-        self.members_listbox.pack(fill=tk.BOTH, expand=True)
-        self.create_members_context_menu()
-
-        # Create the main UI frame on the LEFT using grid layout
-        main_frame = ttk.Frame(container, name='main_frame')
-        main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(0, weight=0)
-        main_frame.rowconfigure(1, weight=3)  # Paned container gets most space
-        main_frame.rowconfigure(2, weight=0)
-        
         # --- Row 0: Top frame (connection settings, username, password) ---
         top_frame = ttk.Frame(main_frame)
         top_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
