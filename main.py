@@ -489,6 +489,7 @@ class BBSTerminalApp:
         """Open a Toplevel for font settings, automation toggles, etc."""
         settings_win = tk.Toplevel(self.master)
         settings_win.title("Settings")
+        settings_win.attributes('-topmost', True)  # Keep window on top
 
         row_index = 0
 
@@ -755,14 +756,14 @@ class BBSTerminalApp:
             if clean_line.startswith("Action listing for:"):
                 self.actions = []
                 self.collecting_actions = True
+                # Immediately send Enter keystroke when we start collecting actions
+                if self.connected and self.writer:
+                    self.writer.write("\r\n")
+                    self.loop.call_soon_threadsafe(self.writer.drain)
                 continue
             if clean_line == ":" and self.collecting_actions:
                 self.collecting_actions = False
                 self.master.after_idle(self.update_actions_listbox)
-                # Immediately send Enter keystroke to resume BBS output
-                if self.connected and self.writer:
-                    self.writer.write("\r\n")
-                    self.loop.call_soon_threadsafe(self.writer.drain)
                 continue
             if self.collecting_actions:
                 self.actions.extend(clean_line.split())
@@ -947,10 +948,12 @@ class BBSTerminalApp:
         """Open a Toplevel window to manage favorite BBS addresses."""
         if self.favorites_window and self.favorites_window.winfo_exists():
             self.favorites_window.lift()
+            self.favorites_window.attributes('-topmost', True)
             return
 
         self.favorites_window = tk.Toplevel(self.master)
         self.favorites_window.title("Favorite BBS Addresses")
+        self.favorites_window.attributes('-topmost', True)  # Keep window on top
 
         row_index = 0
         self.favorites_listbox = tk.Listbox(self.favorites_window, height=10, width=50)
@@ -1045,10 +1048,12 @@ class BBSTerminalApp:
         """Open a Toplevel window to manage triggers."""
         if self.triggers_window and self.triggers_window.winfo_exists():
             self.triggers_window.lift()
+            self.triggers_window.attributes('-topmost', True)
             return
 
         self.triggers_window = tk.Toplevel(self.master)
         self.triggers_window.title("Automation Triggers")
+        self.triggers_window.attributes('-topmost', True)  # Keep window on top
 
         row_index = 0
         triggers_frame = ttk.Frame(self.triggers_window)
@@ -1194,7 +1199,7 @@ class BBSTerminalApp:
 
         self.preview_window = tk.Toplevel(self.master)
         self.preview_window.overrideredirect(True)
-        self.preview_window.attributes("-topmost", True)
+        self.preview_window.attributes("-topmost", True)  # Already had this one
 
         # Position the preview window near the mouse pointer
         x = self.master.winfo_pointerx() + 10
@@ -1382,11 +1387,13 @@ class BBSTerminalApp:
         """Open a Toplevel window to manage chatlog and hyperlinks."""
         if self.chatlog_window and self.chatlog_window.winfo_exists():
             self.chatlog_window.lift()
+            self.chatlog_window.attributes('-topmost', True)
             return
 
         self.chatlog_window = tk.Toplevel(self.master)
         self.chatlog_window.title("Chatlog")
         self.chatlog_window.geometry("1200x600")  # Slightly wider default size
+        self.chatlog_window.attributes('-topmost', True)  # Keep window on top
         
         # Make the window resizable
         self.chatlog_window.columnconfigure(0, weight=1)
@@ -1484,6 +1491,7 @@ class BBSTerminalApp:
         font_window.title("Change Font Settings")
         font_window.geometry("800x600")
         font_window.grab_set()  # Make window modal
+        font_window.attributes('-topmost', True)  # Keep window on top
 
         # Store current selections
         self.current_selections = {
