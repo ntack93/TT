@@ -258,10 +258,10 @@ class BBSTerminalApp:
         self.paned.add(self.output_frame)
         self.paned.paneconfig(self.output_frame, minsize=200)  # Set minimum size for the top pane
         self.terminal_display = tk.Text(self.output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
-        self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         scroll_bar = ttk.Scrollbar(self.output_frame, command=self.terminal_display.yview)
         scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.terminal_display.configure(yscrollcommand=scroll_bar.set)
+        self.terminal_display.configure(yscrollcommand=self.on_scroll_change)
         self.define_ansi_tags()
         self.terminal_display.tag_configure("hyperlink", foreground="blue", underline=True)
         self.terminal_display.tag_bind("hyperlink", "<Button-1>", self.open_hyperlink)
@@ -757,12 +757,15 @@ class BBSTerminalApp:
                 self.collecting_actions = True
                 continue
             if clean_line == ":" and self.collecting_actions:
-                self.update_actions_listbox()
                 self.collecting_actions = False
+                self.master.after_idle(self.update_actions_listbox)
+                # Immediately send Enter keystroke to resume BBS output
+                if self.connected and self.writer:
+                    self.writer.write("\r\n")
+                    self.loop.call_soon_threadsafe(self.writer.drain)
                 continue
             if self.collecting_actions:
                 self.actions.extend(clean_line.split())
-                self.update_actions_listbox()
                 continue
             
             # --- Process and display non-header lines ---
@@ -794,7 +797,7 @@ class BBSTerminalApp:
         
         # Skip system messages and banner info
         skip_patterns = [
-            r"You are in the",
+            r"You are in",
             r"Topic:",
             r"Just press",
             r"are here with you",
@@ -1083,6 +1086,7 @@ class BBSTerminalApp:
         self.terminal_display.configure(state=tk.NORMAL)
         self.parse_ansi_and_insert(text)
         self.terminal_display.see(tk.END)
+        self.master.update_idletasks()  # Force update to ensure proper display
         self.terminal_display.configure(state=tk.DISABLED)
 
     def parse_ansi_and_insert(self, text_data):
@@ -1752,54 +1756,35 @@ class BBSTerminalApp:
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
         
-        # First extract the section between "Topic:" and "are here with you"
-        match = re.search(r'Topic:.*?(?=\s+are here with you\.)', combined_clean, re.DOTALL | re.IGNORECASE)
-        if not match:
-            return
-                
-        user_section = match.group(0)
+        # Extract all usernames from the banner
+        user_section = ""
+        if "You are in" in combined_clean and "are here with you" in combined_clean:
+            # Extract everything between "Topic:" and "are here with you"
+            match = re.search(r'Topic:.*?(?=\s+are here with you\.)', combined_clean, re.DOTALL)
+            if match:
+                user_section = match.group(0)
+                # Remove the Topic line and any parenthetical content
+                user_section = re.sub(r'Topic:.*?\n', '\n', user_section, flags=re.DOTALL)
+                user_section = re.sub(r'\(.*?\)', '', user_section)
         
-        # Remove the "Topic:" part and any parenthetical content
-        user_section = re.sub(r'Topic:.*?\)', '', user_section, flags=re.DOTALL)
-        user_section = re.sub(r'\(.*?\)', '', user_section)
-        
-        # Also get the last part that might contain a username without domain
-        last_user_match = re.search(r'and\s+(\S+)\s+are here with you', combined_clean)
-        last_username = last_user_match.group(1) if last_user_match else None
-        
-        # Split by commas and "and", clean up each part
-        parts = re.split(r',\s*|\s+and\s+', user_section)
-        
+        # Get all usernames including the last one
         final_usernames = set()
         
-        def process_username(raw_username):
-            """Helper function to process and validate a username."""
-            username = raw_username.strip()
-            if '@' in username:
-                username = username.split('@')[0]
-            
-            # Only accept usernames that:
-            # 1. Are not common words
-            # 2. Are at least 2 characters
-            # 3. Start with a letter
-            # 4. Contain only letters, numbers, dots, underscores
+        # First, get all the comma-separated usernames
+        usernames = re.findall(r'([A-Za-z][A-Za-z0-9._]+)@?[\w.]*(?:,|\s+and\s+|$)', user_section)
+        
+        # Process each username
+        for username in usernames:
+            username = username.strip()
             if (len(username) >= 2 and 
                 username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
                 re.match(r'^[A-Za-z][A-Za-z0-9._]*$', username)):
-                return username
-            return None
-
-        # Process all parts from the main section
-        for part in parts:
-            username = process_username(part)
-            if username:
                 final_usernames.add(username)
         
-        # Process the last username if found
-        if last_username:
-            username = process_username(last_username)
-            if username:
-                final_usernames.add(username)
+        # Also check for any remaining "and Username" pattern
+        last_user_match = re.search(r'and\s+([A-Za-z][A-Za-z0-9._]+)\s+are here', combined_clean)
+        if last_user_match:
+            final_usernames.add(last_user_match.group(1))
 
         print(f"[DEBUG] Extracted usernames: {final_usernames}")
         self.chat_members = final_usernames
@@ -1871,15 +1856,17 @@ class BBSTerminalApp:
         """Play a standard ding sound effect."""
         winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
 
+    async def _send_message(self, message):
+        """Async helper method to send messages."""
+        if self.connected and self.writer:
+            self.writer.write(message)
+            await self.writer.drain()
+
     def update_actions_listbox(self):
         """Update the Actions listbox with the current actions."""
         self.actions_listbox.delete(0, tk.END)
         for action in self.actions:
             self.actions_listbox.insert(tk.END, action)
-        
-        # After populating actions, send an Enter keystroke to resume BBS output
-        if self.connected and self.writer:
-            asyncio.run_coroutine_threadsafe(self._send_message("\r\n"), self.loop)
 
     def on_action_select(self, event):
         """Handle action selection and send the action to the highlighted username."""
@@ -2028,6 +2015,13 @@ class BBSTerminalApp:
             
             # Show all messages after deletion
             self.display_chatlog_messages(None)
+
+    def on_scroll_change(self, *args):
+        """Custom scrollbar handler to ensure bottom line visibility."""
+        self.terminal_display.yview_moveto(args[0])
+        if float(args[1]) == 1.0:  # If scrolled to bottom
+            self.master.update_idletasks()
+            self.terminal_display.see(tk.END)
 
 def main():
     root = tk.Tk()
