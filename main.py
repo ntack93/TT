@@ -13,6 +13,8 @@ from PIL import Image, ImageTk
 import requests
 from io import BytesIO
 import winsound  # Import winsound for playing sound effects on Windows
+from tkinter import simpledialog  # Import simpledialog for input dialogs
+
 
 ###############################################################################
 #                         BBS Telnet App (No Chatbot)
@@ -158,10 +160,14 @@ class BBSTerminalApp:
         dance_button.grid(row=0, column=3, padx=5, pady=5)
         bow_button = ttk.Button(top_frame, text="Bow", command=lambda: self.send_action("bow"))
         bow_button.grid(row=0, column=4, padx=5, pady=5)
+        
+        # Add the Chatlog button
+        chatlog_button = ttk.Button(top_frame, text="Chatlog", command=self.show_chatlog_window)
+        chatlog_button.grid(row=0, column=5, padx=5, pady=5)
 
         # Connection settings example:
         self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
-        self.conn_frame.grid(row=1, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
+        self.conn_frame.grid(row=1, column=0, columnspan=6, sticky="ew", padx=5, pady=5)
         ttk.Label(self.conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
         self.host_entry = ttk.Entry(self.conn_frame, textvariable=self.host, width=30)
         self.host_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
@@ -186,10 +192,6 @@ class BBSTerminalApp:
         # Add the Keep Alive checkbox
         keep_alive_check = ttk.Checkbutton(self.conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
         keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
-        
-        # Add the Chatlog button
-        chatlog_button = ttk.Button(self.conn_frame, text="Chatlog", command=self.show_chatlog_window)
-        chatlog_button.grid(row=0, column=9, padx=5, pady=5)
 
         # Checkbox frame for visibility toggles
         checkbox_frame = ttk.Frame(top_frame)
@@ -693,35 +695,41 @@ class BBSTerminalApp:
         # Remove any ANSI escape sequences that might interfere with matching.
         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
         
-        # Use a regex that optionally captures the direct message recipient.
-        match = re.match(
-            r'^\s*From\s+(\S+)(?:\s+\(to\s+([^)]+)\))?:\s*(.+)$',
-            clean_line,
-            re.IGNORECASE
-        )
+        # Skip non-user messages
+        if any(phrase in clean_line for phrase in [
+            "You are in the", "There is currently no one else here with you.", 
+            'Just press "?" if you need any assistance.', ":join main"
+        ]):
+            return
+        
+        # Check if the line starts with "From <username>"
+        match = re.match(r'^\s*From\s+(\S+)', clean_line, re.IGNORECASE)
         
         if match:
-            sender, recipient, message = match.groups()
-            # Replace "you" with your local username if applicable:
-            if recipient and recipient.lower() == "you":
-                recipient = self.username.get()
-            
-            # Store any hyperlinks found in the message
-            self.parse_and_store_hyperlinks(message, sender)
-            
-            # Log the message only under the sender.
-            timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
-            self.save_chatlog_message(sender, timestamp + message)
-            
-            # Save the last parsed DM info for later continuation lines.
-            self.last_message_info = (sender, None)  # No recipient logged
+            sender = match.group(1)
+            self.last_message_info = (sender, "")
+            self.append_to_last_chatlog_message(sender, clean_line)
+        elif self.last_message_info:
+            sender, message = self.last_message_info
+            if ':' in clean_line:
+                # Append the line to the current message
+                self.append_to_last_chatlog_message(sender, clean_line)
+                # Check if this line contains the second colon
+                if message.count(':') >= 2:
+                    self.last_message_info = None
+            else:
+                # Append the line to the current message
+                self.append_to_last_chatlog_message(sender, clean_line)
 
     def append_to_last_chatlog_message(self, username, extra_text):
         """Append extra_text to the last message logged for username."""
         chatlog = self.load_chatlog()
+        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
         if username in chatlog and chatlog[username]:
-            chatlog[username][-1] += "\n" + extra_text
-            self.save_chatlog(chatlog)
+            chatlog[username][-1] += "\n" + timestamp + extra_text
+        else:
+            chatlog[username] = [timestamp + extra_text]
+        self.save_chatlog(chatlog)
 
     def send_message(self, event=None):
         """Send the user's typed message to the BBS."""
@@ -778,6 +786,10 @@ class BBSTerminalApp:
             username = self.members_listbox.get(selected_indices[0])
             action = f"{action} {username}"
         asyncio.run_coroutine_threadsafe(self._send_message(action + "\r\n"), self.loop)
+        
+        # Deselect the action after sending
+        self.actions_listbox.selection_clear(0, tk.END)
+        self.members_listbox.selection_clear(0, tk.END)
 
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
@@ -1322,10 +1334,203 @@ class BBSTerminalApp:
         
         ttk.Button(buttons_frame, text="Clear Chat", command=self.confirm_clear_chatlog).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Clear Links", command=self.confirm_clear_links).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Show All", command=self.show_all_messages).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Close", command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(buttons_frame, text="Change Font", command=self.show_change_font_window).pack(side=tk.RIGHT, padx=5)  # New button for changing font and colors
 
         self.load_chatlog_list()
         self.display_stored_links()
+
+    def show_change_font_window(self):
+        """Open a Toplevel window to change font, font size, font color, and background color."""
+        font_window = tk.Toplevel(self.master)
+        font_window.title("Change Font Settings")
+        font_window.geometry("800x600")
+        font_window.grab_set()  # Make window modal
+
+        # Store current selections
+        self.current_selections = {
+            'font': None,
+            'size': None,
+            'color': None,
+            'bg': None
+        }
+        
+        main_frame = ttk.Frame(font_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        for i in range(4):
+            main_frame.columnconfigure(i, weight=1)
+        main_frame.rowconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=0)
+        
+        # Font selection
+        font_frame = ttk.LabelFrame(main_frame, text="Font")
+        font_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        font_frame.rowconfigure(0, weight=1)
+        font_frame.columnconfigure(0, weight=1)
+        
+        self.font_listbox = tk.Listbox(font_frame, exportselection=False)  # Add exportselection=False
+        self.font_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        font_scroll = ttk.Scrollbar(font_frame, orient="vertical", command=self.font_listbox.yview)
+        font_scroll.grid(row=0, column=1, sticky="ns")
+        self.font_listbox.configure(yscrollcommand=font_scroll.set)
+        
+        # Extended font list with DOS/Terminal themed fonts
+        fonts = [
+            "Courier New",
+            "Consolas",
+            "Terminal",
+            "Fixedsys",
+            "System",
+            "Modern DOS 8x16",
+            "Modern DOS 8x8",
+            "Perfect DOS VGA 437",
+            "MS Gothic",
+            "SimSun-ExtB",
+            "NSimSun",
+            "Lucida Console",
+            "OCR A Extended",
+            "Prestige Elite Std",
+            "Letter Gothic Std",
+            "FreeMono",
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "IBM Plex Mono",
+            "PT Mono",
+            "Share Tech Mono",
+            "VT323",
+            "Press Start 2P",
+            "DOS/V",
+            "TerminalVector"
+        ]
+        
+        for font in fonts:
+            self.font_listbox.insert(tk.END, font)
+        
+        # Font size selection
+        size_frame = ttk.LabelFrame(main_frame, text="Size")
+        size_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        size_frame.rowconfigure(0, weight=1)
+        size_frame.columnconfigure(0, weight=1)
+        
+        self.size_listbox = tk.Listbox(size_frame, exportselection=False)  # Add exportselection=False
+        self.size_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        size_scroll = ttk.Scrollbar(size_frame, orient="vertical", command=self.size_listbox.yview)
+        size_scroll.grid(row=0, column=1, sticky="ns")
+        self.size_listbox.configure(yscrollcommand=size_scroll.set)
+        
+        sizes = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36]
+        for size in sizes:
+            self.size_listbox.insert(tk.END, size)
+        
+        # Font color selection
+        color_frame = ttk.LabelFrame(main_frame, text="Font Color")
+        color_frame.grid(row=0, column=2, padx=5, pady=5, sticky="nsew")
+        color_frame.rowconfigure(0, weight=1)
+        color_frame.columnconfigure(0, weight=1)
+        
+        self.color_listbox = tk.Listbox(color_frame, exportselection=False)  # Add exportselection=False
+        self.color_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        color_scroll = ttk.Scrollbar(color_frame, orient="vertical", command=self.color_listbox.yview)
+        color_scroll.grid(row=0, column=1, sticky="ns")
+        self.color_listbox.configure(yscrollcommand=color_scroll.set)
+        
+        colors = ["black", "white", "red", "green", "blue", "yellow", "magenta", "cyan", 
+                 "gray70", "gray50", "gray30", "orange", "purple", "brown", "pink"]
+        for color in colors:
+            self.color_listbox.insert(tk.END, color)
+            self.color_listbox.itemconfigure(colors.index(color), {'bg': color})
+        
+        # Background color selection
+        bg_frame = ttk.LabelFrame(main_frame, text="Background Color")
+        bg_frame.grid(row=0, column=3, padx=5, pady=5, sticky="nsew")
+        bg_frame.rowconfigure(0, weight=1)
+        bg_frame.columnconfigure(0, weight=1)
+        
+        self.bg_listbox = tk.Listbox(bg_frame, exportselection=False)  # Add exportselection=False
+        self.bg_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        bg_scroll = ttk.Scrollbar(bg_frame, orient="vertical", command=self.bg_listbox.yview)
+        bg_scroll.grid(row=0, column=1, sticky="ns")
+        self.bg_listbox.configure(yscrollcommand=bg_scroll.set)
+        
+        bg_colors = ["white", "black", "gray90", "gray80", "gray70", "lightyellow", 
+                     "lightblue", "lightgreen", "azure", "ivory", "honeydew", "lavender"]
+        for bg in bg_colors:
+            self.bg_listbox.insert(tk.END, bg)
+            self.bg_listbox.itemconfigure(bg_colors.index(bg), {'bg': bg})
+        
+        # Add selection event handlers
+        def on_select(event, category):
+            widget = event.widget
+            try:
+                selection = widget.get(widget.curselection())
+                self.current_selections[category] = selection
+            except (tk.TclError, TypeError):
+                pass  # No selection
+        
+        self.font_listbox.bind('<<ListboxSelect>>', lambda e: on_select(e, 'font'))
+        self.size_listbox.bind('<<ListboxSelect>>', lambda e: on_select(e, 'size'))
+        self.color_listbox.bind('<<ListboxSelect>>', lambda e: on_select(e, 'color'))
+        self.bg_listbox.bind('<<ListboxSelect>>', lambda e: on_select(e, 'bg'))
+        
+        # Buttons frame at the bottom
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=1, column=0, columnspan=4, pady=10)
+        
+        ttk.Button(button_frame, text="Save", command=lambda: self.save_font_settings(font_window)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close", command=font_window.destroy).pack(side=tk.LEFT, padx=5)
+        
+        # Set initial selections
+        current_font = self.chatlog_display.cget("font").split()[0]
+        current_size = int(self.chatlog_display.cget("font").split()[1])
+        current_fg = self.chatlog_display.cget("fg")
+        current_bg = self.chatlog_display.cget("bg")
+        
+        # Initialize current_selections with current values
+        self.current_selections = {
+            'font': current_font,
+            'size': current_size,
+            'color': current_fg,
+            'bg': current_bg
+        }
+        
+        # Set initial selections in listboxes
+        if current_font in fonts:
+            self.font_listbox.selection_set(fonts.index(current_font))
+            self.font_listbox.see(fonts.index(current_font))
+        
+        if current_size in sizes:
+            self.size_listbox.selection_set(sizes.index(current_size))
+            self.size_listbox.see(sizes.index(current_size))
+        
+        if current_fg in colors:
+            self.color_listbox.selection_set(colors.index(current_fg))
+            self.color_listbox.see(colors.index(current_fg))
+        
+        if current_bg in bg_colors:
+            self.bg_listbox.selection_set(bg_colors.index(current_bg))
+            self.bg_listbox.see(bg_colors.index(current_bg))
+
+    def save_font_settings(self, window):
+        """Save the selected font settings and apply them to the chatlog display."""
+        try:
+            # Use stored selections instead of getting current selections
+            if not all(self.current_selections.values()):
+                tk.messagebox.showerror("Error", "Please select an option from each list")
+                return
+                
+            # Apply settings
+            self.chatlog_display.configure(
+                font=(self.current_selections['font'], self.current_selections['size']),
+                fg=self.current_selections['color'],
+                bg=self.current_selections['bg']
+            )
+            
+            # Close the window
+            window.destroy()
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
 
     def confirm_clear_chatlog(self):
         """Show confirmation dialog before clearing chatlog."""
@@ -1354,17 +1559,36 @@ class BBSTerminalApp:
             self.chatlog_listbox.insert(tk.END, username)
 
     def display_chatlog_messages(self, event):
-        """Display messages for the selected user."""
+        """Display messages for the selected user or all messages if no user is selected."""
         selected_index = self.chatlog_listbox.curselection()
+        chatlog = self.load_chatlog()
+        self.chatlog_display.configure(state=tk.NORMAL)
+        self.chatlog_display.delete(1.0, tk.END)
+        
         if selected_index:
+            # Show messages for selected user
             username = self.chatlog_listbox.get(selected_index)
-            chatlog = self.load_chatlog()
             messages = chatlog.get(username, [])
-            self.chatlog_display.configure(state=tk.NORMAL)
-            self.chatlog_display.delete(1.0, tk.END)
             for message in messages:
                 self.chatlog_display.insert(tk.END, message + "\n")
-            self.chatlog_display.configure(state=tk.DISABLED)
+        else:
+            # Show all messages sorted by timestamp
+            all_messages = []
+            for username, messages in chatlog.items():
+                all_messages.extend((msg, username) for msg in messages)
+            
+            # Sort messages by timestamp
+            def get_timestamp(msg_tuple):
+                timestamp_match = re.match(r'\[(.*?)\]', msg_tuple[0])
+                return timestamp_match.group(1) if timestamp_match else ""
+            
+            all_messages.sort(key=lambda x: get_timestamp(x))
+            
+            # Display all messages
+            for message, username in all_messages:
+                self.chatlog_display.insert(tk.END, f"{message}\n")
+        
+        self.chatlog_display.configure(state=tk.DISABLED)
 
     def update_members_display(self):
         """Update the chat members Listbox with the current chat_members set."""
@@ -1499,18 +1723,9 @@ class BBSTerminalApp:
                     self.loop
                 )
                 
-                # Maintain selections after sending
-                self.master.after(100, self._maintain_selections, selected_action_index[0], selected_member_index[0])
-
-    def _maintain_selections(self, action_index, member_index):
-        """Helper method to maintain listbox selections."""
-        self.actions_listbox.selection_clear(0, tk.END)
-        self.actions_listbox.selection_set(action_index)
-        self.actions_listbox.activate(action_index)
-        
-        self.members_listbox.selection_clear(0, tk.END)
-        self.members_listbox.selection_set(member_index)
-        self.members_listbox.activate(member_index)
+                # Deselect the action after sending
+                self.actions_listbox.selection_clear(0, tk.END)
+                self.members_listbox.selection_clear(0, tk.END)
 
     def store_hyperlink(self, url, sender="Unknown", timestamp=None):
         """Store a hyperlink with metadata."""
@@ -1596,6 +1811,11 @@ class BBSTerminalApp:
         
         for url in urls:
             self.store_hyperlink(url, sender, timestamp)
+
+    def show_all_messages(self):
+        """Deselect user and show all messages combined."""
+        self.chatlog_listbox.selection_clear(0, tk.END)
+        self.display_chatlog_messages(None)
 
 def main():
     root = tk.Tk()

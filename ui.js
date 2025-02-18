@@ -103,6 +103,9 @@ document.addEventListener('DOMContentLoaded', function () {
     // Add event listener for the "Clear" button in the chatlog window
     document.getElementById('clearChatlogButton').addEventListener('click', clearActiveChatlog);
 
+    // Add event listener for the "Change Font" button in the chatlog window
+    document.getElementById('changeFontButton').addEventListener('click', changeChatlogFontAndColors);
+
     // Initialize the members list
     updateMembersDisplay();
 
@@ -565,4 +568,18 @@ function hideThumbnailPreview() {
     if (previewWindow) {
         previewWindow.remove();
     }
+}
+
+// Function to change font and colors of the chatlog messages panel
+function changeChatlogFontAndColors() {
+    const font = prompt("Enter font name (e.g., Arial, Courier New):", "Courier New");
+    const fontSize = prompt("Enter font size (e.g., 12px, 14px):", "12px");
+    const fontColor = prompt("Enter font color (e.g., black, #000000):", "black");
+    const bgColor = prompt("Enter background color (e.g., white, #ffffff):", "white");
+
+    const chatlogDisplay = document.getElementById('chatlogDisplay');
+    chatlogDisplay.style.fontFamily = font;
+    chatlogDisplay.style.fontSize = fontSize;
+    chatlogDisplay.style.color = fontColor;
+    chatlogDisplay.style.backgroundColor = bgColor;
 }
