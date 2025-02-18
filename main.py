@@ -1699,25 +1699,31 @@ class BBSTerminalApp:
         """Update the chat members based on the provided lines."""
         combined = " ".join(lines_with_users)
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
+        print(f"[DEBUG] Raw banner: {combined_clean}")
         
         # First extract the section between "Topic:" and "are here with you"
         match = re.search(r'Topic:.*?(?=\s+are here with you\.)', combined_clean, re.DOTALL | re.IGNORECASE)
         if not match:
             return
-            
+                
         user_section = match.group(0)
         
         # Remove the "Topic:" part and any parenthetical content
         user_section = re.sub(r'Topic:.*?\)', '', user_section, flags=re.DOTALL)
         user_section = re.sub(r'\(.*?\)', '', user_section)
         
+        # Also get the last part that might contain a username without domain
+        last_user_match = re.search(r'and\s+(\S+)\s+are here with you', combined_clean)
+        last_username = last_user_match.group(1) if last_user_match else None
+        
         # Split by commas and "and", clean up each part
         parts = re.split(r',\s*|\s+and\s+', user_section)
         
         final_usernames = set()
-        for part in parts:
-            # Extract username part from email-like format
-            username = part.strip()
+        
+        def process_username(raw_username):
+            """Helper function to process and validate a username."""
+            username = raw_username.strip()
             if '@' in username:
                 username = username.split('@')[0]
             
@@ -1727,8 +1733,21 @@ class BBSTerminalApp:
             # 3. Start with a letter
             # 4. Contain only letters, numbers, dots, underscores
             if (len(username) >= 2 and 
-                username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic'} and
+                username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
                 re.match(r'^[A-Za-z][A-Za-z0-9._]*$', username)):
+                return username
+            return None
+
+        # Process all parts from the main section
+        for part in parts:
+            username = process_username(part)
+            if username:
+                final_usernames.add(username)
+        
+        # Process the last username if found
+        if last_username:
+            username = process_username(last_username)
+            if username:
                 final_usernames.add(username)
 
         print(f"[DEBUG] Extracted usernames: {final_usernames}")
