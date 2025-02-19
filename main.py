@@ -736,38 +736,34 @@ class BBSTerminalApp:
         # Precompile an ANSI escape code regex
         ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
         
-        skip_display = False  # Flag to track if we're in a banner section
-        
         for line in lines[:-1]:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
-            # --- Filter header lines ---
+            # --- Temporarily disable banner filtering ---
+            """
             if self.collecting_users:
                 self.user_list_buffer.append(line)
                 if "are here with you." in clean_line:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                    skip_display = False  # End of banner section
                     continue
-                skip_display = True  # Skip displaying banner content
                 continue
-            
+                
             if clean_line.startswith("You are in"):
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                skip_display = True  # Start of banner section
                 continue
-            
-            # Skip displaying banner-related lines
+                
             if any(pattern in clean_line for pattern in [
                 "Topic:",
                 "Just press",
                 "are here with you"
             ]):
                 continue
-                
+            """
+                    
             # --- Process directed messages ---
             directed_msg_match = re.match(r'^From\s+(\S+)\s+\((whispered|to you)\):\s*(.+)$', clean_line, re.IGNORECASE)
             if directed_msg_match:
@@ -799,8 +795,8 @@ class BBSTerminalApp:
                 self.actions.extend(clean_line.split())
                 continue
             
-            # Only display the line if it's not part of the banner and not empty
-            if not skip_display and clean_line:
+            # Display all lines that aren't handled by special cases above
+            if clean_line:
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
