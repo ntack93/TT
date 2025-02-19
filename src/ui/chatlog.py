@@ -48,17 +48,23 @@ class ChatlogManager:
         for user in self.settings.get_users():
             self.users_list.insert(tk.END, user)
             
-    def process_message(self, message: Dict[str, Any]) -> None:
+    def process_message(self, message: Any) -> None:
         """Process and store a new message."""
         if not message:
             return
             
-        sender = message.get('sender')
-        content = message.get('content')
-        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-        
-        if sender and content:
-            self.settings.add_message(sender, {
-                'timestamp': timestamp,
-                'content': content
-            })
+        # Handle ParsedMessage object attributes directly
+        try:
+            sender = getattr(message, 'sender', None)
+            content = getattr(message, 'content', None)
+            timestamp = getattr(message, 'timestamp', datetime.now().strftime("[%Y-%m-%d %H:%M:%S]"))
+            
+            if sender and content:
+                message_data = {
+                    'timestamp': timestamp,
+                    'content': content
+                }
+                self.settings.add_message(sender, message_data)
+        except Exception as e:
+            print(f"Error processing message: {e}")
+            print(f"Message object: {message}")
