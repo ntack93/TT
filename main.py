@@ -46,7 +46,7 @@ class BBSTerminalApp:
         self.remember_username = tk.BooleanVar(value=False)
         self.remember_password = tk.BooleanVar(value=False)
 
-        # MUD mode
+        # MUD mode?
         self.mud_mode = tk.BooleanVar(value=False)
 
         # Logon automation toggles
@@ -672,6 +672,9 @@ class BBSTerminalApp:
         try:
             self.stop_event.set()
             self.stop_keep_alive()
+            
+            # Clear the members list before disconnecting
+            self.clear_chat_members()
 
             if self.writer:
                 try:
@@ -714,6 +717,12 @@ class BBSTerminalApp:
         finally:
             self._disconnecting = False
 
+    def clear_chat_members(self):
+        """Clear the active chat members list but preserve last seen timestamps."""
+        self.chat_members = set()
+        self.save_chat_members_file()
+        self.update_members_display()
+
     # 1.6️⃣ MESSAGES
     def process_incoming_messages(self):
         """Check the queue for data and parse lines for display."""
@@ -736,34 +745,38 @@ class BBSTerminalApp:
         # Precompile an ANSI escape code regex
         ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
         
+        skip_display = False  # Flag to track if we're in a banner section
+        
         for line in lines[:-1]:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
-            # --- Temporarily disable banner filtering ---
-            """
+            # --- Filter header lines ---
             if self.collecting_users:
                 self.user_list_buffer.append(line)
                 if "are here with you." in clean_line:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
+                    skip_display = False  # End of banner section
                     continue
+                skip_display = True  # Skip displaying banner content
                 continue
-                
+            
             if clean_line.startswith("You are in"):
                 self.user_list_buffer = [line]
                 self.collecting_users = True
+                skip_display = True  # Start of banner section
                 continue
-                
+            
+            # Skip displaying banner-related lines
             if any(pattern in clean_line for pattern in [
                 "Topic:",
                 "Just press",
                 "are here with you"
             ]):
                 continue
-            """
-                    
+                
             # --- Process directed messages ---
             directed_msg_match = re.match(r'^From\s+(\S+)\s+\((whispered|to you)\):\s*(.+)$', clean_line, re.IGNORECASE)
             if directed_msg_match:
@@ -795,8 +808,8 @@ class BBSTerminalApp:
                 self.actions.extend(clean_line.split())
                 continue
             
-            # Display all lines that aren't handled by special cases above
-            if clean_line:
+            # Only display the line if it's not part of the banner and not empty
+            if not skip_display and clean_line:
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
@@ -881,13 +894,16 @@ class BBSTerminalApp:
             prefix = "Gos " if self.mud_mode.get() else ""
             message = prefix + user_input + "\r\n"
             
-        # Send message
+        # Send message using asyncio.run_coroutine_threadsafe
         if self.connected and self.writer:
-            self.writer.write(message)
-            try:
-                self.loop.call_soon_threadsafe(self.writer.drain)
-            except Exception as e:
-                print(f"Error sending message: {e}")
+            async def send():
+                try:
+                    self.writer.write(message)
+                    await self.writer.drain()
+                except Exception as e:
+                    print(f"Error sending message: {e}")
+                    
+            asyncio.run_coroutine_threadsafe(send(), self.loop)
 
     def send_username(self):
         """Send the username to the BBS."""
@@ -926,11 +942,14 @@ class BBSTerminalApp:
         """Send a custom message (for trigger responses)."""
         if self.connected and self.writer:
             message = message + "\r\n"
-            self.writer.write(message)
-            try:
-                self.loop.call_soon_threadsafe(self.writer.drain)
-            except Exception as e:
-                print(f"Error sending custom message: {e}")
+            async def send():
+                try:
+                    self.writer.write(message)
+                    await self.writer.drain()
+                except Exception as e:
+                    print(f"Error sending custom message: {e}")
+                    
+            asyncio.run_coroutine_threadsafe(send(), self.loop)
 
     def send_action(self, action):
         """Send an action to the BBS, optionally appending the highlighted username."""
@@ -943,14 +962,17 @@ class BBSTerminalApp:
             action = f"{action} {username}"
             
         message = action + "\r\n"
-        self.writer.write(message)
-        try:
-            self.loop.call_soon_threadsafe(self.writer.drain)
-            # Deselect the action after sending
-            self.actions_listbox.selection_clear(0, tk.END)
-            self.members_listbox.selection_clear(0, tk.END)
-        except Exception as e:
-            print(f"Error sending action: {e}")
+        async def send():
+            try:
+                self.writer.write(message)
+                await self.writer.drain()
+                # Deselect the action after sending
+                self.actions_listbox.selection_clear(0, tk.END)
+                self.members_listbox.selection_clear(0, tk.END)
+            except Exception as e:
+                print(f"Error sending action: {e}")
+                
+        asyncio.run_coroutine_threadsafe(send(), self.loop)
 
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
@@ -2191,6 +2213,9 @@ def main():
             # Cancel all pending tasks first
             for task in asyncio.all_tasks(app.loop):
                 task.cancel()
+            
+            # Clear only the active members list
+            app.clear_chat_members()
             
             # Then handle the disconnect
             if app.connected:
