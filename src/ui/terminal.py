@@ -1113,7 +1113,7 @@ class TerminalUI:
                     self.master.after_idle(self.update_actions_listbox)
                 elif clean_line:  # Non-empty line
                     # Split on multiple spaces and strip each action
-                    actions = [word.strip() for word in clean_line.split('  ') if word.strip()]
+                    actions = [word.strip() for word in clean_line.split() if word.strip()]
                     self.actions.extend(actions)
                 continue
                 
