@@ -135,7 +135,7 @@ class TerminalUI:
         ttk.Button(utility_frame, text="Triggers", command=self.show_triggers_window, 
                   style="Triggers.TButton").pack(side=tk.LEFT, padx=2)
         ttk.Button(utility_frame, text="Chatlog", 
-                  command=self.chatlog.show_window, 
+                  command=self.chatlog.show_chatlog_window,  # Fix: use correct method name 
                   style="Chatlog.TButton").pack(side=tk.LEFT, padx=2)
         ttk.Button(utility_frame, text="Change Font",
                   command=self.show_change_font_window,
@@ -246,6 +246,10 @@ class TerminalUI:
         
         # Load settings
         self.load_settings()
+        
+        # Add these lines after other instance variables
+        self.actions: List[str] = []  # Store actions list
+        self.collecting_actions = False  # Flag for action collection state
         
     def _build_favorites_ui(self) -> None:
         """Create favorites management UI components."""
@@ -1054,38 +1058,150 @@ class TerminalUI:
                 messagebox.showerror("Error", "Please select an option from each list")
                 return
                 
-            # Create font settings
+            # Create font settings dictionary
             font_settings = {
                 'font': (self.current_selections['font'], self.current_selections['size']),
                 'fg': self.current_selections['color'],
                 'bg': self.current_selections['bg']
             }
             
-            # Apply settings to chat UI components
-            for widget in (self.members_listbox, self.actions_listbox):
+            # Apply to main UI text widgets
+            for widget in (self.terminal_display, self.directed_msg_display,
+                         self.members_listbox, self.actions_listbox):
                 widget.configure(**font_settings)
             
-            # Apply to chatlog UI
-            if self.chatlog:
+            # Apply to chatlog UI if it exists
+            if hasattr(self, 'chatlog'):
                 self.chatlog.update_font_settings(font_settings)
             
             # Store settings
             self.current_font_settings = font_settings
             
-            # Save to file
+            # Save to persistence
             settings_to_save = {
                 'font_name': self.current_selections['font'],
                 'font_size': self.current_selections['size'],
                 'fg': self.current_selections['color'],
                 'bg': self.current_selections['bg']
             }
-            
-            with open("chatlog_font_settings.json", "w") as f:
-                json.dump(settings_to_save, f)
+            self.settings.set('font_settings', settings_to_save)
+            self.settings.save_settings()
             
             window.destroy()
             
         except Exception as e:
             messagebox.showerror("Error", f"Error applying settings: {str(e)}")
+
+    def process_data_chunk(self, data: str) -> None:
+        """Process incoming data and handle special cases."""
+        # Split into lines, preserving empty lines
+        lines = data.splitlines()
+        
+        for line in lines:
+            clean_line = self.parser.strip_ansi(line).rstrip()
+            
+            # --- Detect and update Action List ---
+            if clean_line.startswith("Action listing for: DEFAULT"):
+                self.actions = []
+                self.collecting_actions = True
+                continue
+            
+            if self.collecting_actions:
+                if clean_line == ':':  # End of action list
+                    self.collecting_actions = False
+                    # Update actions panel
+                    self.master.after_idle(self.update_actions_listbox)
+                elif clean_line:  # Non-empty line
+                    # Split on multiple spaces and strip each action
+                    actions = [word.strip() for word in clean_line.split('  ') if word.strip()]
+                    self.actions.extend(actions)
+                continue
+                
+            # Handle chat members list
+            if self.collecting_users:
+                # ...existing user collection code...
+                continue
+                    
+            elif clean_line.startswith("You are in"):
+                # ...existing user collection code...
+                continue
+            
+            # Handle other message types
+            # ...existing code...
+
+            # Display normal messages
+            self.append_text(line + '\n')
+
+    def update_actions_listbox(self) -> None:
+        """Update the Actions listbox with the current actions."""
+        if not hasattr(self, 'actions_listbox'):
+            return
+            
+        self.actions_listbox.delete(0, tk.END)
+        # Remove duplicates and sort
+        unique_actions = sorted(set(action for action in self.actions if action))
+        for action in unique_actions:
+            self.actions_listbox.insert(tk.END, action)
+
+    def show_chatlog_window(self) -> None:
+        """Open the chatlog window."""
+        if self.chatlog_window and self.chatlog_window.winfo_exists():
+            self.chatlog_window.lift()
+            self.chatlog_window.focus_force()
+            return
+
+        self.chatlog_window = tk.Toplevel(self.master)
+        self.chatlog_window.title("Chatlog")
+        self.chatlog_window.transient(self.master)
+        self.chatlog_window.grab_set()
+        
+        # Chatlog display
+        chatlog_frame = ttk.Frame(self.chatlog_window)
+        chatlog_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.chatlog_display = tk.Text(chatlog_frame, wrap=tk.WORD, height=20, width=80, bg="black", fg="white")
+        self.chatlog_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Add scrollbar for chatlog
+        chatlog_scroll = ttk.Scrollbar(chatlog_frame, command=self.chatlog_display.yview)
+        chatlog_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.chatlog_display.configure(yscrollcommand=chatlog_scroll.set)
+        
+        # Links display
+        links_frame = ttk.Frame(self.chatlog_window)
+        links_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.links_display = tk.Text(links_frame, wrap=tk.WORD, height=10, width=80, bg="black", fg="white")
+        self.links_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Add scrollbar for links
+        links_scroll = ttk.Scrollbar(links_frame, command=self.links_display.yview)
+        links_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.links_display.configure(yscrollcommand=links_scroll.set)
+        
+        # Load chatlog data
+        self.load_chatlog_data()
+
+    def load_chatlog_data(self) -> None:
+        """Load chatlog data from file."""
+        try:
+            with open("chatlog.txt", "r") as f:
+                chatlog_data = f.read()
+                self.chatlog_display.insert(tk.END, chatlog_data)
+        except Exception as e:
+            print(f"Error loading chatlog data: {e}")
+
+    def select_chatlog_user(self, username: str) -> None:
+        """Select a user in the chatlog."""
+        self.chatlog_display.tag_remove("highlight", "1.0", tk.END)
+        start = "1.0"
+        while True:
+            start = self.chatlog_display.search(username, start, stopindex=tk.END)
+            if not start:
+                break
+            end = f"{start}+{len(username)}c"
+            self.chatlog_display.tag_add("highlight", start, end)
+            start = end
+        self.chatlog_display.tag_configure("highlight", background="yellow")
 
 

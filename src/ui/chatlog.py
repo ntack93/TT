@@ -1,283 +1,64 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from typing import Dict, Any, Optional
-import json
-import re
+from tkinter import ttk
+from typing import Any, Dict, List, Optional
 from datetime import datetime
-from pathlib import Path
 
 class ChatlogManager:
-    """Manages chat history and log viewing."""
+    """Manages chat logs and message history."""
     
-    def __init__(self, master: tk.Tk, persistence: Any, parser: Any) -> None:
-        """Initialize chatlog manager.
-        
-        Args:
-            master: Root window
-            persistence: Persistence manager instance
-            parser: Message parser instance
-        """
+    def __init__(self, master: tk.Tk, settings: Any, parser: Any) -> None:
         self.master = master
-        self.persistence = persistence
+        self.settings = settings
         self.parser = parser
-        self.window: Optional[tk.Toplevel] = None
+        self.chatlog_window: Optional[tk.Toplevel] = None
         
-        # Component references
-        self.user_list: Optional[tk.Listbox] = None
-        self.messages_text: Optional[tk.Text] = None
-        self.links_text: Optional[tk.Text] = None
-        self.paned: Optional[ttk.PanedWindow] = None
-        
-    def show_window(self) -> None:
-        """Display the chatlog window."""
-        if self.window and self.window.winfo_exists():
-            self.window.lift()
+    def show_chatlog_window(self) -> None:
+        """Show the chatlog window."""
+        if self.chatlog_window and self.chatlog_window.winfo_exists():
+            self.chatlog_window.lift()
+            self.chatlog_window.focus_force()
             return
             
-        self.window = tk.Toplevel(self.master)
-        self.window.title("Chat History")
-        self.window.geometry("1000x600")
-        
-        # Load current font settings
-        font_settings = self.persistence.get('font_settings', {
-            'font': ("Courier New", 10),
-            'fg': 'white',
-            'bg': 'black'
-        })
+        self.chatlog_window = tk.Toplevel(self.master)
+        self.chatlog_window.title("Chat History")
+        self.chatlog_window.geometry("800x600")
         
         # Create main container
-        self.paned = ttk.PanedWindow(self.window, orient=tk.HORIZONTAL)
-        self.paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        main_paned = ttk.PanedWindow(self.chatlog_window, orient=tk.HORIZONTAL)
+        main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Users panel
-        users_frame = ttk.Frame(self.paned)
-        ttk.Label(users_frame, text="Users").pack(anchor=tk.W)
-        self.user_list = tk.Listbox(users_frame, exportselection=False, **font_settings)
-        self.user_list.pack(fill=tk.BOTH, expand=True)
-        self.user_list.bind('<<ListboxSelect>>', self._on_user_select)
-        self.paned.add(users_frame, weight=1)
+        # Users list
+        users_frame = ttk.LabelFrame(main_paned, text="Users")
+        self.users_list = tk.Listbox(users_frame)
+        self.users_list.pack(fill=tk.BOTH, expand=True)
+        main_paned.add(users_frame)
         
-        # Messages panel
-        messages_frame = ttk.Frame(self.paned)
-        ttk.Label(messages_frame, text="Messages").pack(anchor=tk.W)
-        self.messages_text = tk.Text(messages_frame, wrap=tk.WORD, 
-                                   state=tk.DISABLED, **font_settings)
+        # Messages area
+        messages_frame = ttk.LabelFrame(main_paned, text="Messages")
+        self.messages_text = tk.Text(messages_frame, wrap=tk.WORD)
         self.messages_text.pack(fill=tk.BOTH, expand=True)
-        self.paned.add(messages_frame, weight=3)
+        main_paned.add(messages_frame)
         
-        # Links panel
-        links_frame = ttk.Frame(self.paned)
-        ttk.Label(links_frame, text="Shared Links").pack(anchor=tk.W)
-        self.links_text = tk.Text(links_frame, wrap=tk.WORD, 
-                                state=tk.DISABLED, **font_settings)
-        self.links_text.pack(fill=tk.BOTH, expand=True)
-        self.paned.add(links_frame, weight=1)
+        # Load initial data
+        self.load_users()
         
-        # Toolbar
-        toolbar = ttk.Frame(self.window)
-        toolbar.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(toolbar, text="Clear Selected", command=self._clear_selected).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Export", command=self._export_logs).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Import", command=self._import_logs).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Close", command=self.window.destroy).pack(side=tk.RIGHT, padx=2)
-        
-        # Load data
-        self.refresh_users()
-        
-    def _on_user_select(self, event: Optional[tk.Event] = None) -> None:
-        """Handle user selection."""
-        selection = self.user_list.curselection()
-        if not selection:
-            return
+    def load_users(self) -> None:
+        """Load users from settings/persistence."""
+        self.users_list.delete(0, tk.END)
+        for user in self.settings.get_users():
+            self.users_list.insert(tk.END, user)
             
-        username = self.user_list.get(selection[0])
-        self._show_user_messages(username)
-        self._show_user_links(username)
-        
-    def _show_user_messages(self, username: str) -> None:
-        """Display messages for selected user."""
-        try:
-            messages = self.persistence.load_messages(username)
-            
-            self.messages_text.configure(state=tk.NORMAL)
-            self.messages_text.delete(1.0, tk.END)
-            
-            for msg in messages:
-                # Handle both dict and string message formats
-                if isinstance(msg, dict):
-                    timestamp = msg.get('timestamp', '')
-                    text = msg.get('text', '')
-                else:
-                    # If message is just a string, display as-is
-                    timestamp = ''
-                    text = str(msg)
-                
-                if timestamp:
-                    self.messages_text.insert(tk.END, f"[{timestamp}] {text}\n")
-                else:
-                    self.messages_text.insert(tk.END, f"{text}\n")
-                
-            self.messages_text.configure(state=tk.DISABLED)
-            self.messages_text.see(tk.END)
-            
-        except Exception as e:
-            print(f"Error displaying messages: {e}")
-            self.messages_text.configure(state=tk.NORMAL)
-            self.messages_text.delete(1.0, tk.END)
-            self.messages_text.insert(tk.END, "Error loading messages\n")
-            self.messages_text.configure(state=tk.DISABLED)
-        
-    def _show_user_links(self, username: str) -> None:
-        """Display links shared by selected user."""
-        links = self.persistence.load_links(username)
-        
-        self.links_text.configure(state=tk.NORMAL)
-        self.links_text.delete(1.0, tk.END)
-        
-        for link in links:
-            timestamp = link.get('timestamp', '')
-            url = link.get('url', '')
-            self.links_text.insert(tk.END, f"[{timestamp}] {url}\n")
-            
-        self.links_text.configure(state=tk.DISABLED)
-        
-    def add_message(self, username: str, text: str) -> None:
-        """Add a new message to the logs.
-        
-        Args:
-            username: Sender's username
-            text: Message text
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Create message dict
-        message = {
-            'timestamp': timestamp,
-            'text': text
-        }
-        
-        # Store message
-        try:
-            self.persistence.add_message(username, message)
-            
-            # Extract any links
-            urls = re.findall(r'https?://\S+', text)
-            for url in urls:
-                self.persistence.add_link(username, {
-                    'timestamp': timestamp,
-                    'url': url
-                })
-                
-            # Refresh if window is open
-            if self.window and self.window.winfo_exists():
-                self.refresh_users()
-                
-        except Exception as e:
-            print(f"Error adding message: {e}")
-            
-    def _clear_selected(self) -> None:
-        """Clear history for selected user."""
-        selection = self.user_list.curselection()
-        if not selection:
-            return
-            
-        username = self.user_list.get(selection[0])
-        if messagebox.askyesno(
-            "Clear History",
-            f"Clear all history for {username}?"
-        ):
-            self.persistence.clear_user_data(username)
-            self.refresh_users()
-            
-    def _export_logs(self) -> None:
-        """Export chat logs to file."""
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json")]
-        )
-        if filename:
-            self.persistence.export_logs(filename)
-            
-    def _import_logs(self) -> None:
-        """Import chat logs from file."""
-        filename = filedialog.askopenfilename(
-            filetypes=[("JSON files", "*.json")]
-        )
-        if filename and messagebox.askyesno(
-            "Import Logs",
-            "This will merge imported logs with existing ones. Continue?"
-        ):
-            self.persistence.import_logs(filename)
-            self.refresh_users()
-            
-    def refresh_users(self) -> None:
-        """Refresh the users list."""
-        if not self.user_list:
-            return
-            
-        users = self.persistence.get_users()
-        
-        self.user_list.delete(0, tk.END)
-        for user in sorted(users):
-            self.user_list.insert(tk.END, user)
-
-    def process_message(self, message: Any) -> None:
-        """Process an incoming message for chat logging.
-        
-        Args:
-            message: ParsedMessage object containing message data
-        """
+    def process_message(self, message: Dict[str, Any]) -> None:
+        """Process and store a new message."""
         if not message:
             return
             
-        # Extract message components
-        sender = getattr(message, 'sender', 'Unknown')
-        text = getattr(message, 'text', '')
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sender = message.get('sender')
+        content = message.get('content')
+        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
         
-        # Add message to chat history
-        if sender and text:
-            self.add_message(sender, text)
-            
-        # Process any URLs in the message
-        if text:
-            self.parse_and_store_hyperlinks(text, sender)
-
-    def parse_username(self, text: str) -> Optional[str]:
-        """Parse username from message text.
-        
-        Args:
-            text: Message text to parse
-            
-        Returns:
-            Username if found, None otherwise
-        """
-        # Check for directed message format
-        directed_match = re.match(
-            r'^From\s+(\S+?)(?:@[\w.]+)?\s+\((whispered|to you)\):', 
-            text, 
-            re.IGNORECASE
-        )
-        if directed_match:
-            return directed_match.group(1)
-            
-        # Check for normal message format
-        normal_match = re.match(
-            r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:', 
-            text,
-            re.IGNORECASE
-        )
-        if normal_match:
-            return normal_match.group(1)
-            
-        return None
-
-    def update_font_settings(self, settings: Dict[str, Any]) -> None:
-        """Update font settings for all text widgets."""
-        if not self.window or not self.window.winfo_exists():
-            return
-            
-        for widget in (self.user_list, self.messages_text, self.links_text):
-            if widget:
-                widget.configure(**settings)
+        if sender and content:
+            self.settings.add_message(sender, {
+                'timestamp': timestamp,
+                'content': content
+            })
