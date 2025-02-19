@@ -1464,6 +1464,40 @@ class BBSTerminalApp:
             self.clear_chatlog_for_user(username)
             self.display_chatlog_messages(None)  # Refresh the display
 
+    def load_panel_sizes(self):
+        """Load saved panel sizes from file."""
+        try:
+            if os.path.exists("panel_sizes.json"):
+                with open("panel_sizes.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading panel sizes: {e}")
+        return {
+            "users": 150,  # 15 chars * ~10 pixels per char
+            "links": 300,  # 30 chars * ~10 pixels per char
+        }
+
+    def save_panel_sizes(self):
+        """Save current panel sizes to file."""
+        if not hasattr(self, 'chatlog_window') or not self.chatlog_window.winfo_exists():
+            return
+            
+        try:
+            # Get current sizes from the paned window
+            paned = self.chatlog_window.nametowidget("main_paned")
+            sash_pos1 = paned.sash_coord(0)[0]  # Position of first sash
+            sash_pos2 = paned.sash_coord(1)[0]  # Position of second sash
+            
+            sizes = {
+                "users": sash_pos1,
+                "links": paned.winfo_width() - sash_pos2
+            }
+            
+            with open("panel_sizes.json", "w") as file:
+                json.dump(sizes, file)
+        except Exception as e:
+            print(f"Error saving panel sizes: {e}")
+
     def show_chatlog_window(self):
         """Open a Toplevel window to manage chatlog and hyperlinks."""
         if self.chatlog_window and self.chatlog_window.winfo_exists():
@@ -1471,10 +1505,22 @@ class BBSTerminalApp:
             self.chatlog_window.attributes('-topmost', True)
             return
 
+        # Load saved font settings
+        saved_font_settings = self.load_font_settings()
+        chatlog_font_settings = {
+            'font': (saved_font_settings.get('font_name', "Courier New"), 
+                    saved_font_settings.get('font_size', 10)),
+            'fg': saved_font_settings.get('fg', 'white'),
+            'bg': saved_font_settings.get('bg', 'black')
+        }
+
+        # Load saved panel sizes or use defaults
+        panel_sizes = self.load_panel_sizes()
+
         self.chatlog_window = tk.Toplevel(self.master)
         self.chatlog_window.title("Chatlog")
-        self.chatlog_window.geometry("1200x600")  # Slightly wider default size
-        self.chatlog_window.attributes('-topmost', True)  # Keep window on top
+        self.chatlog_window.geometry("1200x600")
+        self.chatlog_window.attributes('-topmost', True)
         
         # Make the window resizable
         self.chatlog_window.columnconfigure(0, weight=1)
@@ -1485,62 +1531,50 @@ class BBSTerminalApp:
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(0, weight=1)
 
-        # Create paned window to hold all panels
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        # Create paned window with users/messages/links panels
+        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL, name="main_paned")
         paned.grid(row=0, column=0, sticky="nsew")
 
-        # Left panel - Users list (25% width)
-        users_frame = ttk.Frame(paned)
+        # Users panel
+        users_frame = ttk.Frame(paned, width=panel_sizes["users"])
+        users_frame.pack_propagate(False)  # Prevent shrinking below specified width
         users_frame.columnconfigure(0, weight=1)
         users_frame.rowconfigure(1, weight=1)
         
         ttk.Label(users_frame, text="Users").grid(row=0, column=0, sticky="w")
-        self.chatlog_listbox = tk.Listbox(users_frame, height=10)
+        self.chatlog_listbox = tk.Listbox(users_frame, height=10, **chatlog_font_settings)
         self.chatlog_listbox.grid(row=1, column=0, sticky="nsew")
         users_scrollbar = ttk.Scrollbar(users_frame, command=self.chatlog_listbox.yview)
         users_scrollbar.grid(row=1, column=1, sticky="ns")
         self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
         self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
         
-        # Create context menu for users list
-        users_menu = tk.Menu(self.chatlog_listbox, tearoff=0)
-        users_menu.add_command(label="Delete", command=self.delete_selected_user)
+        paned.add(users_frame)
 
-        def show_users_menu(event):
-            try:
-                self.chatlog_listbox.selection_clear(0, tk.END)
-                self.chatlog_listbox.selection_set(self.chatlog_listbox.nearest(event.y))
-                users_menu.tk_popup(event.x_root, event.y_root)
-            finally:
-                users_menu.grab_release()
-
-        self.chatlog_listbox.bind("<Button-3>", show_users_menu)
-        
-        paned.add(users_frame, weight=25)
-
-        # Middle panel - Messages (50% width)
+        # Messages panel (takes remaining space)
         messages_frame = ttk.Frame(paned)
         messages_frame.columnconfigure(0, weight=1)
         messages_frame.rowconfigure(1, weight=1)
         
         ttk.Label(messages_frame, text="Messages").grid(row=0, column=0, sticky="w")
         self.chatlog_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED,
-                                     bg="white", font=("Courier New", 10))
+                                 **chatlog_font_settings)
         self.chatlog_display.grid(row=1, column=0, sticky="nsew")
         messages_scrollbar = ttk.Scrollbar(messages_frame, command=self.chatlog_display.yview)
         messages_scrollbar.grid(row=1, column=1, sticky="ns")
         self.chatlog_display.configure(yscrollcommand=messages_scrollbar.set)
         
-        paned.add(messages_frame, weight=50)
+        paned.add(messages_frame)
 
-        # Right panel - Hyperlinks (25% width)
-        links_frame = ttk.Frame(paned)
+        # Links panel
+        links_frame = ttk.Frame(paned, width=panel_sizes["links"])
+        links_frame.pack_propagate(False)  # Prevent shrinking below specified width
         links_frame.columnconfigure(0, weight=1)
         links_frame.rowconfigure(1, weight=1)
         
         ttk.Label(links_frame, text="Hyperlinks").grid(row=0, column=0, sticky="w")
         self.links_display = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED,
-                                   bg="lightyellow", font=("Courier New", 10))
+                               **chatlog_font_settings)
         self.links_display.grid(row=1, column=0, sticky="nsew")
         links_scrollbar = ttk.Scrollbar(links_frame, command=self.links_display.yview)
         links_scrollbar.grid(row=1, column=1, sticky="ns")
@@ -1551,7 +1585,25 @@ class BBSTerminalApp:
         self.links_display.tag_bind("hyperlink", "<Enter>", self.show_chatlog_thumbnail_preview)
         self.links_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
-        paned.add(links_frame, weight=25)
+        paned.add(links_frame)
+
+        # Set initial sash positions based on saved sizes
+        def after_show():
+            total_width = paned.winfo_width()
+            users_width = panel_sizes["users"]
+            links_width = panel_sizes["links"]
+            messages_width = total_width - users_width - links_width
+            
+            # Set sash positions
+            paned.sashpos(0, users_width)  # Position between users and messages
+            paned.sashpos(1, users_width + messages_width)  # Position between messages and links
+
+        # Wait for window to be drawn before setting sash positions
+        self.chatlog_window.after(100, after_show)
+
+        # Save sizes when window is closed
+        self.chatlog_window.protocol("WM_DELETE_WINDOW", 
+            lambda: (self.save_panel_sizes(), self.chatlog_window.destroy()))
 
         # Buttons frame at bottom
         buttons_frame = ttk.Frame(main_frame)
@@ -2135,32 +2187,41 @@ def main():
     root = tk.Tk()
     app = BBSTerminalApp(root)
     
+    async def cleanup():
+        """Async cleanup function to handle disconnection."""
+        try:
+            # Cancel all pending tasks first
+            for task in asyncio.all_tasks(app.loop):
+                task.cancel()
+            
+            # Then handle the disconnect
+            if app.connected:
+                await app.disconnect_from_bbs()
+                
+            # Finally close the loop
+            app.loop.stop()
+            app.loop.close()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
     def on_closing():
         """Handle window closing event."""
-        if app.connected:
+        try:
+            # Create a new event loop for cleanup
+            cleanup_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(cleanup_loop)
+            
+            # Run cleanup synchronously with a timeout
+            cleanup_loop.run_until_complete(asyncio.wait_for(cleanup(), timeout=5.0))
+            cleanup_loop.close()
+        except (asyncio.TimeoutError, Exception) as e:
+            print(f"Error or timeout during cleanup: {e}")
+        finally:
+            # Force quit even if cleanup fails
             try:
-                # Create a new event loop for cleanup
-                cleanup_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(cleanup_loop)
-                
-                # Run disconnect in the new loop
-                cleanup_loop.run_until_complete(app.disconnect_from_bbs())
-                cleanup_loop.close()
-            except Exception as e:
-                print(f"Error during disconnect: {e}")
-        
-        # Close the main loop if it's still running
-        if app.loop and not app.loop.is_closed():
-            try:
-                pending = asyncio.all_tasks(app.loop)
-                for task in pending:
-                    task.cancel()
-                app.loop.stop()
-                app.loop.close()
-            except Exception as e:
-                print(f"Error closing loop: {e}")
-        
-        root.destroy()
+                root.quit()
+            finally:
+                root.destroy()
 
     # Bind the closing handler
     root.protocol("WM_DELETE_WINDOW", on_closing)
