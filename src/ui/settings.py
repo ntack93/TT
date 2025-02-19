@@ -2,8 +2,9 @@ import tkinter as tk
 from tkinter import ttk
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from dataclasses import dataclass
+from pathlib import Path
 
 @dataclass
 class SettingsConfig:
@@ -14,13 +15,22 @@ class SettingsConfig:
     auto_login: bool = False
     keep_alive: bool = False
     mud_mode: bool = False
+    data_dir: str = "data"
+    save_path: Optional[Path] = None
 
 class SettingsManager:
     """Manages application settings and preferences."""
     
     def __init__(self, master: tk.Tk, persistence: Any = None) -> None:
+        """Initialize settings manager.
+        
+        Args:
+            master: Root window
+            persistence: Optional persistence manager
+        """
         self.master = master
-        self.persistence = persistence
+        self.persistence = persistence or {}
+        self.config = SettingsConfig()
         self.settings: Dict[str, Any] = self.load_settings()
         
         # Default settings
@@ -57,8 +67,8 @@ class SettingsManager:
     def load_settings(self) -> Dict[str, Any]:
         """Load settings from file."""
         try:
-            if os.path.exists("settings.json"):
-                with open("settings.json", "r") as f:
+            if self.config.save_path and self.config.save_path.exists():
+                with open(self.config.save_path) as f:
                     return json.load(f)
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -67,8 +77,9 @@ class SettingsManager:
     def save_settings(self) -> None:
         """Save current settings to file."""
         try:
-            with open("settings.json", "w") as f:
-                json.dump(self.settings, f)
+            if self.config.save_path:
+                with open(self.config.save_path, 'w') as f:
+                    json.dump(self.settings, f)
         except Exception as e:
             print(f"Error saving settings: {e}")
 
@@ -114,3 +125,47 @@ class SettingsManager:
             
         ttk.Button(settings_window, text="Save",
                    command=save_settings).grid(row=row, column=0, columnspan=2, pady=10)
+    
+    # Delegate missing persistence methods to persistence manager if available
+    def get_users(self) -> List[str]:
+        """Get list of users with chat history."""
+        if hasattr(self.persistence, 'get_users'):
+            return self.persistence.get_users()
+        return []
+        
+    def import_logs(self, filename: str) -> None:
+        """Import chat logs."""
+        if hasattr(self.persistence, 'import_logs'):
+            self.persistence.import_logs(filename)
+            
+    def export_logs(self, filename: str) -> None:
+        """Export chat logs."""
+        if hasattr(self.persistence, 'export_logs'):
+            self.persistence.export_logs(filename)
+
+    def load_messages(self, username: str) -> List[Dict[str, str]]:
+        """Delegate to persistence manager's load_messages."""
+        if hasattr(self.persistence, 'load_messages'):
+            return self.persistence.load_messages(username)
+        return []
+
+    def load_links(self, username: str) -> List[Dict[str, str]]:
+        """Delegate to persistence manager's load_links."""
+        if hasattr(self.persistence, 'load_links'):
+            return self.persistence.load_links(username)
+        return []
+
+    def add_message(self, username: str, message: Dict[str, str]) -> None:
+        """Delegate to persistence manager's add_message."""
+        if hasattr(self.persistence, 'add_message'):
+            self.persistence.add_message(username, message)
+
+    def add_link(self, username: str, link: Dict[str, str]) -> None:
+        """Delegate to persistence manager's add_link."""
+        if hasattr(self.persistence, 'add_link'):
+            self.persistence.add_link(username, link)
+
+    def clear_user_data(self, username: str) -> None:
+        """Delegate to persistence manager's clear_user_data."""
+        if hasattr(self.persistence, 'clear_user_data'):
+            self.persistence.clear_user_data(username)

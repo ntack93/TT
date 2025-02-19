@@ -137,6 +137,9 @@ class TerminalUI:
         ttk.Button(utility_frame, text="Chatlog", 
                   command=self.chatlog.show_window, 
                   style="Chatlog.TButton").pack(side=tk.LEFT, padx=2)
+        ttk.Button(utility_frame, text="Change Font",
+                  command=self.show_change_font_window,
+                  style="Settings.TButton").pack(side=tk.LEFT, padx=2)
         
         # Keep Alive checkbox
         self.keep_alive_enabled = tk.BooleanVar(value=settings.get('keep_alive', False))
@@ -154,14 +157,49 @@ class TerminalUI:
         self.output_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         self.output_frame.columnconfigure(0, weight=1)
         self.output_frame.rowconfigure(0, weight=1)
+
+        # Create paned window for output and directed messages
+        self.output_paned = ttk.PanedWindow(self.output_frame, orient=tk.VERTICAL)
+        self.output_paned.grid(row=0, column=0, sticky="nsew")
+        
+        # Main terminal display
+        terminal_frame = ttk.Frame(self.output_paned)
         self.terminal_display = tk.Text(
-            self.output_frame,
+            terminal_frame,
             wrap=tk.WORD,
             bg="black",
             fg="white",
             font=("Courier New", 10)
         )
-        self.terminal_display.grid(row=0, column=0, sticky="nsew")
+        self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Add scrollbar for terminal
+        terminal_scroll = ttk.Scrollbar(terminal_frame, command=self.terminal_display.yview)
+        terminal_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.terminal_display.configure(yscrollcommand=terminal_scroll.set)
+        
+        # Add terminal frame to paned window
+        self.output_paned.add(terminal_frame, weight=3)
+        
+        # Messages to You frame
+        messages_frame = ttk.LabelFrame(self.output_paned, text="Messages to You")
+        self.directed_msg_display = tk.Text(
+            messages_frame,
+            wrap=tk.WORD,
+            height=6,
+            bg="black",
+            fg="white",
+            font=("Courier New", 10)
+        )
+        self.directed_msg_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Add scrollbar for directed messages
+        messages_scroll = ttk.Scrollbar(messages_frame, command=self.directed_msg_display.yview)
+        messages_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.directed_msg_display.configure(yscrollcommand=messages_scroll.set)
+        
+        # Add messages frame to paned window
+        self.output_paned.add(messages_frame, weight=1)
         
         # Initialize ANSI tags
         self.parser.ansi.configure_tags(self.terminal_display)
@@ -349,7 +387,8 @@ class TerminalUI:
             username = self.members_listbox.get(selected[0])
             action = f"{action} {username}"
             
-        self.telnet.send(action + "\r\n")
+        # Use send_sync instead of send
+        self.telnet.send_sync(action + "\r\n")
 
     def toggle_connection(self) -> None:
         """Toggle the telnet connection on/off."""
@@ -523,7 +562,12 @@ class TerminalUI:
         font_var = tk.StringVar(value=self.font_name.get())
         font_options = [
             "Courier New", "Consolas", "Terminal", "Fixedsys", "System",
-            "Lucida Console", "DejaVu Sans Mono", "Liberation Mono"
+            "Modern DOS 8x16", "Modern DOS 8x8", "Perfect DOS VGA 437",
+            "MS Gothic", "SimSun-ExtB", "NSimSun", "Lucida Console",
+            "OCR A Extended", "Prestige Elite Std", "Letter Gothic Std",
+            "FreeMono", "DejaVu Sans Mono", "Liberation Mono", "IBM Plex Mono",
+            "PT Mono", "Share Tech Mono", "VT323", "Press Start 2P", "DOS/V",
+            "TerminalVector"
         ]
         ttk.Combobox(settings_window, textvariable=font_var, values=font_options, state="readonly").grid(
             row=row, column=1, padx=5, pady=5)
@@ -779,3 +823,240 @@ class TerminalUI:
                     
         self.terminal_display.see(tk.END)
         self.terminal_display.configure(state=tk.DISABLED)
+
+    def show_change_font_window(self) -> None:
+        """Open window to change font settings."""
+        font_window = tk.Toplevel(self.master)
+        font_window.title("Change Font Settings")
+        font_window.geometry("800x600")
+        font_window.grab_set()
+        font_window.attributes('-topmost', True)
+
+        # Store current selections
+        self.current_selections = {
+            'font': None,
+            'size': None,
+            'color': None,
+            'bg': None
+        }
+
+        main_frame = ttk.Frame(font_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Font selection
+        font_frame = self._create_font_selection(main_frame)
+        font_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        
+        # Size selection  
+        size_frame = self._create_size_selection(main_frame)
+        size_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        
+        # Color selection
+        color_frame = self._create_color_selection(main_frame)
+        color_frame.grid(row=0, column=2, padx=5, pady=5, sticky="nsew")
+        
+        # Background selection
+        bg_frame = self._create_bg_selection(main_frame)
+        bg_frame.grid(row=0, column=3, padx=5, pady=5, sticky="nsew")
+
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=1, column=0, columnspan=4, pady=10)
+        
+        ttk.Button(button_frame, text="Save", 
+                  command=lambda: self._save_font_settings(font_window)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close", 
+                  command=font_window.destroy).pack(side=tk.LEFT, padx=5)
+
+        # Set initial selections
+        self._set_initial_font_selections()
+
+    def _create_font_selection(self, parent: ttk.Frame) -> ttk.LabelFrame:
+        """Create font selection frame."""
+        frame = ttk.LabelFrame(parent, text="Font")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        self.font_listbox = tk.Listbox(frame, exportselection=False)
+        self.font_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        scroll = ttk.Scrollbar(frame, command=self.font_listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.font_listbox.configure(yscrollcommand=scroll.set)
+
+        fonts = [
+            "Courier New", "Consolas", "Terminal", "Fixedsys", "System",
+            "Modern DOS 8x16", "Modern DOS 8x8", "Perfect DOS VGA 437",
+            "MS Gothic", "SimSun-ExtB", "NSimSun", "Lucida Console",
+            "OCR A Extended", "Prestige Elite Std", "Letter Gothic Std",
+            "FreeMono", "DejaVu Sans Mono", "Liberation Mono", "IBM Plex Mono",
+            "PT Mono", "Share Tech Mono", "VT323", "Press Start 2P", "DOS/V",
+            "TerminalVector"
+        ]
+        
+        for font in fonts:
+            self.font_listbox.insert(tk.END, font)
+            
+        self.font_listbox.bind('<<ListboxSelect>>', 
+                              lambda e: self._update_selection(e, 'font'))
+        
+        return frame
+
+    def _create_size_selection(self, parent: ttk.Frame) -> ttk.LabelFrame:
+        """Create size selection frame."""
+        frame = ttk.LabelFrame(parent, text="Size")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        self.size_listbox = tk.Listbox(frame, exportselection=False)
+        self.size_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        scroll = ttk.Scrollbar(frame, command=self.size_listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.size_listbox.configure(yscrollcommand=scroll.set)
+
+        sizes = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36]
+        for size in sizes:
+            self.size_listbox.insert(tk.END, size)
+            
+        self.size_listbox.bind('<<ListboxSelect>>', 
+                              lambda e: self._update_selection(e, 'size'))
+        
+        return frame
+
+    def _create_color_selection(self, parent: ttk.Frame) -> ttk.LabelFrame:
+        """Create color selection frame."""
+        frame = ttk.LabelFrame(parent, text="Font Color")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        self.color_listbox = tk.Listbox(frame, exportselection=False)
+        self.color_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        scroll = ttk.Scrollbar(frame, command=self.color_listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.color_listbox.configure(yscrollcommand=scroll.set)
+
+        colors = ["black", "white", "red", "green", "blue", "yellow", 
+                 "magenta", "cyan", "gray70", "gray50", "gray30", 
+                 "orange", "purple", "brown", "pink"]
+                 
+        for color in colors:
+            self.color_listbox.insert(tk.END, color)
+            self.color_listbox.itemconfigure(colors.index(color), {'bg': color})
+            
+        self.color_listbox.bind('<<ListboxSelect>>', 
+                               lambda e: self._update_selection(e, 'color'))
+        
+        return frame
+
+    def _create_bg_selection(self, parent: ttk.Frame) -> ttk.LabelFrame:
+        """Create background selection frame."""
+        frame = ttk.LabelFrame(parent, text="Background Color")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        self.bg_listbox = tk.Listbox(frame, exportselection=False)
+        self.bg_listbox.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        scroll = ttk.Scrollbar(frame, command=self.bg_listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.bg_listbox.configure(yscrollcommand=scroll.set)
+
+        bg_colors = ["white", "black", "gray90", "gray80", "gray70", 
+                    "lightyellow", "lightblue", "lightgreen", 
+                    "azure", "ivory", "honeydew", "lavender"]
+                    
+        for bg in bg_colors:
+            self.bg_listbox.insert(tk.END, bg)
+            self.bg_listbox.itemconfigure(bg_colors.index(bg), {'bg': bg})
+            
+        self.bg_listbox.bind('<<ListboxSelect>>', 
+                            lambda e: self._update_selection(e, 'bg'))
+        
+        return frame
+
+    def _update_selection(self, event: tk.Event, category: str) -> None:
+        """Update current selection for a category."""
+        widget = event.widget
+        try:
+            selection = widget.get(widget.curselection())
+            self.current_selections[category] = selection
+        except (tk.TclError, TypeError):
+            pass
+
+    def _set_initial_font_selections(self) -> None:
+        """Set initial selections in font settings window."""
+        try:
+            # Parse font settings correctly
+            font_info = self.terminal_display.cget("font").split()
+            current_font = font_info[0].strip('{')  # Remove curly brace
+            # Handle size specially since it might include closing brace
+            size_part = font_info[1].strip('}')
+            current_size = int(size_part)
+
+            current_fg = self.terminal_display.cget("fg")
+            current_bg = self.terminal_display.cget("bg")
+            
+            # Initialize current selections
+            self.current_selections = {
+                'font': current_font,
+                'size': current_size,
+                'color': current_fg,
+                'bg': current_bg
+            }
+            
+            # Select current values in listboxes
+            self._select_in_listbox(self.font_listbox, current_font)
+            self._select_in_listbox(self.size_listbox, current_size)
+            self._select_in_listbox(self.color_listbox, current_fg)
+            self._select_in_listbox(self.bg_listbox, current_bg)
+            
+        except Exception as e:
+            print(f"Error setting initial font selections: {e}")
+            # Use defaults if there's an error
+            self.current_selections = {
+                'font': "Courier New",
+                'size': 10,
+                'color': 'white',
+                'bg': 'black'
+            }
+
+    def _save_font_settings(self, window: tk.Toplevel) -> None:
+        """Save and apply font settings."""
+        try:
+            if not all(self.current_selections.values()):
+                messagebox.showerror("Error", "Please select an option from each list")
+                return
+                
+            # Create font settings
+            font_settings = {
+                'font': (self.current_selections['font'], self.current_selections['size']),
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
+            
+            # Only apply to chatlog UI components
+            if self.chatlog:
+                self.chatlog.update_font_settings(font_settings)
+            
+            # Store settings
+            self.current_font_settings = font_settings
+            
+            # Save to file
+            settings_to_save = {
+                'font_name': self.current_selections['font'],
+                'font_size': self.current_selections['size'],
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
+            
+            with open("chatlog_font_settings.json", "w") as f:  # Use separate file for chatlog fonts
+                json.dump(settings_to_save, f)
+            
+            window.destroy()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error applying settings: {str(e)}")
+
+

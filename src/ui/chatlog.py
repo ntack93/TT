@@ -38,6 +38,13 @@ class ChatlogManager:
         self.window.title("Chat History")
         self.window.geometry("1000x600")
         
+        # Load current font settings
+        font_settings = self.persistence.get('font_settings', {
+            'font': ("Courier New", 10),
+            'fg': 'white',
+            'bg': 'black'
+        })
+        
         # Create main container
         self.paned = ttk.PanedWindow(self.window, orient=tk.HORIZONTAL)
         self.paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -45,7 +52,7 @@ class ChatlogManager:
         # Users panel
         users_frame = ttk.Frame(self.paned)
         ttk.Label(users_frame, text="Users").pack(anchor=tk.W)
-        self.user_list = tk.Listbox(users_frame, exportselection=False)
+        self.user_list = tk.Listbox(users_frame, exportselection=False, **font_settings)
         self.user_list.pack(fill=tk.BOTH, expand=True)
         self.user_list.bind('<<ListboxSelect>>', self._on_user_select)
         self.paned.add(users_frame, weight=1)
@@ -53,14 +60,16 @@ class ChatlogManager:
         # Messages panel
         messages_frame = ttk.Frame(self.paned)
         ttk.Label(messages_frame, text="Messages").pack(anchor=tk.W)
-        self.messages_text = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED)
+        self.messages_text = tk.Text(messages_frame, wrap=tk.WORD, 
+                                   state=tk.DISABLED, **font_settings)
         self.messages_text.pack(fill=tk.BOTH, expand=True)
         self.paned.add(messages_frame, weight=3)
         
         # Links panel
         links_frame = ttk.Frame(self.paned)
         ttk.Label(links_frame, text="Shared Links").pack(anchor=tk.W)
-        self.links_text = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED)
+        self.links_text = tk.Text(links_frame, wrap=tk.WORD, 
+                                state=tk.DISABLED, **font_settings)
         self.links_text.pack(fill=tk.BOTH, expand=True)
         self.paned.add(links_frame, weight=1)
         
@@ -88,17 +97,36 @@ class ChatlogManager:
         
     def _show_user_messages(self, username: str) -> None:
         """Display messages for selected user."""
-        messages = self.persistence.load_messages(username)
-        
-        self.messages_text.configure(state=tk.NORMAL)
-        self.messages_text.delete(1.0, tk.END)
-        
-        for msg in messages:
-            timestamp = msg.get('timestamp', '')
-            text = msg.get('text', '')
-            self.messages_text.insert(tk.END, f"[{timestamp}] {text}\n")
+        try:
+            messages = self.persistence.load_messages(username)
             
-        self.messages_text.configure(state=tk.DISABLED)
+            self.messages_text.configure(state=tk.NORMAL)
+            self.messages_text.delete(1.0, tk.END)
+            
+            for msg in messages:
+                # Handle both dict and string message formats
+                if isinstance(msg, dict):
+                    timestamp = msg.get('timestamp', '')
+                    text = msg.get('text', '')
+                else:
+                    # If message is just a string, display as-is
+                    timestamp = ''
+                    text = str(msg)
+                
+                if timestamp:
+                    self.messages_text.insert(tk.END, f"[{timestamp}] {text}\n")
+                else:
+                    self.messages_text.insert(tk.END, f"{text}\n")
+                
+            self.messages_text.configure(state=tk.DISABLED)
+            self.messages_text.see(tk.END)
+            
+        except Exception as e:
+            print(f"Error displaying messages: {e}")
+            self.messages_text.configure(state=tk.NORMAL)
+            self.messages_text.delete(1.0, tk.END)
+            self.messages_text.insert(tk.END, "Error loading messages\n")
+            self.messages_text.configure(state=tk.DISABLED)
         
     def _show_user_links(self, username: str) -> None:
         """Display links shared by selected user."""
@@ -123,23 +151,30 @@ class ChatlogManager:
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Store message
-        self.persistence.add_message(username, {
+        # Create message dict
+        message = {
             'timestamp': timestamp,
             'text': text
-        })
+        }
         
-        # Extract any links
-        urls = re.findall(r'https?://\S+', text)
-        for url in urls:
-            self.persistence.add_link(username, {
-                'timestamp': timestamp,
-                'url': url
-            })
+        # Store message
+        try:
+            self.persistence.add_message(username, message)
             
-        # Refresh if window is open
-        if self.window and self.window.winfo_exists():
-            self.refresh_users()
+            # Extract any links
+            urls = re.findall(r'https?://\S+', text)
+            for url in urls:
+                self.persistence.add_link(username, {
+                    'timestamp': timestamp,
+                    'url': url
+                })
+                
+            # Refresh if window is open
+            if self.window and self.window.winfo_exists():
+                self.refresh_users()
+                
+        except Exception as e:
+            print(f"Error adding message: {e}")
             
     def _clear_selected(self) -> None:
         """Clear history for selected user."""
@@ -187,18 +222,18 @@ class ChatlogManager:
         for user in sorted(users):
             self.user_list.insert(tk.END, user)
 
-    def process_message(self, message: Dict[str, Any]) -> None:
+    def process_message(self, message: Any) -> None:
         """Process an incoming message for chat logging.
         
         Args:
-            message: Parsed message dictionary containing sender, text, etc.
+            message: ParsedMessage object containing message data
         """
         if not message:
             return
             
         # Extract message components
-        sender = message.get('sender', 'Unknown')
-        text = message.get('text', '')
+        sender = getattr(message, 'sender', 'Unknown')
+        text = getattr(message, 'text', '')
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Add message to chat history
@@ -208,3 +243,41 @@ class ChatlogManager:
         # Process any URLs in the message
         if text:
             self.parse_and_store_hyperlinks(text, sender)
+
+    def parse_username(self, text: str) -> Optional[str]:
+        """Parse username from message text.
+        
+        Args:
+            text: Message text to parse
+            
+        Returns:
+            Username if found, None otherwise
+        """
+        # Check for directed message format
+        directed_match = re.match(
+            r'^From\s+(\S+?)(?:@[\w.]+)?\s+\((whispered|to you)\):', 
+            text, 
+            re.IGNORECASE
+        )
+        if directed_match:
+            return directed_match.group(1)
+            
+        # Check for normal message format
+        normal_match = re.match(
+            r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:', 
+            text,
+            re.IGNORECASE
+        )
+        if normal_match:
+            return normal_match.group(1)
+            
+        return None
+
+    def update_font_settings(self, settings: Dict[str, Any]) -> None:
+        """Update font settings for all text widgets."""
+        if not self.window or not self.window.winfo_exists():
+            return
+            
+        for widget in (self.user_list, self.messages_text, self.links_text):
+            if widget:
+                widget.configure(**settings)

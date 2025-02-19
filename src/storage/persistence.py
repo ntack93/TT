@@ -116,23 +116,36 @@ class PersistenceManager:
         with open(filename) as f:
             data = json.load(f)
             
-        # Import messages
-        for user, messages in data['messages'].items():
-            current = self.load_messages(user)
-            current.extend(messages)
-            
-            path = self.data_dir / "messages" / f"{user}.json"
-            with open(path, 'w') as f:
-                json.dump(current, f)
+        # Handle old format
+        if isinstance(data, dict) and not ('messages' in data or 'links' in data):
+            # Assume old format where data is directly username -> messages
+            for user, messages in data.items():
+                current = self.load_messages(user)
+                current.extend(messages)
                 
-        # Import links
-        for user, links in data['links'].items():
-            current = self.load_links(user)
-            current.extend(links)
+                path = self.data_dir / "messages" / f"{user}.json"
+                with open(path, 'w') as f:
+                    json.dump(current, f)
+            return
             
-            path = self.data_dir / "links" / f"{user}.json"
-            with open(path, 'w') as f:
-                json.dump(current, f)
+        # Handle new format with messages/links separation
+        if 'messages' in data:
+            for user, messages in data['messages'].items():
+                current = self.load_messages(user)
+                current.extend(messages)
+                
+                path = self.data_dir / "messages" / f"{user}.json"
+                with open(path, 'w') as f:
+                    json.dump(current, f)
+                
+        if 'links' in data:
+            for user, links in data['links'].items():
+                current = self.load_links(user)
+                current.extend(links)
+                
+                path = self.data_dir / "links" / f"{user}.json"
+                with open(path, 'w') as f:
+                    json.dump(current, f)
 
     def load_json(self, filename: str, default: Any = None) -> Dict[str, Any]:
         """Load JSON data from a file in the data directory.
