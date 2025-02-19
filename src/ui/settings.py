@@ -1,7 +1,8 @@
-from typing import Dict, Any
 import tkinter as tk
 from tkinter import ttk
 import json
+import os
+from typing import Any, Dict, Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -15,101 +16,101 @@ class SettingsConfig:
     mud_mode: bool = False
 
 class SettingsManager:
-    """Manages application settings and configuration."""
+    """Manages application settings and preferences."""
     
-    def __init__(self, master: tk.Tk, persistence: Any) -> None:
-        """Initialize settings manager.
-        
-        Args:
-            master: Root window
-            persistence: Persistence manager instance
-        """
+    def __init__(self, master: tk.Tk, persistence: Any = None) -> None:
         self.master = master
         self.persistence = persistence
-        self.settings_window = None
-        self.config = self.load_settings()
+        self.settings: Dict[str, Any] = self.load_settings()
         
+        # Default settings
+        self.defaults = {
+            'host': 'bbs.example.com',
+            'port': 23,
+            'username': '',
+            'password': '',
+            'remember_username': False,
+            'remember_password': False,
+            'keep_alive': False,
+            'font_name': 'Courier New',
+            'font_size': 10,
+            'fg_color': 'white',
+            'bg_color': 'black',
+            'mud_mode': False,
+            'auto_login': False
+        }
+        
+        # Initialize any missing settings with defaults
+        for key, value in self.defaults.items():
+            if key not in self.settings:
+                self.settings[key] = value
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get a setting value by key."""
+        return self.settings.get(key, default if default is not None else self.defaults.get(key))
+    
+    def set(self, key: str, value: Any) -> None:
+        """Set a setting value by key."""
+        self.settings[key] = value
+        self.save_settings()
+    
+    def load_settings(self) -> Dict[str, Any]:
+        """Load settings from file."""
+        try:
+            if os.path.exists("settings.json"):
+                with open("settings.json", "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+        return {}
+    
+    def save_settings(self) -> None:
+        """Save current settings to file."""
+        try:
+            with open("settings.json", "w") as f:
+                json.dump(self.settings, f)
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+
     def show_settings_window(self) -> None:
-        """Display the settings configuration window."""
-        if self.settings_window and self.settings_window.winfo_exists():
-            self.settings_window.lift()
-            return
-            
-        self.settings_window = tk.Toplevel(self.master)
-        self.settings_window.title("Settings")
-        self.settings_window.grab_set()
+        """Display settings configuration window."""
+        settings_window = tk.Toplevel(self.master)
+        settings_window.title("Settings")
+        settings_window.grab_set()  # Make window modal
         
-        # Font settings frame
-        font_frame = ttk.LabelFrame(self.settings_window, text="Font Settings")
-        font_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Create settings UI
+        row = 0
         
-        # Font name
-        ttk.Label(font_frame, text="Font:").grid(row=0, column=0, padx=5, pady=5)
-        font_var = tk.StringVar(value=self.config.font_name)
-        font_entry = ttk.Entry(font_frame, textvariable=font_var)
-        font_entry.grid(row=0, column=1, padx=5, pady=5)
+        # Font settings
+        ttk.Label(settings_window, text="Font:").grid(row=row, column=0, padx=5, pady=5)
+        font_var = tk.StringVar(value=self.get('font_name'))
+        ttk.Entry(settings_window, textvariable=font_var).grid(row=row, column=1, padx=5, pady=5)
+        row += 1
         
-        # Font size
-        ttk.Label(font_frame, text="Size:").grid(row=1, column=0, padx=5, pady=5)
-        size_var = tk.IntVar(value=self.config.font_size)
-        size_entry = ttk.Entry(font_frame, textvariable=size_var)
-        size_entry.grid(row=1, column=1, padx=5, pady=5)
+        ttk.Label(settings_window, text="Font Size:").grid(row=row, column=0, padx=5, pady=5)
+        size_var = tk.IntVar(value=self.get('font_size'))
+        ttk.Entry(settings_window, textvariable=size_var).grid(row=row, column=1, padx=5, pady=5)
+        row += 1
         
-        # Automation frame
-        auto_frame = ttk.LabelFrame(self.settings_window, text="Automation")
-        auto_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Auto-login settings
+        auto_login_var = tk.BooleanVar(value=self.get('auto_login'))
+        ttk.Checkbutton(settings_window, text="Auto Login", 
+                       variable=auto_login_var).grid(row=row, column=0, columnspan=2, pady=5)
+        row += 1
         
-        # Checkboxes
-        logon_var = tk.BooleanVar(value=self.config.logon_automation)
-        ttk.Checkbutton(auto_frame, text="Logon Automation", 
-                       variable=logon_var).pack(padx=5, pady=2)
-        
-        auto_login_var = tk.BooleanVar(value=self.config.auto_login)
-        ttk.Checkbutton(auto_frame, text="Auto Login", 
-                       variable=auto_login_var).pack(padx=5, pady=2)
-        
-        keep_alive_var = tk.BooleanVar(value=self.config.keep_alive)
-        ttk.Checkbutton(auto_frame, text="Keep Alive", 
-                       variable=keep_alive_var).pack(padx=5, pady=2)
-        
-        mud_mode_var = tk.BooleanVar(value=self.config.mud_mode)
-        ttk.Checkbutton(auto_frame, text="MUD Mode", 
-                       variable=mud_mode_var).pack(padx=5, pady=2)
+        # MUD mode settings
+        mud_mode_var = tk.BooleanVar(value=self.get('mud_mode'))
+        ttk.Checkbutton(settings_window, text="MUD Mode",
+                       variable=mud_mode_var).grid(row=row, column=0, columnspan=2, pady=5)
+        row += 1
         
         # Save button
         def save_settings():
-            self.config = SettingsConfig(
-                font_name=font_var.get(),
-                font_size=size_var.get(),
-                logon_automation=logon_var.get(),
-                auto_login=auto_login_var.get(),
-                keep_alive=keep_alive_var.get(),
-                mud_mode=mud_mode_var.get()
-            )
-            self.save_settings()
-            self.settings_window.destroy()
+            self.set('font_name', font_var.get())
+            self.set('font_size', size_var.get())
+            self.set('auto_login', auto_login_var.get())
+            self.set('mud_mode', mud_mode_var.get())
+            settings_window.destroy()
             
-        ttk.Button(self.settings_window, text="Save", 
-                  command=save_settings).pack(pady=10)
-                  
-    def load_settings(self) -> SettingsConfig:
-        """Load settings from persistence."""
-        data = self.persistence.load_json('settings.json', {})
-        return SettingsConfig(**data)
-        
-    def save_settings(self) -> None:
-        """Save current settings to persistence."""
-        self.persistence.save_json(vars(self.config), 'settings.json')
-        
-    def get_terminal_config(self) -> Dict[str, Any]:
-        """Get terminal display configuration.
-        
-        Returns:
-            Dictionary of terminal config settings
-        """
-        return {
-            'font': (self.config.font_name, self.config.font_size),
-            'bg': 'black',
-            'fg': 'white',
-            'insertbackground': 'white'
-        }
+        ttk.Button(settings_window, text="Save",
+                   command=save_settings).grid(row=row, column=0, columnspan=2, pady=10)

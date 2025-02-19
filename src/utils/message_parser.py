@@ -1,7 +1,8 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from .ansi import ANSIParser
 
 @dataclass
 class ParsedMessage:
@@ -18,28 +19,28 @@ class MessageParser:
     
     def __init__(self) -> None:
         """Initialize message parser patterns."""
-        # Pattern for directed messages
+        self.ansi = ANSIParser()
         self.directed_pattern = re.compile(
             r'^From\s+(\S+)\s+\((whispered|to)\s*(?:to\s+(\S+))?\):\s*(.+)$',
             re.IGNORECASE
         )
         
-        # Pattern for normal messages
         self.normal_pattern = re.compile(
             r'^From\s+(\S+)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$',
             re.IGNORECASE
         )
         
-        # Pattern for system messages
         self.system_pattern = re.compile(
             r'^\*\*\*\s+(.+)\s+\*\*\*$'
         )
         
-        # Pattern for URLs
         self.url_pattern = re.compile(
             r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)'
         )
-
+        
+        self.chat_pattern = re.compile(r'<([^>]+)>\s*(.*)')
+        self.private_pattern = re.compile(r'\[([^\]]+)\]\s*(.*)')
+        
     def parse(self, text: str) -> ParsedMessage:
         """Parse a message into its components.
         
@@ -51,7 +52,6 @@ class MessageParser:
         """
         timestamp = datetime.now()
         
-        # Try directed message pattern first
         directed_match = self.directed_pattern.match(text)
         if directed_match:
             sender, msg_type, recipient, content = directed_match.groups()
@@ -64,7 +64,6 @@ class MessageParser:
                 raw_text=text
             )
             
-        # Try normal message pattern
         normal_match = self.normal_pattern.match(text)
         if normal_match:
             sender, content = normal_match.groups()
@@ -77,7 +76,6 @@ class MessageParser:
                 raw_text=text
             )
             
-        # Check for system message
         system_match = self.system_pattern.match(text)
         if system_match:
             return ParsedMessage(
@@ -89,7 +87,6 @@ class MessageParser:
                 raw_text=text
             )
             
-        # Default to treating as raw text
         return ParsedMessage(
             timestamp=timestamp,
             sender=None,
@@ -110,16 +107,40 @@ class MessageParser:
         """
         urls = self.url_pattern.findall(text)
         
-        # Clean and normalize URLs
         cleaned_urls = []
         for url in urls:
-            # Remove trailing punctuation
             url = re.sub(r'[.,;:]+$', '', url)
             
-            # Add http:// to www. urls
             if url.startswith('www.'):
                 url = 'http://' + url
                 
             cleaned_urls.append(url)
             
         return cleaned_urls
+
+    def extract_username(self, message: str) -> Optional[str]:
+        """Extract username from a message if present."""
+        for pattern in [self.chat_pattern, self.private_pattern]:
+            match = pattern.match(message)
+            if match:
+                return match.group(1)
+        return None
+
+    def extract_users_from_list(self, text: str) -> set:
+        """Extract usernames from a user list message."""
+        users = set()
+        lines = text.split('\n')
+        
+        for line in lines:
+            clean_line = self.ansi.strip_ansi(line)
+            
+            if ':' in clean_line:
+                user = clean_line.split(':')[0].strip()
+                if user:
+                    users.add(user)
+            elif '|' in clean_line:
+                user = clean_line.split('|')[0].strip()
+                if user:
+                    users.add(user)
+                    
+        return users

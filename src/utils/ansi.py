@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple, Optional
 import tkinter as tk
 import re
 
@@ -27,6 +27,20 @@ class ANSIParser:
         }
         
         self.ansi_pattern = re.compile(r'\x1b\[(.*?)m')
+        self.sgr_codes: Dict[str, str] = {
+            '0': 'reset',
+            '1': 'bold',
+            '4': 'underline',
+            '5': 'blink',
+            '7': 'reverse',
+            '8': 'concealed'
+        }
+        self.color_codes: Dict[str, str] = {
+            '30': 'black', '31': 'red',     '32': 'green',  '33': 'yellow',
+            '34': 'blue',  '35': 'magenta', '36': 'cyan',   '37': 'white',
+            '90': 'gray',  '91': 'brightred', '92': 'brightgreen', '93': 'brightyellow',
+            '94': 'brightblue', '95': 'brightmagenta', '96': 'brightcyan', '97': 'brightwhite'
+        }
 
     def configure_tags(self, text_widget: tk.Text) -> None:
         """Configure text widget tags for ANSI colors.
@@ -88,3 +102,49 @@ class ANSIParser:
             Clean text without ANSI codes
         """
         return self.ansi_pattern.sub('', text)
+
+    def parse(self, text: str) -> List[Tuple[str, Dict[str, bool]]]:
+        """Parse text with ANSI sequences into segments with attributes.
+        
+        Args:
+            text: Raw text with ANSI sequences
+            
+        Returns:
+            List of (text, attributes) tuples
+        """
+        segments = []
+        current_attrs = {}
+        
+        # Split on ANSI escape sequences
+        parts = re.split('(\x1b\\[[0-9;]*[A-Za-z])', text)
+        
+        for part in parts:
+            if part.startswith('\x1b['):
+                # Process ANSI sequence
+                self._update_attributes(part, current_attrs)
+            elif part:
+                # Add text segment with current attributes
+                segments.append((part, current_attrs.copy()))
+                
+        return segments
+    
+    def _update_attributes(self, sequence: str, attrs: Dict[str, bool]) -> None:
+        """Update attributes based on ANSI sequence."""
+        if not sequence.endswith('m'):
+            return
+            
+        # Extract codes
+        codes = sequence[2:-1].split(';')
+        
+        if '0' in codes:
+            # Reset all attributes
+            attrs.clear()
+            return
+            
+        for code in codes:
+            if code in self.sgr_codes:
+                attrs[self.sgr_codes[code]] = True
+            elif code in self.color_codes:
+                attrs['foreground'] = self.color_codes[code]
+            elif code.startswith('4') and code[1:] in self.color_codes:
+                attrs['background'] = self.color_codes[code[1:]]

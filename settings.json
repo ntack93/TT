@@ -1,0 +1,1 @@
+{"host": "bbs.example.com", "port": 23, "username": "Noah", "password": "niffum20", "remember_username": true, "remember_password": true, "keep_alive": true, "font_name": "Courier New", "font_size": 10, "fg_color": "white", "bg_color": "black", "mud_mode": false, "auto_login": false, "keep_alive_interval": 60}

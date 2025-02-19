@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk
 import asyncio
 import threading
+import queue
 
 from .ui.terminal import TerminalUI
 from .ui.settings import SettingsManager
@@ -63,7 +64,7 @@ class BBSTerminalApp:
         asyncio.set_event_loop(self.loop)
         
         # Set up the message queue
-        self.msg_queue = asyncio.Queue()
+        self.msg_queue = queue.Queue()
         
         # Configure cleanup handlers
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -79,38 +80,32 @@ class BBSTerminalApp:
         # Refresh chat members every 5 seconds
         self.master.after(5000, self.terminal.refresh_chat_members)
 
-    async def handle_incoming_data(self, data: str) -> None:
-        """Handle incoming data from telnet connection.
-        
-        Args:
-            data: Raw data received from telnet
-        """
-        await self.msg_queue.put(data)
+    def handle_incoming_data(self, data: str) -> None:
+        """Handle incoming data from telnet connection (synchronous version)."""
+        # Put the data in the queue and schedule an update
+        self.msg_queue.put(data)
+        self.terminal.append_text(data)
 
     def process_message_queue(self) -> None:
         """Process messages from the queue and update UI."""
         try:
+            # Get all available messages
             while True:
-                # Get all available messages
-                data = self.loop.run_until_complete(
-                    self.msg_queue.get_nowait()
-                )
-                
+                data = self.msg_queue.get_nowait()
                 # Parse and process the message
                 parsed_msg = self.message_parser.parse(data)
                 
-                # Update UI components
-                self.terminal.update_display(parsed_msg)
+                # Update UI components (except terminal display since we do it directly)
                 self.chatlog.process_message(parsed_msg)
                 
                 # Check triggers
                 self.triggers.check_message(parsed_msg)
                 
-        except asyncio.QueueEmpty:
+        except queue.Empty:
             pass
         finally:
             # Schedule next check
-            self.master.after(100, self.process_message_queue)
+            self.master.after(50, self.process_message_queue)
 
     async def cleanup(self) -> None:
         """Perform cleanup operations before shutdown."""

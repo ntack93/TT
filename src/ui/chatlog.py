@@ -1,11 +1,13 @@
-from typing import Dict, List, Optional, Any
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
+from typing import Dict, Any, Optional
+import json
 import re
 from datetime import datetime
+from pathlib import Path
 
 class ChatlogManager:
-    """Manages chat logging and display functionality."""
+    """Manages chat history and log viewing."""
     
     def __init__(self, master: tk.Tk, persistence: Any, parser: Any) -> None:
         """Initialize chatlog manager.
@@ -18,119 +20,191 @@ class ChatlogManager:
         self.master = master
         self.persistence = persistence
         self.parser = parser
-        self.chatlog_window = None
+        self.window: Optional[tk.Toplevel] = None
         
-    def show_chatlog_window(self) -> None:
+        # Component references
+        self.user_list: Optional[tk.Listbox] = None
+        self.messages_text: Optional[tk.Text] = None
+        self.links_text: Optional[tk.Text] = None
+        self.paned: Optional[ttk.PanedWindow] = None
+        
+    def show_window(self) -> None:
         """Display the chatlog window."""
-        if self.chatlog_window and self.chatlog_window.winfo_exists():
-            self.chatlog_window.lift()
+        if self.window and self.window.winfo_exists():
+            self.window.lift()
             return
             
-        self.chatlog_window = tk.Toplevel(self.master)
-        self.chatlog_window.title("Chat History")
-        self.chatlog_window.geometry("800x600")
+        self.window = tk.Toplevel(self.master)
+        self.window.title("Chat History")
+        self.window.geometry("1000x600")
         
-        # Create paned window
-        paned = ttk.PanedWindow(self.chatlog_window, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True)
+        # Create main container
+        self.paned = ttk.PanedWindow(self.window, orient=tk.HORIZONTAL)
+        self.paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Users list
-        users_frame = ttk.Frame(paned)
-        ttk.Label(users_frame, text="Users").pack()
-        self.users_list = tk.Listbox(users_frame)
-        self.users_list.pack(fill=tk.BOTH, expand=True)
-        paned.add(users_frame)
+        # Users panel
+        users_frame = ttk.Frame(self.paned)
+        ttk.Label(users_frame, text="Users").pack(anchor=tk.W)
+        self.user_list = tk.Listbox(users_frame, exportselection=False)
+        self.user_list.pack(fill=tk.BOTH, expand=True)
+        self.user_list.bind('<<ListboxSelect>>', self._on_user_select)
+        self.paned.add(users_frame, weight=1)
         
-        # Messages display
-        msg_frame = ttk.Frame(paned)
-        ttk.Label(msg_frame, text="Messages").pack()
-        self.msg_display = tk.Text(msg_frame, wrap=tk.WORD)
-        self.msg_display.pack(fill=tk.BOTH, expand=True)
-        paned.add(msg_frame)
+        # Messages panel
+        messages_frame = ttk.Frame(self.paned)
+        ttk.Label(messages_frame, text="Messages").pack(anchor=tk.W)
+        self.messages_text = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED)
+        self.messages_text.pack(fill=tk.BOTH, expand=True)
+        self.paned.add(messages_frame, weight=3)
         
-        # Load users and bind selection
-        self.load_users()
-        self.users_list.bind('<<ListboxSelect>>', self.on_user_select)
+        # Links panel
+        links_frame = ttk.Frame(self.paned)
+        ttk.Label(links_frame, text="Shared Links").pack(anchor=tk.W)
+        self.links_text = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED)
+        self.links_text.pack(fill=tk.BOTH, expand=True)
+        self.paned.add(links_frame, weight=1)
         
-        # Control buttons
-        btn_frame = ttk.Frame(self.chatlog_window)
-        btn_frame.pack(fill=tk.X, pady=5)
+        # Toolbar
+        toolbar = ttk.Frame(self.window)
+        toolbar.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Button(btn_frame, text="Clear History",
-                  command=self.clear_history).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Close",
-                  command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
-                  
-    def load_users(self) -> None:
-        """Load user list from chat history."""
-        chatlog = self.persistence.load_chatlog()
-        self.users_list.delete(0, tk.END)
-        for username in sorted(chatlog.keys()):
-            self.users_list.insert(tk.END, username)
-            
-    def on_user_select(self, event: Optional[tk.Event] = None) -> None:
-        """Handle user selection in listbox."""
-        selection = self.users_list.curselection()
+        ttk.Button(toolbar, text="Clear Selected", command=self._clear_selected).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Export", command=self._export_logs).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Import", command=self._import_logs).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Close", command=self.window.destroy).pack(side=tk.RIGHT, padx=2)
+        
+        # Load data
+        self.refresh_users()
+        
+    def _on_user_select(self, event: Optional[tk.Event] = None) -> None:
+        """Handle user selection."""
+        selection = self.user_list.curselection()
         if not selection:
             return
             
-        username = self.users_list.get(selection[0])
-        self.display_user_messages(username)
+        username = self.user_list.get(selection[0])
+        self._show_user_messages(username)
+        self._show_user_links(username)
         
-    def display_user_messages(self, username: str) -> None:
+    def _show_user_messages(self, username: str) -> None:
         """Display messages for selected user."""
-        chatlog = self.persistence.load_chatlog()
-        messages = chatlog.get(username, [])
+        messages = self.persistence.load_messages(username)
         
-        self.msg_display.config(state=tk.NORMAL)
-        self.msg_display.delete(1.0, tk.END)
+        self.messages_text.configure(state=tk.NORMAL)
+        self.messages_text.delete(1.0, tk.END)
         
         for msg in messages:
-            self.msg_display.insert(tk.END, f"{msg}\n")
+            timestamp = msg.get('timestamp', '')
+            text = msg.get('text', '')
+            self.messages_text.insert(tk.END, f"[{timestamp}] {text}\n")
             
-        self.msg_display.config(state=tk.DISABLED)
+        self.messages_text.configure(state=tk.DISABLED)
         
-    def clear_history(self) -> None:
-        """Clear chat history for selected user."""
-        selection = self.users_list.curselection()
+    def _show_user_links(self, username: str) -> None:
+        """Display links shared by selected user."""
+        links = self.persistence.load_links(username)
+        
+        self.links_text.configure(state=tk.NORMAL)
+        self.links_text.delete(1.0, tk.END)
+        
+        for link in links:
+            timestamp = link.get('timestamp', '')
+            url = link.get('url', '')
+            self.links_text.insert(tk.END, f"[{timestamp}] {url}\n")
+            
+        self.links_text.configure(state=tk.DISABLED)
+        
+    def add_message(self, username: str, text: str) -> None:
+        """Add a new message to the logs.
+        
+        Args:
+            username: Sender's username
+            text: Message text
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Store message
+        self.persistence.add_message(username, {
+            'timestamp': timestamp,
+            'text': text
+        })
+        
+        # Extract any links
+        urls = re.findall(r'https?://\S+', text)
+        for url in urls:
+            self.persistence.add_link(username, {
+                'timestamp': timestamp,
+                'url': url
+            })
+            
+        # Refresh if window is open
+        if self.window and self.window.winfo_exists():
+            self.refresh_users()
+            
+    def _clear_selected(self) -> None:
+        """Clear history for selected user."""
+        selection = self.user_list.curselection()
         if not selection:
             return
             
-        username = self.users_list.get(selection[0])
-        if messagebox.askyesno("Confirm Clear",
-                              f"Clear history for {username}?"):
-            chatlog = self.persistence.load_chatlog()
-            if username in chatlog:
-                del chatlog[username]
-                self.persistence.save_chatlog(chatlog)
-                self.load_users()
-                self.msg_display.config(state=tk.NORMAL)
-                self.msg_display.delete(1.0, tk.END)
-                self.msg_display.config(state=tk.DISABLED)
-                
-    def process_message(self, message: Any) -> None:
-        """Process and store a new message.
-        
-        Args:
-            message: Parsed message object
-        """
-        if not message.sender:
+        username = self.user_list.get(selection[0])
+        if messagebox.askyesno(
+            "Clear History",
+            f"Clear all history for {username}?"
+        ):
+            self.persistence.clear_user_data(username)
+            self.refresh_users()
+            
+    def _export_logs(self) -> None:
+        """Export chat logs to file."""
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json")]
+        )
+        if filename:
+            self.persistence.export_logs(filename)
+            
+    def _import_logs(self) -> None:
+        """Import chat logs from file."""
+        filename = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json")]
+        )
+        if filename and messagebox.askyesno(
+            "Import Logs",
+            "This will merge imported logs with existing ones. Continue?"
+        ):
+            self.persistence.import_logs(filename)
+            self.refresh_users()
+            
+    def refresh_users(self) -> None:
+        """Refresh the users list."""
+        if not self.user_list:
             return
             
-        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-        formatted_msg = f"{timestamp} {message.raw_text}"
+        users = self.persistence.get_users()
         
-        chatlog = self.persistence.load_chatlog()
-        if message.sender not in chatlog:
-            chatlog[message.sender] = []
+        self.user_list.delete(0, tk.END)
+        for user in sorted(users):
+            self.user_list.insert(tk.END, user)
+
+    def process_message(self, message: Dict[str, Any]) -> None:
+        """Process an incoming message for chat logging.
+        
+        Args:
+            message: Parsed message dictionary containing sender, text, etc.
+        """
+        if not message:
+            return
             
-        chatlog[message.sender].append(formatted_msg)
-        self.persistence.save_chatlog(chatlog)
+        # Extract message components
+        sender = message.get('sender', 'Unknown')
+        text = message.get('text', '')
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Update window if open
-        if (self.chatlog_window and 
-            self.chatlog_window.winfo_exists() and
-            self.users_list.curselection()):
-            selected = self.users_list.get(self.users_list.curselection()[0])
-            if selected == message.sender:
-                self.display_user_messages(message.sender)
+        # Add message to chat history
+        if sender and text:
+            self.add_message(sender, text)
+            
+        # Process any URLs in the message
+        if text:
+            self.parse_and_store_hyperlinks(text, sender)

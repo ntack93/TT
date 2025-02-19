@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>BBS Terminal UI</title>
+    <style>
+        /* Favorites window styling */
+        #favoritesWindow {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            border: 1px solid #ccc;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        #favoritesWindow h2 {
+            margin-top: 0;
+        }
+
+        #favoritesWindow ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        #favoritesWindow li {
+            padding: 5px;
+            cursor: pointer;
+        }
+
+        #favoritesWindow li.selected {
+            background-color: #ddd;
+        }
+
+        /* Context menu styling */
+        .context-menu {
+            position: absolute;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+        }
+
+        .context-menu div {
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+
+        .context-menu div:hover {
+            background-color: #ddd;
+        }
+
+        /* Trigger/Response Section styling */
+        #triggerSection {
+            margin-top: 20px;
+        }
+
+        .triggerRow {
+            display: flex;
+            align-items: center;
+        }
+
+        .triggerRow input {
+            margin-right: 5px;
+        }
+
+        .triggerRow button {
+            margin-left: 5px;
+        }
+
+        /* Chatroom Members panel styling */
+        #membersPanel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 200px;
+            height: 100%;
+            background-color: #f1f1f1;
+            border-left: 1px solid #ccc;
+            padding: 10px;
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+        }
+
+        #membersPanel h2 {
+            margin-top: 0;
+        }
+
+        #membersList {
+            list-style-type: none;
+            padding: 0;
+            height: calc(100% - 40px);
+            overflow-y: auto;
+        }
+
+        #membersList li {
+            padding: 5px;
+            cursor: pointer;
+        }
+
+        #membersList li.selected {
+            background-color: #ddd;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Toggle Mode and Favorites buttons -->
+    <button id="toggleModeButton">Toggle Mode</button>
+    <button id="favoritesButton">Favorites</button>
+
+    <!-- Config frame -->
+    <div id="configFrame">
+        <!-- Settings button -->
+        <button id="settingsButton">Settings</button>
+    </div>
+
+    <!-- Mud Mode checkbox -->
+    <label>
+        <input type="checkbox" id="mudModeCheckbox"> Mud Mode
+    </label>
+
+    <!-- Keep Alive checkbox -->
+    <label>
+        <input type="checkbox" id="keepAliveCheckbox"> Keep Alive
+    </label>
+
+    <!-- Host input field -->
+    <input type="text" id="hostInput" placeholder="Enter BBS Host">
+
+    <!-- Username frame -->
+    <div id="usernameFrame">
+        <label for="usernameInput">Username:</label>
+        <input type="text" id="usernameInput" placeholder="Enter Username">
+        <label>
+            <input type="checkbox" id="rememberUsername"> Remember
+        </label>
+        <button id="sendUsernameButton" onclick="sendMessage('username')">Send</button>
+    </div>
+
+    <!-- Password frame -->
+    <div id="passwordFrame">
+        <label for="passwordInput">Password:</label>
+        <input type="password" id="passwordInput" placeholder="Enter Password">
+        <label>
+            <input type="checkbox" id="rememberPassword"> Remember
+        </label>
+        <button id="sendPasswordButton" onclick="sendMessage('password')">Send</button>
+    </div>
+
+    <!-- Favorites window -->
+    <div id="favoritesWindow">
+        <h2>Favorite BBS Addresses</h2>
+        <ul id="favoritesList"></ul>
+        <input type="text" id="newFavoriteInput" placeholder="Enter new address">
+        <button id="addFavoriteButton">Add</button>
+        <button id="removeFavoriteButton">Remove</button>
+        <button id="closeFavoritesButton">Close</button>
+    </div>
+
+    <!-- Trigger/Response Section -->
+    <div id="triggerSection">
+        <h2>Automation Triggers</h2>
+        <div id="triggerList"></div>
+        <button id="addTriggerButton">Add Trigger</button>
+    </div>
+
+    <!-- Triggers Button in Main UI -->
+    <button id="triggersButton">Triggers</button>
+
+    <!-- Triggers Window (initially hidden) -->
+    <div id="triggersWindow" style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background-color: white; border: 1px solid #ccc; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1);">
+        <h2>Automation Triggers</h2>
+        <table id="triggersTable" style="width:100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="border-bottom: 1px solid #ccc; text-align: left;">Trigger</th>
+                    <th style="border-bottom: 1px solid #ccc; text-align: left;">Response</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Create 10 rows -->
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <!-- ...repeat for 10 rows... -->
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr></tr>
+                <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+                <tr>
+                    <td><input type="text" class="triggerInput" style="width:95%;" /></td>
+                    <td><input type="text" class="responseInput" style="width:95%;" /></td>
+                </tr>
+            </tbody>
+        </table>
+        <br>
+        <button id="saveTriggersButton">Save</button>
+        <button id="closeTriggersButton">Close</button>
+    </div>
+
+    <!-- Chatlog Button in Main UI -->
+    <button id="chatlogButton">Chatlog</button>
+
+    <!-- Chatlog Window (initially hidden) -->
+    <div id="chatlogWindow"
+        style="display:none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background-color: white; border: 1px solid #ccc; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); width: 80%; height: 80%; overflow: hidden;">
+        <h2>Chatlog</h2>
+        <div style="display: flex; height: 100%;">
+            <div style="width: 30%; overflow-y: auto;">
+                <ul id="chatlogList" style="list-style-type: none; padding: 0;"></ul>
+            </div>
+            <div style="width: 70%; overflow-y: auto; padding-left: 20px;">
+                <div id="chatlogDisplay"></div>
+            </div>
+        </div>
+        <button id="clearChatlogButton">Clear</button>
+        <button id="closeChatlogButton">Close</button>
+        <button id="changeFontButton">Change Font</button> <!-- New button for changing font and colors -->
+    </div>
+
+    <!-- Chatroom Members panel -->
+    <div id="membersPanel">
+        <h2>Chatroom Members</h2>
+        <ul id="membersList"></ul>
+    </div>
+
+    <!-- Settings window -->
+    <div id="settingsWindow">
+        <!-- Settings inputs for various API keys and UI preferences -->
+        <input type="text" id="openaiApiKey" placeholder="OpenAI API Key">
+        <input type="text" id="weatherApiKey" placeholder="Weather API Key">
+        <input type="text" id="youtubeApiKey" placeholder="YouTube API Key">
+        <input type="text" id="googleCseApiKey" placeholder="Google CSE API Key">
+        <input type="text" id="googleCseCx" placeholder="Google CSE ID (cx)">
+        <input type="text" id="newsApiKey" placeholder="News API Key">
+        <input type="text" id="googlePlacesApiKey" placeholder="Google Places API Key">
+        <input type="text" id="pexelsApiKey" placeholder="Pexels API Key">
+        <input type="text" id="alphaVantageApiKey" placeholder="Alpha Vantage API Key">
+        <input type="text" id="coinmarketcapApiKey" placeholder="CoinMarketCap API Key">
+        <input type="text" id="giphyApiKey" placeholder="Giphy API Key">
+        <input type="text" id="fontName" placeholder="Font Name">
+        <input type="text" id="fontSize" placeholder="Font Size">
+        <label>
+            <input type="checkbox" id="logonAutomation"> Logon Automation
+        </label>
+        <label>
+            <input type="checkbox" id="autoLogin"> Auto Login
+        </label>
+        <button id="splitViewButton">Split View</button>
+        <button id="teleconferenceButton">Teleconference</button>
+        <button id="saveSettingsButton">Save</button>
+    </div>
+
+    <!-- Main container for dynamic content -->
+    <div id="mainContainer">
+        <!-- Main content will be rendered here -->
+    </div>
+
+    <!-- BBS input field -->
+    <input type="text" id="inputBox" placeholder="Enter message">
+
+    <script src="ui.js"></script>
+</body>
+
+</html>

@@ -1,4 +1,4 @@
-from typing import List, Any
+from typing import List, Any, Optional
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -86,6 +86,19 @@ class FavoritesManager:
         if port:
             self.terminal.port.set(int(port[0]))
         self.terminal.connect()
+
+    def populate_host_field(self, event: Optional[tk.Event] = None) -> None:
+        """Populate the host and port fields with the selected favorite."""
+        selected = self.favorites_listbox.curselection()
+        if selected:
+            address = self.favorites_listbox.get(selected[0])
+            if ':' in address:
+                host, port = address.split(':')
+                self.terminal.host.set(host)
+                self.terminal.port.set(int(port))
+            else:
+                self.terminal.host.set(address)
+                self.terminal.port.set(23)  # Default telnet port
 
     def load_favorites(self) -> List[str]:
         """Load favorites from persistence."""

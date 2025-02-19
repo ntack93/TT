@@ -15,128 +15,154 @@ class FontSettings:
 class PersistenceManager:
     """Manages data persistence for the application."""
     
-    def __init__(self, base_path: str = "./data") -> None:
+    def __init__(self, data_dir: str = "data") -> None:
         """Initialize persistence manager.
         
         Args:
-            base_path: Base directory for data storage
+            data_dir: Directory for data storage
         """
-        self.base_path = Path(base_path)
-        self.base_path.mkdir(parents=True, exist_ok=True)
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(exist_ok=True)
         
-    def _get_path(self, filename: str) -> Path:
-        """Get full path for a file.
+        # Create subdirectories
+        (self.data_dir / "messages").mkdir(exist_ok=True)
+        (self.data_dir / "links").mkdir(exist_ok=True)
         
-        Args:
-            filename: Name of the file
+    def get_users(self) -> List[str]:
+        """Get list of users with chat history."""
+        users = set()
+        
+        # Check messages directory
+        msg_path = self.data_dir / "messages"
+        for f in msg_path.glob("*.json"):
+            users.add(f.stem)
             
-        Returns:
-            Path object for the file
-        """
-        return self.base_path / filename
-
-    def save_json(self, data: Any, filename: str) -> None:
-        """Save data as JSON.
-        
-        Args:
-            data: Data to save
-            filename: Name of the file
-        """
-        path = self._get_path(filename)
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2)
-
-    def load_json(self, filename: str, default: Any = None) -> Any:
-        """Load data from JSON file.
-        
-        Args:
-            filename: Name of the file
-            default: Default value if file doesn't exist
+        # Check links directory
+        links_path = self.data_dir / "links"
+        for f in links_path.glob("*.json"):
+            users.add(f.stem)
             
-        Returns:
-            Loaded data or default value
-        """
-        path = self._get_path(filename)
+        return sorted(users)
+        
+    def load_messages(self, username: str) -> List[Dict[str, str]]:
+        """Load messages for a user."""
         try:
+            path = self.data_dir / "messages" / f"{username}.json"
+            if path.exists():
+                with open(path) as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading messages: {e}")
+        return []
+        
+    def load_links(self, username: str) -> List[Dict[str, str]]:
+        """Load links shared by a user."""
+        try:
+            path = self.data_dir / "links" / f"{username}.json"
+            if path.exists():
+                with open(path) as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading links: {e}")
+        return []
+        
+    def add_message(self, username: str, message: Dict[str, str]) -> None:
+        """Add a message to user's history."""
+        messages = self.load_messages(username)
+        messages.append(message)
+        
+        path = self.data_dir / "messages" / f"{username}.json"
+        with open(path, 'w') as f:
+            json.dump(messages, f)
+            
+    def add_link(self, username: str, link: Dict[str, str]) -> None:
+        """Add a shared link to user's history."""
+        links = self.load_links(username)
+        links.append(link)
+        
+        path = self.data_dir / "links" / f"{username}.json"
+        with open(path, 'w') as f:
+            json.dump(links, f)
+            
+    def clear_user_data(self, username: str) -> None:
+        """Clear all data for a user."""
+        # Remove message history
+        msg_path = self.data_dir / "messages" / f"{username}.json"
+        if msg_path.exists():
+            msg_path.unlink()
+            
+        # Remove links history    
+        links_path = self.data_dir / "links" / f"{username}.json"
+        if links_path.exists():
+            links_path.unlink()
+            
+    def export_logs(self, filename: str) -> None:
+        """Export all chat logs to a file."""
+        data = {
+            'messages': {},
+            'links': {}
+        }
+        
+        # Export messages
+        for user in self.get_users():
+            data['messages'][user] = self.load_messages(user)
+            data['links'][user] = self.load_links(user)
+            
+        with open(filename, 'w') as f:
+            json.dump(data, f)
+            
+    def import_logs(self, filename: str) -> None:
+        """Import chat logs from a file."""
+        with open(filename) as f:
+            data = json.load(f)
+            
+        # Import messages
+        for user, messages in data['messages'].items():
+            current = self.load_messages(user)
+            current.extend(messages)
+            
+            path = self.data_dir / "messages" / f"{user}.json"
+            with open(path, 'w') as f:
+                json.dump(current, f)
+                
+        # Import links
+        for user, links in data['links'].items():
+            current = self.load_links(user)
+            current.extend(links)
+            
+            path = self.data_dir / "links" / f"{user}.json"
+            with open(path, 'w') as f:
+                json.dump(current, f)
+
+    def load_json(self, filename: str, default: Any = None) -> Dict[str, Any]:
+        """Load JSON data from a file in the data directory.
+        
+        Args:
+            filename: Name of the JSON file without path
+            default: Default value if file doesn't exist or error occurs
+            
+        Returns:
+            Loaded JSON data as dictionary
+        """
+        try:
+            path = self.data_dir / filename
             if path.exists():
                 with open(path, 'r') as f:
                     return json.load(f)
         except Exception as e:
             print(f"Error loading {filename}: {e}")
-        return default
-
-    def save_font_settings(self, settings: FontSettings) -> None:
-        """Save font settings.
+        return default if default is not None else {}
+        
+    def save_json(self, filename: str, data: Dict[str, Any]) -> None:
+        """Save data as JSON to a file in the data directory.
         
         Args:
-            settings: Font settings to save
+            filename: Name of the JSON file without path
+            data: Data to save
         """
-        self.save_json({
-            'font_name': settings.name,
-            'font_size': settings.size,
-            'fg': settings.color,
-            'bg': settings.background
-        }, 'font_settings.json')
-
-    def load_font_settings(self) -> FontSettings:
-        """Load font settings.
-        
-        Returns:
-            FontSettings object
-        """
-        data = self.load_json('font_settings.json', {})
-        return FontSettings(
-            name=data.get('font_name', "Courier New"),
-            size=data.get('font_size', 10),
-            color=data.get('fg', 'white'),
-            background=data.get('bg', 'black')
-        )
-
-    def save_chat_members(self, members: Set[str]) -> None:
-        """Save current chat members.
-        
-        Args:
-            members: Set of member names
-        """
-        self.save_json(list(members), 'chat_members.json')
-
-    def load_chat_members(self) -> Set[str]:
-        """Load chat members.
-        
-        Returns:
-            Set of member names
-        """
-        data = self.load_json('chat_members.json', [])
-        return set(data)
-
-    def save_last_seen(self, timestamps: Dict[str, int]) -> None:
-        """Save last seen timestamps.
-        
-        Args:
-            timestamps: Dictionary of usernames to timestamps
-        """
-        self.save_json(timestamps, 'last_seen.json')
-
-    def load_last_seen(self) -> Dict[str, int]:
-        """Load last seen timestamps.
-        
-        Returns:
-            Dictionary of usernames to timestamps
-        """
-        return self.load_json('last_seen.json', {})
-
-    def save_chatlog(self, messages: Dict[str, List[str]]) -> None:
-        """Save chat messages.
-        
-        Args:
-            messages: Dictionary of usernames to lists of messages
-        """
-        self.save_json(messages, 'chatlog.json')
-
-    def load_chatlog(self) -> Dict[str, List[str]]:
-        """Load chat messages.
-        
-        Returns:
-            Dictionary of usernames to lists of messages
-        """
-        return self.load_json('chatlog.json', {})
+        try:
+            path = self.data_dir / filename
+            with open(path, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving {filename}: {e}")
