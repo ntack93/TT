@@ -675,11 +675,27 @@ class BBSTerminalApp:
 
             if self.writer:
                 try:
-                    # Try to close the writer and allow it time to drain
-                    self.writer.close()
-                    await self.writer.drain()
+                    # Send disconnect command if still connected
+                    try:
+                        self.writer.write('quit\r\n')
+                        await self.writer.drain()
+                    except Exception:
+                        pass  # Ignore errors during quit command
+                    
+                    # Close the writer
+                    if not self.writer.is_closing():
+                        self.writer.close()
+                        # Some telnet writers may not have wait_closed
+                        if hasattr(self.writer, 'wait_closed'):
+                            try:
+                                await self.writer.wait_closed()
+                            except Exception as e:
+                                print(f"Warning: Error during wait_closed: {e}")
+                        else:
+                            # Give the writer a moment to finish closing
+                            await asyncio.sleep(0.1)
                 except Exception as e:
-                    print(f"Error closing writer: {e}")
+                    print(f"Warning: Error closing writer: {e}")
 
             # Mark the connection as closed
             self.connected = False
@@ -720,6 +736,8 @@ class BBSTerminalApp:
         # Precompile an ANSI escape code regex
         ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
         
+        skip_display = False  # Flag to track if we're in a banner section
+        
         for line in lines[:-1]:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
@@ -731,23 +749,31 @@ class BBSTerminalApp:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                # continue  # Skip displaying header lines
+                    skip_display = False  # End of banner section
+                    continue
+                skip_display = True  # Skip displaying banner content
+                continue
             
             if clean_line.startswith("You are in"):
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                # continue  # Skip displaying header line
+                skip_display = True  # Start of banner section
+                continue
             
-            # Skip the line immediately following the header block if it starts with "Just press"
-            # if clean_line.startswith("Just press") and not self.collecting_users:
-            #     continue
-            
+            # Skip displaying banner-related lines
+            if any(pattern in clean_line for pattern in [
+                "Topic:",
+                "Just press",
+                "are here with you"
+            ]):
+                continue
+                
             # --- Process directed messages ---
             directed_msg_match = re.match(r'^From\s+(\S+)\s+\((to you|whispered)\):\s*(.+)$', clean_line, re.IGNORECASE)
             if directed_msg_match:
                 sender, _, message = directed_msg_match.groups()
                 self.append_directed_message(f"From {sender}: {message}\n")
-                self.play_ding_sound()  # Play ding sound for directed messages
+                self.play_ding_sound()
                 # Display directed messages in the main terminal as well
                 self.append_terminal_text(line + "\n", "normal")
                 continue
@@ -769,16 +795,17 @@ class BBSTerminalApp:
                 self.actions.extend(clean_line.split())
                 continue
             
-            # --- Process and display non-header lines ---
-            self.append_terminal_text(line + "\n", "normal")
-            self.check_triggers(line)
-            self.parse_and_save_chatlog_message(line)
-            if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
-                self.detect_logon_prompt(line)
-            
-            # Play ding sound for any message
-            if re.match(r'^From\s+\S+', clean_line, re.IGNORECASE):
-                self.play_ding_sound()
+            # Only display the line if it's not part of the banner and not empty
+            if not skip_display and clean_line:
+                self.append_terminal_text(line + "\n", "normal")
+                self.check_triggers(line)
+                self.parse_and_save_chatlog_message(line)
+                if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
+                    self.detect_logon_prompt(line)
+                
+                # Play ding sound for any message
+                if re.match(r'^From\s+\S+', clean_line, re.IGNORECASE):
+                    self.play_ding_sound()
         
         self.partial_line = lines[-1]
 
@@ -810,20 +837,33 @@ class BBSTerminalApp:
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
             return
 
-        # Try to extract message format "From <username>: <message>"
-        message_match = re.match(r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$', clean_line)
-        if message_match:
-            sender = message_match.group(1)
-            message = message_match.group(2)
-            
-            # Add timestamp if not present
-            if not clean_line.strip().startswith('['):
-                clean_line = time.strftime("[%Y-%m-%d %H:%M:%S] ") + clean_line
+        # Enhanced patterns to match different message types
+        message_patterns = [
+            # Normal messages
+            r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$',
+            # Whispered messages
+            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(whispered(?:\s+to\s+\S+)?\):\s*(.+)$',
+            # System response to whispered commands
+            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(whispered\):\s*(.+)$',
+            # Directed messages
+            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(to\s+[^)]+\):\s*(.+)$'
+        ]
 
-            # Save to chatlog
-            self.save_chatlog_message(sender, clean_line)
-            # Extract any URLs
-            self.parse_and_store_hyperlinks(clean_line, sender)
+        for pattern in message_patterns:
+            message_match = re.match(pattern, clean_line, re.IGNORECASE)
+            if message_match:
+                sender = message_match.group(1)
+                message = message_match.group(2)
+                
+                # Add timestamp if not present
+                if not clean_line.strip().startswith('['):
+                    clean_line = time.strftime("[%Y-%m-%d %H:%M:%S] ") + clean_line
+
+                # Save to chatlog
+                self.save_chatlog_message(sender, clean_line)
+                # Extract any URLs (pass sender for attribution)
+                self.parse_and_store_hyperlinks(clean_line, sender)
+                break
 
     def send_message(self, event=None):
         """Send the user's typed message to the BBS."""
@@ -1199,7 +1239,7 @@ class BBSTerminalApp:
 
         self.preview_window = tk.Toplevel(self.master)
         self.preview_window.overrideredirect(True)
-        self.preview_window.attributes("-topmost", True)  # Already had this one
+        self.preview_window.attributes("-topmost", True)
 
         # Position the preview window near the mouse pointer
         x = self.master.winfo_pointerx() + 10
@@ -1209,65 +1249,106 @@ class BBSTerminalApp:
         label = tk.Label(self.preview_window, text="Loading preview...", background="white")
         label.pack()
 
-        # Fetch and display the thumbnail in a separate thread
-        threading.Thread(target=self._fetch_and_display_thumbnail, args=(url, label), daemon=True).start()
+        # Start a new thread to fetch the preview
+        threading.Thread(target=self._fetch_preview, args=(url, label), daemon=True).start()
 
-    def _fetch_and_display_thumbnail(self, url, label):
-        """Fetch and display the thumbnail. Handle GIFs and static images."""
+    def _fetch_preview(self, url, label):
+        """Fetch either an image thumbnail or website favicon."""
         try:
-            response = requests.get(url, timeout=5)
-            response.raise_for_status()
-            content_type = response.headers.get("Content-Type", "")
-
-            # Check if the URL is a GIF or another image type
-            if "image" in content_type:
-                image_data = BytesIO(response.content)
-
-                # Process GIF
-                if "gif" in content_type or url.endswith(".gif"):
-                    gif = Image.open(image_data)
-                    frames = []
-                    try:
-                        while True:
-                            frame = gif.copy()
-                            frame.thumbnail((200, 150))  # Resize
-                            frames.append(ImageTk.PhotoImage(frame))
-                            gif.seek(len(frames))  # Move to next frame
-                    except EOFError:
-                        pass  # End of GIF frames
-
-                    if frames:
-                        self._display_animated_gif(frames, label)
-                    return
-
-                # Process static images
-                image = Image.open(image_data)
-                image.thumbnail((200, 150))
-                photo = ImageTk.PhotoImage(image)
-
-                def update_label():
-                    if self.preview_window and label.winfo_exists():
-                        label.config(image=photo, text="")
-                        label.image = photo  # Keep reference to avoid garbage collection
-                self.master.after(0, update_label)
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            # Check if URL is directly an image
+            if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                response = requests.get(url, headers=headers, timeout=5)
+                response.raise_for_status()
+                self._handle_image_preview(response.content, label, is_gif=url.lower().endswith('.gif'))
+            else:
+                # Try to get webpage first to check for proper image content type
+                response = requests.get(url, headers=headers, timeout=5)
+                content_type = response.headers.get("Content-Type", "").lower()
+                
+                if "image" in content_type:
+                    self._handle_image_preview(response.content, label, is_gif='gif' in content_type)
+                else:
+                    self._handle_website_preview(url, label)
 
         except Exception as e:
-            print(f"DEBUG: Exception in _fetch_and_display_thumbnail: {e}")
+            print(f"DEBUG: Preview error: {e}")
             def update_label_error():
                 if self.preview_window and label.winfo_exists():
                     label.config(text="Preview not available")
             self.master.after(0, update_label_error)
 
-    def _display_animated_gif(self, frames, label):
-        """Display animated GIF in the label."""
-        def animate(index):
-            if self.preview_window and label.winfo_exists():
-                label.config(image=frames[index])
-                index = (index + 1) % len(frames)
-                label.image = frames[index]  # Keep reference
-                label.after(100, animate, index)  # Adjust speed as needed
+    def _handle_image_preview(self, image_data, label, is_gif=False):
+        """Handle preview for image content, including GIFs."""
+        try:
+            image = Image.open(BytesIO(image_data))
+            
+            if is_gif and getattr(image, "is_animated", False):
+                # Handle animated GIF
+                frames = []
+                try:
+                    while True:
+                        frame = image.copy()
+                        frame.thumbnail((200, 150))
+                        frames.append(ImageTk.PhotoImage(frame))
+                        image.seek(len(frames))
+                except EOFError:
+                    pass
+                
+                if frames:
+                    def animate(frame_index=0):
+                        if self.preview_window and label.winfo_exists():
+                            label.config(image=frames[frame_index])
+                            label.image = frames[frame_index]  # Keep reference
+                            next_frame = (frame_index + 1) % len(frames)
+                            self.master.after(100, lambda: animate(next_frame))
+                    
+                    self.master.after(0, animate)
+                    return
+            else:
+                # Handle static image
+                image.thumbnail((200, 150))
+                photo = ImageTk.PhotoImage(image)
+                
+                def update_label():
+                    if self.preview_window and label.winfo_exists():
+                        label.config(image=photo, text="")
+                        label.image = photo
+                self.master.after(0, update_label)
+        except Exception as e:
+            print(f"Image preview error: {e}")
 
-        self.master.after(0, animate, 0)
+    def _handle_website_preview(self, url, label):
+        """Handle preview for website content by showing favicon."""
+        try:
+            # Parse the URL to get the base domain
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            favicon_url = f"{parsed_url.scheme}://{parsed_url.netloc}/favicon.ico"
+            
+            # Try to get the favicon
+            response = requests.get(favicon_url, timeout=5)
+            if response.status_code == 200:
+                image = Image.open(BytesIO(response.content))
+                # Resize favicon to reasonable size
+                image = image.resize((32, 32), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image)
+
+                def update_label():
+                    if self.preview_window and label.winfo_exists():
+                        label.config(image=photo, text=parsed_url.netloc)
+                        label.image = photo
+                self.master.after(0, update_label)
+            else:
+                raise Exception("Favicon not found")
+        except Exception as e:
+            print(f"Favicon preview error: {e}")
+            # Show domain name if favicon fails
+            parsed_url = urlparse(url)
+            def update_label():
+                if self.preview_window and label.winfo_exists():
+                    label.config(text=parsed_url.netloc)
+            self.master.after(0, update_label)
 
     def hide_thumbnail_preview(self, event):
         """Hide the thumbnail preview."""
@@ -1975,11 +2056,30 @@ class BBSTerminalApp:
 
     def parse_and_store_hyperlinks(self, message, sender=None):
         """Extract and store hyperlinks from a message."""
-        url_pattern = re.compile(r'(https?://\S+)')
+        # More comprehensive URL pattern
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        
+        # Extract all URLs from the message
         urls = url_pattern.findall(message)
+        
+        # Add debug output to see raw message
+        print(f"[DEBUG] Raw message: {message}")
+        print(f"[DEBUG] Found URLs: {urls}")
+        
+        # Clean URLs (remove trailing punctuation)
+        cleaned_urls = []
+        for url in urls:
+            # Remove trailing punctuation that might have been caught
+            url = re.sub(r'[.,;:]+$', '', url)
+            # Add http:// to www. urls
+            if url.startswith('www.'):
+                url = 'http://' + url
+            cleaned_urls.append(url)
+        
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
         
-        for url in urls:
+        for url in cleaned_urls:
+            print(f"[DEBUG] Storing URL: {url} from {sender}")  # Debug line
             self.store_hyperlink(url, sender, timestamp)
 
     def show_all_messages(self):
@@ -2034,20 +2134,39 @@ class BBSTerminalApp:
 def main():
     root = tk.Tk()
     app = BBSTerminalApp(root)
-    root.mainloop()
-    # Cleanup
-    if app.connected:
-        try:
-            asyncio.run_coroutine_threadsafe(app.disconnect_from_bbs(), app.loop).result()
-        except Exception as e:
-            print(f"Error during disconnect: {e}")
-    try:
-        loop = asyncio.get_event_loop()
-        if not loop.is_running():
-            loop.close()
-    except Exception as e:
-        print(f"Error closing loop: {e}")
+    
+    def on_closing():
+        """Handle window closing event."""
+        if app.connected:
+            try:
+                # Create a new event loop for cleanup
+                cleanup_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(cleanup_loop)
+                
+                # Run disconnect in the new loop
+                cleanup_loop.run_until_complete(app.disconnect_from_bbs())
+                cleanup_loop.close()
+            except Exception as e:
+                print(f"Error during disconnect: {e}")
+        
+        # Close the main loop if it's still running
+        if app.loop and not app.loop.is_closed():
+            try:
+                pending = asyncio.all_tasks(app.loop)
+                for task in pending:
+                    task.cancel()
+                app.loop.stop()
+                app.loop.close()
+            except Exception as e:
+                print(f"Error closing loop: {e}")
+        
+        root.destroy()
 
+    # Bind the closing handler
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    # Start the main loop
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
