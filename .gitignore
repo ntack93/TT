@@ -1438,3 +1438,8 @@ src/ui/chatlog.py
 src/ui/__pycache__/chatlog.cpython-312.pyc
 src/ui/__pycache__/settings.cpython-312.pyc
 src/ui/__pycache__/terminal.cpython-312.pyc
+src/ui/__pycache__/terminal.cpython-312.pyc
+src/ui/__pycache__/settings.cpython-312.pyc
+src/ui/__pycache__/chatlog.cpython-312.pyc
+src/storage/__pycache__/persistence.cpython-312.pyc
+font_settings.json
