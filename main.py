@@ -2203,54 +2203,58 @@ class BBSTerminalApp:
             self.master.update_idletasks()
             self.terminal_display.see(tk.END)
 
+import tkinter as tk
+import os
+import sys
+from pathlib import Path
+
+def setup_environment():
+    """Set up the application environment."""
+    # Add the project root to Python path
+    project_root = Path(__file__).parent
+    sys.path.append(str(project_root))
+    
+    # Create data directory if it doesn't exist
+    data_dir = project_root / "data"
+    data_dir.mkdir(exist_ok=True)
+    
+    # Set current working directory
+    os.chdir(project_root)
+
 def main():
+    """Main entry point for the BBS Terminal application."""
+    # Set up environment
+    setup_environment()
+    
+    # Create and run application
     root = tk.Tk()
-    app = BBSTerminalApp(root)
+    root.title("BBS Terminal")
     
-    async def cleanup():
-        """Async cleanup function to handle disconnection."""
-        try:
-            # Cancel all pending tasks first
-            for task in asyncio.all_tasks(app.loop):
-                task.cancel()
-            
-            # Clear only the active members list
-            app.clear_chat_members()
-            
-            # Then handle the disconnect
-            if app.connected:
-                await app.disconnect_from_bbs()
-                
-            # Finally close the loop
-            app.loop.stop()
-            app.loop.close()
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
-
-    def on_closing():
-        """Handle window closing event."""
-        try:
-            # Create a new event loop for cleanup
-            cleanup_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(cleanup_loop)
-            
-            # Run cleanup synchronously with a timeout
-            cleanup_loop.run_until_complete(asyncio.wait_for(cleanup(), timeout=5.0))
-            cleanup_loop.close()
-        except (asyncio.TimeoutError, Exception) as e:
-            print(f"Error or timeout during cleanup: {e}")
-        finally:
-            # Force quit even if cleanup fails
-            try:
-                root.quit()
-            finally:
-                root.destroy()
-
-    # Bind the closing handler
-    root.protocol("WM_DELETE_WINDOW", on_closing)
+    # Set initial window size
+    window_width = 1200
+    window_height = 800
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
     
-    # Start the main loop
-    root.mainloop()
+    try:
+        # Import here after environment is set up
+        from src.app import BBSTerminalApp
+        
+        # Create app instance
+        app = BBSTerminalApp(root)
+        
+        # Start the main loop
+        root.mainloop()
+    except Exception as e:
+        print(f"Error in main loop: {e}")
+        raise
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
