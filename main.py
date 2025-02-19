@@ -46,7 +46,7 @@ class BBSTerminalApp:
         self.remember_username = tk.BooleanVar(value=False)
         self.remember_password = tk.BooleanVar(value=False)
 
-        # MUD mode?
+        # MUD mode
         self.mud_mode = tk.BooleanVar(value=False)
 
         # Logon automation toggles
