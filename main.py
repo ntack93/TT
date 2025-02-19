@@ -769,11 +769,15 @@ class BBSTerminalApp:
                 continue
                 
             # --- Process directed messages ---
-            directed_msg_match = re.match(r'^From\s+(\S+)\s+\((to you|whispered)\):\s*(.+)$', clean_line, re.IGNORECASE)
+            directed_msg_match = re.match(r'^From\s+(\S+)\s+\((whispered|to you)\):\s*(.+)$', clean_line, re.IGNORECASE)
             if directed_msg_match:
-                sender, _, message = directed_msg_match.groups()
+                sender, msg_type, message = directed_msg_match.groups()
                 self.append_directed_message(f"From {sender}: {message}\n")
                 self.play_ding_sound()
+                # Save to chatlog and check for hyperlinks
+                timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+                self.save_chatlog_message(sender, timestamp + line)
+                self.parse_and_store_hyperlinks(message, sender)
                 # Display directed messages in the main terminal as well
                 self.append_terminal_text(line + "\n", "normal")
                 continue
@@ -839,13 +843,11 @@ class BBSTerminalApp:
 
         # Enhanced patterns to match different message types
         message_patterns = [
+            # Whispered messages - check these first
+            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(whispered(?:\s+to\s+\S+)?\):\s*(.+)$',
             # Normal messages
             r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$',
-            # Whispered messages
-            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(whispered(?:\s+to\s+\S+)?\):\s*(.+)$',
-            # System response to whispered commands
-            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(whispered\):\s*(.+)$',
-            # Directed messages
+            # Directed messages (to someone)
             r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(to\s+[^)]+\):\s*(.+)$'
         ]
 
