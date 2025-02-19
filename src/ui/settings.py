@@ -22,18 +22,15 @@ class SettingsManager:
     """Manages application settings and preferences."""
     
     def __init__(self, master: tk.Tk, persistence: Any = None) -> None:
-        """Initialize settings manager.
-        
-        Args:
-            master: Root window
-            persistence: Optional persistence manager
-        """
+        """Initialize settings manager."""
         self.master = master
         self.persistence = persistence or {}
-        self.config = SettingsConfig()
-        self.settings: Dict[str, Any] = self.load_settings()
         
-        # Default settings
+        # Initialize data directory
+        self.data_dir = Path("data")
+        self.data_dir.mkdir(exist_ok=True)
+        
+        # Default settings - initialize first
         self.defaults = {
             'host': 'bbs.example.com',
             'port': 23,
@@ -50,11 +47,19 @@ class SettingsManager:
             'auto_login': False
         }
         
+        # Load settings after defaults are set
+        self.config = SettingsConfig()
+        self.config.save_path = self.data_dir / "settings.json"
+        self.settings = self.load_settings()
+        
         # Initialize any missing settings with defaults
         for key, value in self.defaults.items():
             if key not in self.settings:
                 self.settings[key] = value
-    
+        
+        # Save initialized settings
+        self.save_settings()
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get a setting value by key."""
         return self.settings.get(key, default if default is not None else self.defaults.get(key))
@@ -62,24 +67,29 @@ class SettingsManager:
     def set(self, key: str, value: Any) -> None:
         """Set a setting value by key."""
         self.settings[key] = value
-        self.save_settings()
+        self.save_settings()  # Save immediately when a setting changes
     
     def load_settings(self) -> Dict[str, Any]:
         """Load settings from file."""
         try:
             if self.config.save_path and self.config.save_path.exists():
                 with open(self.config.save_path) as f:
-                    return json.load(f)
+                    loaded = json.load(f)
+                    # Ensure all defaults are present
+                    merged = self.defaults.copy()
+                    merged.update(loaded)
+                    return merged
         except Exception as e:
             print(f"Error loading settings: {e}")
-        return {}
+        return self.defaults.copy()
     
     def save_settings(self) -> None:
         """Save current settings to file."""
         try:
             if self.config.save_path:
+                self.config.save_path.parent.mkdir(exist_ok=True)
                 with open(self.config.save_path, 'w') as f:
-                    json.dump(self.settings, f)
+                    json.dump(self.settings, f, indent=2)
         except Exception as e:
             print(f"Error saving settings: {e}")
 

@@ -448,9 +448,11 @@ class TerminalUI:
             message = self.username.get() + "\r\n"
             self.telnet.send_sync(message)
             
+            # Save credentials immediately when checkbox is checked
             if self.remember_username.get():
                 self.settings.set('username', self.username.get())
                 self.settings.set('remember_username', True)
+                self.settings.save_settings()  # Force save to disk
             
     def send_password(self) -> None:
         """Send the password to the BBS."""
@@ -458,9 +460,11 @@ class TerminalUI:
             message = self.password.get() + "\r\n"
             self.telnet.send_sync(message)
             
+            # Save credentials immediately when checkbox is checked
             if self.remember_password.get():
                 self.settings.set('password', self.password.get())
                 self.settings.set('remember_password', True)
+                self.settings.save_settings()  # Force save to disk
             
     def clear_credentials(self) -> None:
         """Clear saved username and password."""
@@ -988,15 +992,27 @@ class TerminalUI:
     def _set_initial_font_selections(self) -> None:
         """Set initial selections in font settings window."""
         try:
-            # Parse font settings correctly
-            font_info = self.terminal_display.cget("font").split()
-            current_font = font_info[0].strip('{')  # Remove curly brace
-            # Handle size specially since it might include closing brace
-            size_part = font_info[1].strip('}')
-            current_size = int(size_part)
-
-            current_fg = self.terminal_display.cget("fg")
-            current_bg = self.terminal_display.cget("bg")
+            # Get current font settings from chatlog file first
+            try:
+                with open("chatlog_font_settings.json", "r") as f:
+                    saved = json.load(f)
+                    current_font = saved.get('font_name', "Courier New")
+                    current_size = saved.get('font_size', 10)
+                    current_fg = saved.get('fg', 'white')
+                    current_bg = saved.get('bg', 'black')
+            except (FileNotFoundError, json.JSONDecodeError):
+                # If no saved settings, use current terminal display settings
+                font_str = self.terminal_display.cget("font")
+                if isinstance(font_str, str):
+                    # Handle string format like "Courier New 10"
+                    parts = font_str.split()
+                    current_font = " ".join(parts[:-1])  # Everything except last part
+                    current_size = int(parts[-1])  # Last part is size
+                else:
+                    # Handle tuple format like ("Courier New", 10)
+                    current_font, current_size = font_str
+                current_fg = self.terminal_display.cget("fg")
+                current_bg = self.terminal_display.cget("bg")
             
             # Initialize current selections
             self.current_selections = {
@@ -1007,10 +1023,19 @@ class TerminalUI:
             }
             
             # Select current values in listboxes
-            self._select_in_listbox(self.font_listbox, current_font)
-            self._select_in_listbox(self.size_listbox, current_size)
-            self._select_in_listbox(self.color_listbox, current_fg)
-            self._select_in_listbox(self.bg_listbox, current_bg)
+            for listbox, value in [
+                (self.font_listbox, current_font),
+                (self.size_listbox, current_size),
+                (self.color_listbox, current_fg),
+                (self.bg_listbox, current_bg)
+            ]:
+                try:
+                    index = list(map(str, listbox.get(0, tk.END))).index(str(value))
+                    listbox.selection_clear(0, tk.END)
+                    listbox.selection_set(index)
+                    listbox.see(index)
+                except ValueError:
+                    pass  # Value not in list, skip selection
             
         except Exception as e:
             print(f"Error setting initial font selections: {e}")
@@ -1036,7 +1061,11 @@ class TerminalUI:
                 'bg': self.current_selections['bg']
             }
             
-            # Only apply to chatlog UI components
+            # Apply settings to chat UI components
+            for widget in (self.members_listbox, self.actions_listbox):
+                widget.configure(**font_settings)
+            
+            # Apply to chatlog UI
             if self.chatlog:
                 self.chatlog.update_font_settings(font_settings)
             
@@ -1051,7 +1080,7 @@ class TerminalUI:
                 'bg': self.current_selections['bg']
             }
             
-            with open("chatlog_font_settings.json", "w") as f:  # Use separate file for chatlog fonts
+            with open("chatlog_font_settings.json", "w") as f:
                 json.dump(settings_to_save, f)
             
             window.destroy()
