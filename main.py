@@ -762,6 +762,26 @@ class BBSTerminalApp:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
+            # Add Actions list detection before MajorLink mode check
+            if "Action listing for:" in clean_line:
+                self.actions = []  # Clear existing actions
+                self.collecting_actions = True
+                # Send Enter keystroke immediately when we see the action listing
+                self.master.after(50, lambda: self.send_message(None))
+                continue
+            elif clean_line == ":" and self.collecting_actions:
+                self.collecting_actions = False
+                self.update_actions_listbox()  # Update the display
+                continue
+            elif self.collecting_actions:
+                # Split line into words and add valid actions
+                potential_actions = clean_line.split()
+                self.actions.extend(
+                    action for action in potential_actions 
+                    if action and len(action) >= 2  # Ensure valid action
+                )
+                continue
+
             if self.majorlink_mode.get():
                 # --- Filter header lines ---
                 if self.collecting_users:
