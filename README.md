@@ -1,25 +1,15 @@
 # BBS Telnet Terminal
 
-A retro Telnet terminal application for connecting to BBS systems. This project provides both a desktop UI (using Tkinter) and a web-based UI (HTML/JavaScript) to interact with a BBS server. It includes features such as:
-
-- **Connection Settings:** Connect/disconnect from the BBS.
-- **Username/Password Handling:** Send and optionally remember credentials.
-- **Chatlog:** Save and review chat messages locally.
-- **Triggers:** Create automation triggers to send custom responses when certain text appears.
-- **Favorites:** Manage favorite BBS addresses.
-- **Chatroom Members Panel:** View active members.
-- **Live URL Previews:** Hyperlink detection with live preview thumbnails (web UI).
-
----
+A retro Telnet terminal application for connecting to BBS systems, with features like chat logging, message filtering, and live URL previews.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Requirements](#requirements)
 - [Setup Instructions](#setup-instructions)
-  - [Python Virtual Environment (Windows/PowerShell)](#python-virtual-environment-windowspowershell)
-- [Running the Desktop Application](#running-the-desktop-application)
-- [Running the Web UI](#running-the-web-ui)
+  - [Prerequisites](#prerequisites)
+  - [Installation Steps](#installation-steps)
+- [Running the Application](#running-the-application)
 - [Usage](#usage)
 - [File Structure](#file-structure)
 - [Troubleshooting](#troubleshooting)
@@ -58,66 +48,86 @@ requests
 
 ## Setup Instructions
 
-### Python Virtual Environment (Windows/PowerShell)
+### Prerequisites
+- Python 3.7 or higher
+- Windows OS (for sound features)
+- Internet connection
+- Administrative privileges to install Python packages
 
-1. **Download and Install Python:**
-   - Go to the [Python website](https://www.python.org/downloads/) and download the latest version of Python.
-   - Run the installer and make sure to check the box that says "Add Python to PATH" before clicking "Install Now".
+### Installation Steps
 
-2. **Open PowerShell:**
-   - Press `Win + X` and select "Windows PowerShell" from the menu.
-
-3. **Navigate to Your Project Directory:**
-   - Type the following command and press `Enter`:
-     ```powershell
-     cd path\to\your\project
+1. **Install Python:**
+   - Download Python from [python.org](https://python.org/downloads)
+   - Run installer and check "Add Python to PATH"
+   - Verify installation by opening Command Prompt and typing:
      ```
-   - Replace `path\to\your\project` with the actual path to the folder where you saved the project files.
-
-4. **Create the Virtual Environment:**
-   - Type the following command and press `Enter`:
-     ```powershell
-     python -m venv venv
+     python --version
      ```
 
-5. **Activate the Virtual Environment:**
-   - Type the following command and press `Enter`:
-     ```powershell
-     .\venv\Scripts\Activate.ps1
-     ```
-   - If you get a script execution policy error, type the following command and press `Enter`:
-     ```powershell
-     Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-     ```
-   - Then, try activating the virtual environment again.
+2. **Download the Project:**
+   - Download this project as ZIP or clone it
+   - Extract to a folder of your choice
+   - Remember the path (example: `C:\Users\YourName\Documents\TT`)
 
-6. **Install Dependencies:**
-   - Type the following command and press `Enter`:
-     ```powershell
-     pip install -r requirements.txt
-     ```
+3. **Set Up Virtual Environment:**
+   ```powershell
+   # Open PowerShell and navigate to project folder
+   cd C:\Users\YourName\Documents\TT
+
+   # Create virtual environment
+   python -m venv venv
+
+   # Activate virtual environment
+   .\venv\Scripts\Activate.ps1
+
+   # If you get a security error, run:
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+   # Then try activating again
+   ```
+
+4. **Install Dependencies:**
+   ```powershell
+   # Make sure venv is activated (you see "(venv)" in prompt)
+   pip install -r requirements.txt
+   ```
 
 ---
 
-## Running the Desktop Application
+## Running the Application
 
-1. **Ensure your virtual environment is activated.**
-2. **Run the main Python script:**
-   - Type the following command and press `Enter`:
-     ```powershell
-     python main.py
-     ```
-3. The desktop window (Tkinter UI) should open, displaying connection settings, chat output, input fields, and additional panels (chatlog, triggers, favorites, etc.).
+1. **Start the Program:**
+   ```powershell
+   # Make sure you're in the project directory with venv activated
+   python main.py
+   ```
 
----
+2. **Initial Configuration:**
+   - Click "Settings" to configure font and colors
+   - Set up any triggers you want in the "Triggers" window
+   - Add favorite BBS addresses in the "Favorites" window
 
-## Running the Web UI
+3. **Connect to a BBS:**
+   - Enter BBS host address and port
+   - Click "Connect"
+   - Enter username/password when prompted
+   - Check "Remember" to save credentials
 
-1. **Open the `ui.html` file:**
-   - Navigate to the folder where you saved the project files.
-   - Double-click on the `ui.html` file to open it in your default web browser.
-2. The web UI displays various controls (Favorites, Triggers, Chatlog, etc.) along with a terminal-like output area.
-3. Use the provided buttons and input fields to simulate or send messages.
+### Optional Features
+
+#### MajorLink Mode
+- Filters out system messages and banners
+- Toggle with checkbox in main window
+- Recommended for cleaner chat experience
+
+#### Keep Alive
+- Prevents timeout disconnects
+- Sends periodic signals to server
+- Enable via checkbox in main window
+
+#### Sound Notifications
+- Plays sound on private messages
+- Requires Windows OS
+- Always enabled by default
 
 ---
 
@@ -164,6 +174,20 @@ requests
 └── last_seen.json     # (Auto-generated) Stores last seen timestamps for members
 ```
 
+### Files Created
+
+The program creates several JSON files in its directory:
+```
+favorites.json      - Saved BBS addresses
+triggers.json       - Automation triggers
+chatlog.json       - Saved chat messages
+chat_members.json   - Current chat participants
+last_seen.json     - User activity timestamps
+font_settings.json  - UI customization settings
+username.json      - Saved username (if enabled)
+password.json      - Saved password (if enabled)
+```
+
 ---
 
 ## Troubleshooting
@@ -179,6 +203,31 @@ requests
 
 - **Connection Issues:**
   - Check that the BBS host and port are correct. Use debugging messages (printed to the console) to see connection status.
+
+- **Sound Not Working:**
+  - Verify Windows sound is enabled
+  - Check system volume
+  - Ensure no other app is blocking sounds
+
+- **Font Issues:**
+  - Try default "Courier New" if custom font fails
+  - Install missing fonts if needed
+  - Use Settings to select available fonts
+
+- **Performance Issues:**
+  - Clear chat logs if file gets too large
+  - Reduce font size for faster rendering
+  - Disable MajorLink mode if CPU usage is high
+
+### Support Files
+
+If you need to reset settings, delete these files:
+```
+font_settings.json
+triggers.json
+favorites.json
+```
+The program will recreate them with defaults on next start.
 
 ---
 
