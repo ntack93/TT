@@ -114,6 +114,8 @@ class BBSTerminalApp:
         self.actions = []
         self.collecting_actions = False
 
+        self.majorlink_mode = tk.BooleanVar(value=True)  # True = filtering enabled
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
@@ -221,6 +223,15 @@ class BBSTerminalApp:
         # Checkbox to show/hide Password
         password_check = ttk.Checkbutton(checkbox_frame, text="Show Password", variable=self.show_password, command=self.toggle_password)
         password_check.grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
+
+        # Add MajorLink Mode checkbox
+        majorlink_check = ttk.Checkbutton(
+            checkbox_frame, 
+            text="MajorLink Mode", 
+            variable=self.majorlink_mode,
+            command=self.toggle_majorlink_mode
+        )
+        majorlink_check.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
         
         # Username frame
         self.username_frame = ttk.LabelFrame(top_frame, text="Username")
@@ -751,75 +762,52 @@ class BBSTerminalApp:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
-            # --- Filter header lines ---
-            if self.collecting_users:
+            if self.majorlink_mode.get():
+                # --- Filter header lines ---
+                if self.collecting_users:
+                    self.user_list_buffer.append(line)
+                    if "are here with you." in clean_line:
+                        self.update_chat_members(self.user_list_buffer)
+                        self.collecting_users = False
+                        self.user_list_buffer = []
+                        skip_display = False  # End of banner section
+                        continue
+                    skip_display = True  # Skip displaying banner content
+                    continue
+                
+                if clean_line.startswith("You are in"):
+                    self.user_list_buffer = [line]
+                    self.collecting_users = True
+                    skip_display = True  # Start of banner section
+                    continue
+                
+                # Skip displaying banner-related lines
+                if any(pattern in clean_line for pattern in [
+                    "Topic:",
+                    "Just press",
+                    "are here with you"
+                ]):
+                    continue
+
+            # Always collect users for member list functionality
+            if "You are in" in clean_line and not self.collecting_users:
+                self.user_list_buffer = [line]
+                self.collecting_users = True
+            elif self.collecting_users:
                 self.user_list_buffer.append(line)
                 if "are here with you." in clean_line:
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                    skip_display = False  # End of banner section
-                    continue
-                skip_display = True  # Skip displaying banner content
-                continue
-            
-            if clean_line.startswith("You are in"):
-                self.user_list_buffer = [line]
-                self.collecting_users = True
-                skip_display = True  # Start of banner section
-                continue
-            
-            # Skip displaying banner-related lines
-            if any(pattern in clean_line for pattern in [
-                "Topic:",
-                "Just press",
-                "are here with you"
-            ]):
-                continue
-                
-            # --- Process directed messages ---
-            directed_msg_match = re.match(r'^From\s+(\S+)\s+\((whispered|to you)\):\s*(.+)$', clean_line, re.IGNORECASE)
-            if directed_msg_match:
-                sender, msg_type, message = directed_msg_match.groups()
-                self.append_directed_message(f"From {sender}: {message}\n")
-                self.play_ding_sound()
-                # Save to chatlog and check for hyperlinks
-                timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
-                self.save_chatlog_message(sender, timestamp + line)
-                self.parse_and_store_hyperlinks(message, sender)
-                # Display directed messages in the main terminal as well
-                self.append_terminal_text(line + "\n", "normal")
-                continue
-            
-            # --- Detect and update Action List ---
-            if clean_line.startswith("Action listing for:"):
-                self.actions = []
-                self.collecting_actions = True
-                # Immediately send Enter keystroke when we start collecting actions
-                if self.connected and self.writer:
-                    self.writer.write("\r\n")
-                    self.loop.call_soon_threadsafe(self.writer.drain)
-                continue
-            if clean_line == ":" and self.collecting_actions:
-                self.collecting_actions = False
-                self.master.after_idle(self.update_actions_listbox)
-                continue
-            if self.collecting_actions:
-                self.actions.extend(clean_line.split())
-                continue
-            
-            # Only display the line if it's not part of the banner and not empty
-            if not skip_display and clean_line:
+
+            # Only skip display if in MajorLink mode and skip_display is true
+            if not (self.majorlink_mode.get() and skip_display) and clean_line:
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
                 if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
                     self.detect_logon_prompt(line)
-                
-                # Play ding sound for any message
-                if re.match(r'^From\s+\S+', clean_line, re.IGNORECASE):
-                    self.play_ding_sound()
-        
+
         self.partial_line = lines[-1]
 
     def detect_logon_prompt(self, line):
@@ -2202,6 +2190,15 @@ class BBSTerminalApp:
         if float(args[1]) == 1.0:  # If scrolled to bottom
             self.master.update_idletasks()
             self.terminal_display.see(tk.END)
+
+    def toggle_majorlink_mode(self):
+        """Handle toggling MajorLink mode on/off."""
+        self.terminal_display.configure(state=tk.NORMAL)
+        self.terminal_display.delete(1.0, tk.END)
+        self.terminal_display.configure(state=tk.DISABLED)
+        
+        mode = "enabled" if self.majorlink_mode.get() else "disabled"
+        self.append_terminal_text(f"\n--- MajorLink Mode {mode} ---\n\n", "normal")
 
 def main():
     root = tk.Tk()
