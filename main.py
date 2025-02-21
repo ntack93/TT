@@ -20,6 +20,34 @@ from tkinter import simpledialog  # Import simpledialog for input dialogs
 #                         BBS Telnet App (No Chatbot)
 ###############################################################################
 
+def create_cp437_to_unicode_map():
+    """Create a mapping of CP437 codes to their Unicode equivalents"""
+    # Standard ASCII (0-127) maps directly
+    cp437_map = {i: chr(i) for i in range(128)}
+    
+    # Extended ASCII (128-255) special mapping
+    cp437_extended = [
+        # Box drawing and block elements (128-175)
+        '€', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
+        'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
+        'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
+        '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
+        '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
+        '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
+        # Special characters and symbols (0-31)
+        '␀', '☺', '☻', '♥', '♦', '♣', '♠', '•', '◘', '○', '◙', '♂', '♀', '♪', '♫', '☼',
+        '►', '◄', '↕', '‼', '¶', '§', '▬', '↨', '↑', '↓', '→', '←', '∟', '↔', '▲', '▼',
+        # Rest of extended ASCII (176-255)
+        'α', 'β', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
+        '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', ' '
+    ]
+    
+    # Add extended ASCII mappings
+    for i, char in enumerate(cp437_extended):
+        cp437_map[i + 128] = char
+        
+    return cp437_map
+
 class BBSTerminalApp:
     def __init__(self, master):
         # 1.0️⃣ 🎉 SETUP
@@ -116,6 +144,16 @@ class BBSTerminalApp:
 
         self.majorlink_mode = tk.BooleanVar(value=True)  # True = filtering enabled
 
+        # Add frame size tracking
+        self.frame_sizes = self.load_frame_sizes()
+        
+        # Add settings persistence
+        self.saved_settings = self.load_saved_settings()
+        
+        # Create StringVar with max length for input
+        self.input_var = tk.StringVar()
+        self.input_var.trace('w', self.limit_input_length)
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
@@ -124,6 +162,8 @@ class BBSTerminalApp:
 
         # Start the periodic task to refresh chat members
         self.master.after(5000, self.refresh_chat_members)
+
+        self.cp437_map = create_cp437_to_unicode_map()
 
     def build_ui(self):
         """Creates all the frames and widgets for the UI."""
@@ -293,7 +333,6 @@ class BBSTerminalApp:
         # --- Row 2: Input frame for sending messages ---
         input_frame = ttk.LabelFrame(main_frame, text="Send Message")
         input_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-        self.input_var = tk.StringVar()
         self.input_box = ttk.Entry(input_frame, textvariable=self.input_var, width=80)
         self.input_box.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
         # Only bind Return event, remove any other bindings
@@ -303,6 +342,10 @@ class BBSTerminalApp:
         self.send_button = ttk.Button(input_frame, text="Send", command=lambda: self.send_message(None))
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
         
+        # Restore frame sizes if saved
+        if 'paned_pos' in self.frame_sizes:
+            self.master.after(100, lambda: self.paned.sashpos(0, self.frame_sizes['paned_pos']))
+
         self.update_display_font()
 
     def configure_button_styles(self):
@@ -559,6 +602,21 @@ class BBSTerminalApp:
 
     def save_settings(self, window):
         """Called when user clicks 'Save' in the settings window."""
+        settings = {
+            'font_name': self.font_name.get(),
+            'font_size': self.font_size.get(),
+            'logon_automation': self.logon_automation_enabled.get(),
+            'auto_login': self.auto_login_enabled.get(),
+            'keep_alive': self.keep_alive_enabled.get(),
+            'majorlink_mode': self.majorlink_mode.get()
+        }
+        
+        try:
+            with open("settings.json", "w") as f:
+                json.dump(settings, f)
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+
         self.update_display_font()
         window.destroy()
 
@@ -746,8 +804,30 @@ class BBSTerminalApp:
         finally:
             self.master.after(100, self.process_incoming_messages)
 
+    def decode_cp437(self, data):
+        """Decode CP437 encoded text, preserving special characters"""
+        # Convert bytes to list of integers if needed
+        if isinstance(data, bytes):
+            data = list(data)
+        
+        # Map each byte to its Unicode equivalent
+        result = ''
+        for byte in data:
+            if byte in self.cp437_map:
+                result += self.cp437_map[byte]
+            else:
+                result += chr(byte)
+        
+        return result
+
     def process_data_chunk(self, data):
         """Accumulate data, split on newlines, and process each complete line."""
+        # Decode CP437 data
+        if isinstance(data, bytes):
+            data = self.decode_cp437(data)
+        else:
+            data = self.decode_cp437(data.encode('cp437'))
+            
         # Normalize newlines
         data = data.replace('\r\n', '\n').replace('\r', '\n')
         self.partial_line += data
@@ -2220,6 +2300,49 @@ class BBSTerminalApp:
         mode = "enabled" if self.majorlink_mode.get() else "disabled"
         self.append_terminal_text(f"\n--- MajorLink Mode {mode} ---\n\n", "normal")
 
+    def limit_input_length(self, *args):
+        """Limit input field to 255 characters"""
+        value = self.input_var.get()
+        if len(value) > 255:
+            self.input_var.set(value[:255])
+
+    def load_frame_sizes(self):
+        """Load saved frame sizes from file"""
+        try:
+            if os.path.exists("frame_sizes.json"):
+                with open("frame_sizes.json", "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading frame sizes: {e}")
+        return {}
+
+    def save_frame_sizes(self):
+        """Save current frame sizes to file"""
+        try:
+            sizes = {
+                'paned_pos': self.paned.sashpos(0),
+                'window_geometry': self.master.geometry()
+            }
+            with open("frame_sizes.json", "w") as f:
+                json.dump(sizes, f)
+        except Exception as e:
+            print(f"Error saving frame sizes: {e}")
+
+    def load_saved_settings(self):
+        """Load saved settings from file"""
+        try:
+            if os.path.exists("settings.json"):
+                with open("settings.json", "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+        return {}
+
+    def on_closing(self):
+        """Extended closing handler to save frame sizes"""
+        self.save_frame_sizes()
+        # ... existing cleanup code ...
+
 def main():
     root = tk.Tk()
     app = BBSTerminalApp(root)
@@ -2247,6 +2370,7 @@ def main():
     def on_closing():
         """Handle window closing event."""
         try:
+            app.on_closing()  # Call the app's closing handler first
             # Create a new event loop for cleanup
             cleanup_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(cleanup_loop)
@@ -2265,6 +2389,10 @@ def main():
 
     # Bind the closing handler
     root.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    # Restore window geometry if saved
+    if 'window_geometry' in app.frame_sizes:
+        root.geometry(app.frame_sizes['window_geometry'])
     
     # Start the main loop
     root.mainloop()
