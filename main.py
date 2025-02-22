@@ -166,7 +166,7 @@ class BBSTerminalApp:
 
         self.has_requested_actions = False  # Track if we've already requested actions this session
 
-        # 1.2️⃣ 🎉 BUILD UI
+        # 1.BUILD UI
         self.build_ui()
 
         # Periodically check for incoming telnet data
