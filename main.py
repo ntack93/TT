@@ -2452,7 +2452,6 @@ class BBSTerminalApp:
     def on_closing(self):
         """Extended closing handler to save frame sizes"""
         self.save_frame_sizes()
-        # ... existing cleanup code ...
 
     def request_actions_list(self):
         """Send command to request actions list from BBS."""
