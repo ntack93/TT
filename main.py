@@ -228,9 +228,20 @@ class BBSTerminalApp:
         bow_button = ttk.Button(top_frame, text="Bow", command=lambda: self.send_action("bow"), style="Bow.TButton")
         bow_button.grid(row=0, column=4, padx=5, pady=5)
         
-        # Add the Chatlog button
+        # Add new Go Teleconference and BRB buttons
+        tele_button = ttk.Button(top_frame, text="Go Teleconference", 
+                                command=lambda: self.send_custom_message("/go tele"), 
+                                style="Teleconference.TButton")
+        tele_button.grid(row=0, column=5, padx=5, pady=5)
+        
+        brb_button = ttk.Button(top_frame, text="BRB", 
+                               command=lambda: self.send_custom_message("ga will be right back!"), 
+                               style="BRB.TButton")
+        brb_button.grid(row=0, column=6, padx=5, pady=5)
+        
+        # Add the Chatlog button (moved to column 7)
         chatlog_button = ttk.Button(top_frame, text="Chatlog", command=self.show_chatlog_window, style="Chatlog.TButton")
-        chatlog_button.grid(row=0, column=5, padx=5, pady=5)
+        chatlog_button.grid(row=0, column=7, padx=5, pady=5)
 
         # Connection settings example:
         self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
@@ -409,6 +420,10 @@ class BBSTerminalApp:
         configure_button_style("Favorites", "#fd7e14")  # Orange
         configure_button_style("Settings", "#6c757d")   # Gray
         configure_button_style("Triggers", "#20c997")   # Teal
+
+        # Add new button styles
+        configure_button_style("Teleconference", "#20c997")  # Teal
+        configure_button_style("BRB", "#6610f2")  # Purple
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -2098,11 +2113,13 @@ class BBSTerminalApp:
                 user_section = re.sub(r'Topic:.*?\n', '\n', user_section, flags=re.DOTALL)
                 user_section = re.sub(r'\(.*?\)', '', user_section)
         
-        # Get all usernames including the last one
         final_usernames = set()
         
-        # First, get all the comma-separated usernames with improved regex
-        usernames = re.findall(r'([A-Za-z][A-Za-z0-9._-]+?)@[\w.-]*(?:,|\s+and\s+|$)', user_section)
+        # Modified pattern to handle usernames with or without domains
+        usernames = re.findall(
+            r'([A-Za-z][A-Za-z0-9._-]+?)(?:@[\w.-]*)?(?:,|\s+and\s+|(?=\s+are here)|\s*$)', 
+            user_section
+        )
         
         # Process each username
         for username in usernames:
@@ -2112,11 +2129,6 @@ class BBSTerminalApp:
                 re.match(r'^[A-Za-z][A-Za-z0-9._-]*$', username)):
                 final_usernames.add(username)
         
-        # Also check for any remaining "and Username" pattern with improved regex
-        last_user_match = re.search(r'and\s+([A-Za-z][A-Za-z0-9._-]+?)@[\w.-]*\s+are here', combined_clean)
-        if last_user_match:
-            final_usernames.add(last_user_match.group(1))
-
         print(f"[DEBUG] Extracted usernames: {final_usernames}")
         self.chat_members = final_usernames
 
