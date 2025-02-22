@@ -517,10 +517,11 @@ function simulateChatroomData() {
 // Extract usernames from chatroom lines
 function extractUsernamesFromLines(lines) {
     const combined = lines.join(' ');
-    const match = combined.match(/([\w@.\-]+(?:, [\w@.\-]+)*, and [\w@.\-]+) are here with you\./);
+    const match = combined.match(/([\w.-]+?@[\w.-]+(?:,\s*[\w.-]+?@[\w.-]+)*,?\s*and\s*[\w.-]+?@[\w.-]+)\s+are here with you\./);
     if (match) {
         const usernamesStr = match[1];
-        return usernamesStr.split(/,\s*|\s*and\s*/);
+        // Extract usernames before the @ symbol
+        return usernamesStr.split(/,\s*|\s+and\s+/).map(user => user.split('@')[0]);
     }
     return [];
 }

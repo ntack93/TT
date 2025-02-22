@@ -154,6 +154,18 @@ class BBSTerminalApp:
         self.input_var = tk.StringVar()
         self.input_var.trace('w', self.limit_input_length)
 
+        # Add blink state tracking
+        self.blink_state = False
+        self.blink_tags = set()
+
+        self.paned = None  # Initialize paned attribute
+
+        self.first_banner_seen = False  # Add new flag to track first banner
+        self.actions_requested = False  # Keep existing flag
+        self.last_banner_time = 0  # Add new timestamp tracker
+
+        self.has_requested_actions = False  # Track if we've already requested actions this session
+
         # 1.2️⃣ 🎉 BUILD UI
         self.build_ui()
 
@@ -347,6 +359,9 @@ class BBSTerminalApp:
             self.master.after(100, lambda: self.paned.sashpos(0, self.frame_sizes['paned_pos']))
 
         self.update_display_font()
+
+        # At the end of build_ui, apply saved settings
+        self.master.after(100, self.apply_saved_settings)
 
     def configure_button_styles(self):
         """Configure custom styles for buttons."""
@@ -601,14 +616,16 @@ class BBSTerminalApp:
         save_button.grid(row=row_index, column=0, columnspan=2, pady=10)
 
     def save_settings(self, window):
-        """Called when user clicks 'Save' in the settings window."""
+        """Save all UI settings."""
         settings = {
             'font_name': self.font_name.get(),
             'font_size': self.font_size.get(),
             'logon_automation': self.logon_automation_enabled.get(),
             'auto_login': self.auto_login_enabled.get(),
             'keep_alive': self.keep_alive_enabled.get(),
-            'majorlink_mode': self.majorlink_mode.get()
+            'majorlink_mode': self.majorlink_mode.get(),
+            'paned_pos': self.paned.get() if self.paned else None,
+            'window_geometry': self.master.geometry()
         }
         
         try:
@@ -637,7 +654,7 @@ class BBSTerminalApp:
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
-        """Define text tags for basic ANSI foreground colors (30-37, 90-97) and custom colors."""
+        """Define text tags for ANSI colors and attributes including blink."""
         self.terminal_display.tag_configure("normal", foreground="white")
 
         color_map = {
@@ -673,6 +690,27 @@ class BBSTerminalApp:
             else:
                 self.terminal_display.tag_configure(tag, foreground=tag)
 
+        # Add blink tags
+        self.terminal_display.tag_configure("blink", background="")
+        self.blink_tags = set()
+    
+        # Start blink timer
+        self.blink_timer()
+
+    def blink_timer(self):
+        """Toggle blink state every 500ms."""
+        self.blink_state = not self.blink_state
+        
+        # Update all blinking text
+        for tag in self.blink_tags:
+            if self.blink_state:
+                self.terminal_display.tag_configure(tag, background="grey20")
+            else:
+                self.terminal_display.tag_configure(tag, background="")
+        
+        # Schedule next blink
+        self.master.after(500, self.blink_timer)
+
     # 1.5️⃣ CONNECT / DISCONNECT
     def toggle_connection(self):
         """Connect or disconnect from the BBS."""
@@ -688,6 +726,11 @@ class BBSTerminalApp:
         host = self.host.get()
         port = self.port.get()
         self.stop_event.clear()
+
+        # Reset the banner flag when starting a new connection
+        self.first_banner_seen = False
+        self.actions_requested = False
+        self.has_requested_actions = False
 
         def run_telnet():
             asyncio.set_event_loop(self.loop)
@@ -786,6 +829,9 @@ class BBSTerminalApp:
         finally:
             self._disconnecting = False
 
+        # Reset the action request flag on disconnect
+        self.has_requested_actions = False
+
     def clear_chat_members(self):
         """Clear the active chat members list but preserve last seen timestamps."""
         self.chat_members = set()
@@ -842,10 +888,22 @@ class BBSTerminalApp:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
+            # Check for chatroom banner with rate limiting
+            if ("You are in" in clean_line and 
+                "are here with you" in clean_line):
+                current_time = time.time()
+                # Only request actions if it's been more than 5 seconds since last banner
+                if (current_time - self.last_banner_time > 5 and 
+                    len(self.actions) == 0):
+                    print("[DEBUG] Detected chatroom banner, requesting actions list")
+                    self.last_banner_time = current_time
+                    self.request_actions_list()
+
             # Add Actions list detection before MajorLink mode check
             if "Action listing for:" in clean_line:
                 self.actions = []  # Clear existing actions
                 self.collecting_actions = True
+                self.actions_requested = False  # Reset flag after receiving list
                 # Send Enter keystroke immediately when we see the action listing
                 self.master.after(50, lambda: self.send_message(None))
                 continue
@@ -907,6 +965,17 @@ class BBSTerminalApp:
                 self.parse_and_save_chatlog_message(line)
                 if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
                     self.detect_logon_prompt(line)
+
+            # Check for specific MajorLink entry message
+            if (not self.has_requested_actions and 
+                "Teleconference" in clean_line):
+                # Look for the next line to confirm MajorLink entry
+                next_line_idx = lines[:-1].index(line) + 1
+                if (next_line_idx < len(lines) - 1 and 
+                    "You are in the MajorLink channel" in ansi_regex.sub('', lines[next_line_idx]).strip()):
+                    print("[DEBUG] Detected MajorLink entry, requesting actions list")
+                    self.has_requested_actions = True  # Set flag to prevent future requests
+                    self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
 
         self.partial_line = lines[-1]
 
@@ -1243,32 +1312,45 @@ class BBSTerminalApp:
         self.terminal_display.configure(state=tk.DISABLED)
 
     def parse_ansi_and_insert(self, text_data):
-        """Minimal parser for ANSI color codes (foreground only)."""
+        """Enhanced parser for ANSI codes including blink."""
         ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
-        url_regex = re.compile(r'(https?://\S+)')
         last_end = 0
-        current_tag = "normal"
-
+        current_tags = ["normal"]
+        blink_tag = None
+    
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
             if start > last_end:
                 segment = text_data[last_end:start]
-                self.insert_with_hyperlinks(segment, current_tag)
+                self.insert_with_hyperlinks(segment, tuple(current_tags))
+            
             code_string = match.group(1)
             codes = code_string.split(';')
+            
             if '0' in codes:
-                current_tag = "normal"
+                current_tags = ["normal"]
+                blink_tag = None
                 codes.remove('0')
-
-            for c in codes:
-                mapped_tag = self.map_code_to_tag(c)
-                if mapped_tag:
-                    current_tag = mapped_tag
+    
+            for code in codes:
+                # Handle blink codes
+                if code in ['5', '6']:  # Both slow and rapid blink
+                    if not blink_tag:
+                        blink_tag = f"blink_{len(self.blink_tags)}"
+                        self.terminal_display.tag_configure(blink_tag, background="")
+                        self.blink_tags.add(blink_tag)
+                    if blink_tag not in current_tags:
+                        current_tags.append(blink_tag)
+                else:
+                    mapped_tag = self.map_code_to_tag(code)
+                    if mapped_tag and mapped_tag not in current_tags:
+                        current_tags.append(mapped_tag)
+                        
             last_end = end
-
+    
         if last_end < len(text_data):
             segment = text_data[last_end:]
-            self.insert_with_hyperlinks(segment, current_tag)
+            self.insert_with_hyperlinks(segment, tuple(current_tags))
 
     def insert_with_hyperlinks(self, text, tag):
         """Insert text with hyperlinks detected and tagged."""
@@ -1593,8 +1675,8 @@ class BBSTerminalApp:
         try:
             # Get current sizes from the paned window
             paned = self.chatlog_window.nametowidget("main_paned")
-            sash_pos1 = paned.sash_coord(0)[0]  # Position of first sash
-            sash_pos2 = paned.sash_coord(1)[0]  # Position of second sash
+            sash_pos1 = paned.sashpos(0)  # Position of first sash
+            sash_pos2 = paned.sashpos(1)  # Position of second sash
             
             sizes = {
                 "users": sash_pos1,
@@ -2019,19 +2101,19 @@ class BBSTerminalApp:
         # Get all usernames including the last one
         final_usernames = set()
         
-        # First, get all the comma-separated usernames
-        usernames = re.findall(r'([A-Za-z][A-Za-z0-9._]+)@?[\w.]*(?:,|\s+and\s+|$)', user_section)
+        # First, get all the comma-separated usernames with improved regex
+        usernames = re.findall(r'([A-Za-z][A-Za-z0-9._-]+?)@[\w.-]*(?:,|\s+and\s+|$)', user_section)
         
         # Process each username
         for username in usernames:
             username = username.strip()
             if (len(username) >= 2 and 
                 username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
-                re.match(r'^[A-Za-z][A-Za-z0-9._]*$', username)):
+                re.match(r'^[A-Za-z][A-Za-z0-9._-]*$', username)):
                 final_usernames.add(username)
         
-        # Also check for any remaining "and Username" pattern
-        last_user_match = re.search(r'and\s+([A-Za-z][A-Za-z0-9._]+)\s+are here', combined_clean)
+        # Also check for any remaining "and Username" pattern with improved regex
+        last_user_match = re.search(r'and\s+([A-Za-z][A-Za-z0-9._-]+?)@[\w.-]*\s+are here', combined_clean)
         if last_user_match:
             final_usernames.add(last_user_match.group(1))
 
@@ -2086,7 +2168,7 @@ class BBSTerminalApp:
             with open("last_seen.json", "w") as file:
                 json.dump(self.last_seen, file)
         except Exception as e:
-            print(f"[DEBUG] Error saving last seen file: {e}")
+            print(f"Error saving last seen file: {e}")
 
     def refresh_chat_members(self):
         """Periodically refresh the chat members list."""
@@ -2329,19 +2411,54 @@ class BBSTerminalApp:
             print(f"Error saving frame sizes: {e}")
 
     def load_saved_settings(self):
-        """Load saved settings from file"""
+        """Load all saved UI settings."""
         try:
             if os.path.exists("settings.json"):
                 with open("settings.json", "r") as f:
-                    return json.load(f)
+                    settings = json.load(f)
+                    # Apply loaded settings
+                    self.font_name.set(settings.get('font_name', "Courier New"))
+                    self.font_size.set(settings.get('font_size', 10))
+                    self.logon_automation_enabled.set(settings.get('logon_automation', False))
+                    self.auto_login_enabled.set(settings.get('auto_login', False))
+                    self.keep_alive_enabled.set(settings.get('keep_alive', False))
+                    self.majorlink_mode.set(settings.get('majorlink_mode', True))
+                    return settings
         except Exception as e:
             print(f"Error loading settings: {e}")
         return {}
+
+    def apply_saved_settings(self):
+        """Apply saved settings after UI is built."""
+        settings = self.load_saved_settings()
+        
+        # Apply paned window position if saved
+        if self.paned and 'paned_pos' in settings and settings['paned_pos']:
+            try:
+                self.paned.set(settings['paned_pos'])
+            except Exception as e:
+                print(f"Error setting paned position: {e}")
+
+        # Apply window geometry if saved
+        if 'window_geometry' in settings:
+            try:
+                self.master.geometry(settings['window_geometry'])
+            except Exception as e:
+                print(f"Error setting window geometry: {e}")
+
+        # Update display font
+        self.update_display_font()
 
     def on_closing(self):
         """Extended closing handler to save frame sizes"""
         self.save_frame_sizes()
         # ... existing cleanup code ...
+
+    def request_actions_list(self):
+        """Send command to request actions list from BBS."""
+        if self.connected and self.writer:
+            print("[DEBUG] Sending /a list command")
+            self.send_custom_message("/a list")
 
 def main():
     root = tk.Tk()
