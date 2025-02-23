@@ -639,7 +639,7 @@ class BBSTerminalApp:
             'auto_login': self.auto_login_enabled.get(),
             'keep_alive': self.keep_alive_enabled.get(),
             'majorlink_mode': self.majorlink_mode.get(),
-            'paned_pos': self.paned.get() if self.paned else None,
+            'paned_pos': self.get_paned_position(),
             'window_geometry': self.master.geometry()
         }
         
@@ -651,6 +651,18 @@ class BBSTerminalApp:
 
         self.update_display_font()
         window.destroy()
+
+    def get_paned_position(self):
+        """Safely get the paned window position."""
+        try:
+            if hasattr(self, 'paned') and self.paned:
+                if isinstance(self.paned, ttk.PanedWindow):
+                    return self.paned.winfo_geometry()
+                else:
+                    return self.paned.get()
+        except Exception:
+            pass
+        return None
 
     def update_display_font(self):
         """Update all text widgets' fonts with current settings."""
@@ -2414,7 +2426,7 @@ class BBSTerminalApp:
         """Save current frame sizes to file"""
         try:
             sizes = {
-                'paned_pos': self.paned.sashpos(0),
+                'paned_pos': self.get_paned_position(),
                 'window_geometry': self.master.geometry()
             }
             with open("frame_sizes.json", "w") as f:
@@ -2447,7 +2459,12 @@ class BBSTerminalApp:
         # Apply paned window position if saved
         if self.paned and 'paned_pos' in settings and settings['paned_pos']:
             try:
-                self.paned.set(settings['paned_pos'])
+                if isinstance(self.paned, ttk.PanedWindow):
+                    # For ttk.PanedWindow, we need to use a different approach
+                    self.master.after(100, lambda: self.paned.update())
+                else:
+                    # For tk.PanedWindow
+                    self.paned.set(settings['paned_pos'])
             except Exception as e:
                 print(f"Error setting paned position: {e}")
 
