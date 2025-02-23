@@ -254,7 +254,7 @@ class BBSTerminalApp:
         
         brb_button = ttk.Button(top_frame, text="BRB", 
                                command=lambda: self.send_custom_message("ga will be right back!"), 
-                               style="BRB.TButton")
+                                style="BRB.TButton")
         brb_button.grid(row=0, column=6, padx=5, pady=5)
         
         # Add the Chatlog button (moved to column 7)
@@ -1871,6 +1871,9 @@ class BBSTerminalApp:
 
         self.load_chatlog_list()
         self.display_stored_links()
+        self.create_chatlog_context_menu()
+
+        self.master.after(100, self.show_all_messages)
 
     def show_change_font_window(self):
         """Open a Toplevel window to change font, font size, font color, and background color."""
@@ -2088,17 +2091,63 @@ class BBSTerminalApp:
             return
             
         username = self.chatlog_listbox.get(selected_index)
-        if tk.messagebox.askyesno("Confirm Clear", 
-                                 f"Are you sure you want to clear the chatlog for {username}?",
-                                 icon='warning'):
-            self.clear_active_chatlog()
+        
+        confirm_dialog = tk.Toplevel(self.master)
+        confirm_dialog.title("Confirm Clear")
+        confirm_dialog.attributes('-topmost', True)
+        confirm_dialog.grab_set()  # Make dialog modal
+        
+        msg = f"Are you sure you want to clear the chatlog for {username}?"
+        tk.Label(confirm_dialog, text=msg, padx=20, pady=10).pack()
+        
+        def confirm():
+            chatlog = self.load_chatlog()
+            if username in chatlog:
+                del chatlog[username]
+                self.save_chatlog(chatlog)
+            confirm_dialog.destroy()
+            self.show_all_messages()
+        
+        def cancel():
+            confirm_dialog.destroy()
+        
+        button_frame = ttk.Frame(confirm_dialog)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="Yes", command=confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="No", command=cancel).pack(side=tk.LEFT, padx=5)
 
     def confirm_clear_links(self):
         """Show confirmation dialog before clearing links history."""
-        if tk.messagebox.askyesno("Confirm Clear", 
-                                 "Are you sure you want to clear all stored hyperlinks?",
-                                 icon='warning'):
+        confirm_dialog = tk.Toplevel(self.master)
+        confirm_dialog.title("Confirm Clear")
+        confirm_dialog.attributes('-topmost', True)
+        confirm_dialog.grab_set()  # Make dialog modal
+        
+        msg = "Are you sure you want to clear all stored hyperlinks?"
+        tk.Label(confirm_dialog, text=msg, padx=20, pady=10).pack()
+        
+        def confirm():
             self.clear_links_history()
+            confirm_dialog.destroy()
+        
+        def cancel():
+            confirm_dialog.destroy()
+        
+        button_frame = ttk.Frame(confirm_dialog)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="Yes", command=confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="No", command=cancel).pack(side=tk.LEFT, padx=5)
+
+    def create_chatlog_context_menu(self):
+        """Create right-click context menu for chatlog users."""
+        menu = tk.Menu(self.chatlog_listbox, tearoff=0)
+        menu.add_command(label="Delete User", command=self.delete_selected_user)
+        
+        def show_menu(event):
+            if self.chatlog_listbox.curselection():
+                menu.tk_popup(event.x_root, event.y_root)
+        
+        self.chatlog_listbox.bind("<Button-3>", show_menu)
 
     def load_chatlog_list(self):
         """Load chatlog from a local file and populate the listbox."""
@@ -2117,16 +2166,13 @@ class BBSTerminalApp:
             # Show all messages combined chronologically
             all_messages = []
             for username, messages in chatlog.items():
-                all_messages.extend(messages)
+                all_messages.extend((username, msg) for msg in messages)
             
             # Sort by timestamp
-            def get_timestamp(msg):
-                match = re.match(r'\[(.*?)\]', msg)
-                return match.group(1) if match else "0"
-            all_messages.sort(key=get_timestamp)
+            all_messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x[1]).group(1) if re.match(r'\[(.*?)\]', x[1]) else "0")
             
-            for message in all_messages:
-                self.chatlog_display.insert(tk.END, message + "\n")
+            for username, message in all_messages:
+                self.chatlog_display.insert(tk.END, f"> {message}\n\n")
         else:
             # Show messages for selected user
             selected_index = self.chatlog_listbox.curselection()
@@ -2134,7 +2180,7 @@ class BBSTerminalApp:
             messages = chatlog.get(username, [])
             messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x).group(1) if re.match(r'\[(.*?)\]', x) else "0")
             for message in messages:
-                self.chatlog_display.insert(tk.END, message + "\n")
+                self.chatlog_display.insert(tk.END, f"> {message}\n\n")
         
         self.chatlog_display.configure(state=tk.DISABLED)
         self.chatlog_display.see(tk.END)
