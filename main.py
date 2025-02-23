@@ -58,6 +58,10 @@ class BBSTerminalApp:
         # 1.0️⃣ 🎉 SETUP
         self.master = master
         self.master.title("Retro BBS Terminal")
+        
+        # Add sound file paths
+        self.chat_sound_file = os.path.join(os.path.dirname(__file__), "chat.wav")
+        self.directed_sound_file = os.path.join(os.path.dirname(__file__), "directed.wav")
 
         # Load saved font settings or use defaults
         saved_font_settings = self.load_font_settings()
@@ -84,7 +88,6 @@ class BBSTerminalApp:
 
         # Logon automation toggles
         self.logon_automation_enabled = tk.BooleanVar(value=False)
-        self.auto_login_enabled = tk.BooleanVar(value=False)
 
         # A queue to pass incoming telnet data => main thread
         self.msg_queue = queue.Queue()
@@ -273,21 +276,23 @@ class BBSTerminalApp:
         self.connect_button = ttk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, style="Connect.TButton")
         self.connect_button.grid(row=0, column=4, padx=5, pady=5)
         
-        # Add the Favorites button
-        favorites_button = ttk.Button(self.conn_frame, text="Favorites", command=self.show_favorites_window, style="Favorites.TButton")
-        favorites_button.grid(row=0, column=5, padx=5, pady=5)
+        # Replace Settings button with Change Font button
+        font_button = ttk.Button(self.conn_frame, text="Change Font", 
+                                command=self.show_change_font_window,
+                                style="Settings.TButton")
+        font_button.grid(row=0, column=5, padx=5, pady=5)
         
-        # Add the Settings button
-        settings_button = ttk.Button(self.conn_frame, text="Settings", command=self.show_settings_window, style="Settings.TButton")
-        settings_button.grid(row=0, column=6, padx=5, pady=5)
+        # Add the Favorites button
+        favorites_button = ttk.Button(self.conn_frame, text="Favorites", 
+                                    command=self.show_favorites_window, 
+                                    style="Favorites.TButton")
+        favorites_button.grid(row=0, column=6, padx=5, pady=5)
         
         # Add the Triggers button
-        triggers_button = ttk.Button(self.conn_frame, text="Triggers", command=self.show_triggers_window, style="Triggers.TButton")
+        triggers_button = ttk.Button(self.conn_frame, text="Triggers", 
+                                   command=self.show_triggers_window, 
+                                   style="Triggers.TButton")
         triggers_button.grid(row=0, column=7, padx=5, pady=5)
-        
-        # Add the Keep Alive checkbox
-        keep_alive_check = ttk.Checkbutton(self.conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
-        keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
 
         # Checkbox frame for visibility toggles
         checkbox_frame = ttk.Frame(top_frame)
@@ -314,6 +319,15 @@ class BBSTerminalApp:
         )
         majorlink_check.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
         
+        # Add the Keep Alive checkbox
+        keep_alive_check = ttk.Checkbutton(self.conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
+        keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
+
+        # Add new row for automation controls
+        logon_auto_check = ttk.Checkbutton(checkbox_frame, text="Logon Automation", 
+                                          variable=self.logon_automation_enabled)
+        logon_auto_check.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+
         # Username frame
         self.username_frame = ttk.LabelFrame(top_frame, text="Username")
         self.username_frame.grid(row=3, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
@@ -606,115 +620,169 @@ class BBSTerminalApp:
         widget.bind("<Button-3>", show_context_menu)
 
     # 1.3️⃣ SETTINGS WINDOW
-    def show_settings_window(self):
-        """Open a Toplevel for font settings, automation toggles, etc."""
-        settings_win = tk.Toplevel(self.master)
-        settings_win.title("Settings")
-        settings_win.attributes('-topmost', True)  # Keep window on top
+    def show_chatlog_window(self):
+        """Open a Toplevel window to manage chatlog and hyperlinks."""
+        if self.chatlog_window and self.chatlog_window.winfo_exists():
+            self.chatlog_window.lift()
+            self.chatlog_window.attributes('-topmost', True)
+            return
 
-        row_index = 0
-
-        # Font Name
-        ttk.Label(settings_win, text="Font Name:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
-        # Extended font list with DOS/Terminal themed fonts
-        font_options = [
-            "Courier New",
-            "Consolas", 
-            "Terminal",
-            "Fixedsys",
-            "System",
-            "Modern DOS 8x16",
-            "Modern DOS 8x8",
-            "Perfect DOS VGA 437",
-            "MS Gothic",
-            "SimSun-ExtB",
-            "NSimSun",
-            "Lucida Console",
-            "OCR A Extended",
-            "Prestige Elite Std",
-            "Letter Gothic Std",
-            "FreeMono",
-            "DejaVu Sans Mono",
-            "Liberation Mono",
-            "IBM Plex Mono",
-            "PT Mono",
-            "Share Tech Mono",
-            "VT323",
-            "Press Start 2P",
-            "DOS/V",
-            "TerminalVector"
-        ]
-        font_dropdown = ttk.Combobox(settings_win, textvariable=self.font_name, values=font_options, state="readonly")
-        font_dropdown.grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
-        row_index += 1
-
-        # Font Size
-        ttk.Label(settings_win, text="Font Size:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
-        ttk.Entry(settings_win, textvariable=self.font_size, width=5).grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
-        row_index += 1
-
-        # Logon Automation
-        ttk.Label(settings_win, text="Logon Automation:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
-        ttk.Checkbutton(settings_win, variable=self.logon_automation_enabled).grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
-        row_index += 1
-
-        # Auto Login
-        ttk.Label(settings_win, text="Auto Login:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
-        ttk.Checkbutton(settings_win, variable=self.auto_login_enabled).grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
-        row_index += 1
-
-        # Save Button
-        save_button = ttk.Button(settings_win, text="Save", command=lambda: self.save_settings(settings_win))
-        save_button.grid(row=row_index, column=0, columnspan=2, pady=10)
-
-    def save_settings(self, window):
-        """Save all UI settings."""
-        settings = {
-            'font_name': self.font_name.get(),
-            'font_size': self.font_size.get(),
-            'logon_automation': self.logon_automation_enabled.get(),
-            'auto_login': self.auto_login_enabled.get(),
-            'keep_alive': self.keep_alive_enabled.get(),
-            'majorlink_mode': self.majorlink_mode.get(),
-            'paned_pos': self.get_paned_position(),
-            'window_geometry': self.master.geometry()
+        # Load saved font settings
+        saved_font_settings = self.load_font_settings()
+        chatlog_font_settings = {
+            'font': (saved_font_settings.get('font_name', "Courier New"), 
+                    saved_font_settings.get('font_size', 10)),
+            'fg': saved_font_settings.get('fg', 'white'),
+            'bg': saved_font_settings.get('bg', 'black')
         }
+
+        # Load saved panel sizes or use defaults
+        panel_sizes = self.load_panel_sizes()
+
+        self.chatlog_window = tk.Toplevel(self.master)
+        self.chatlog_window.title("Chatlog")
+        self.chatlog_window.geometry("1200x600")
+        self.chatlog_window.attributes('-topmost', True)
         
-        try:
-            with open("settings.json", "w") as f:
-                json.dump(settings, f)
-        except Exception as e:
-            print(f"Error saving settings: {e}")
+        # Make the window resizable
+        self.chatlog_window.columnconfigure(0, weight=1)
+        self.chatlog_window.rowconfigure(0, weight=1)
 
-        self.update_display_font()
-        window.destroy()
+        main_frame = ttk.Frame(self.chatlog_window)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=1)
 
-    def get_paned_position(self):
-        """Safely get the paned window position."""
-        try:
-            if hasattr(self, 'paned') and self.paned:
-                if isinstance(self.paned, ttk.PanedWindow):
-                    return self.paned.winfo_geometry()
-                else:
-                    return self.paned.get()
-        except Exception:
-            pass
-        return None
+        # Create paned window with users/messages/links panels
+        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL, name="main_paned")
+        paned.grid(row=0, column=0, sticky="nsew")
 
-    def update_display_font(self):
-        """Update all text widgets' fonts with current settings."""
+        # Users panel
+        users_frame = ttk.Frame(paned, width=panel_sizes["users"])
+        users_frame.pack_propagate(False)  # Prevent shrinking below specified width
+        users_frame.columnconfigure(0, weight=1)
+        users_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(users_frame, text="Users").grid(row=0, column=0, sticky="w")
+        self.chatlog_listbox = tk.Listbox(users_frame, height=10, **chatlog_font_settings)
+        self.chatlog_listbox.grid(row=1, column=0, sticky="nsew")
+        users_scrollbar = ttk.Scrollbar(users_frame, command=self.chatlog_listbox.yview)
+        users_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
+        self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
+        
+        paned.add(users_frame)
+
+        # Messages panel (takes remaining space)
+        messages_frame = ttk.Frame(paned)
+        messages_frame.columnconfigure(0, weight=1)
+        messages_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(messages_frame, text="Messages").grid(row=0, column=0, sticky="w")
+        self.chatlog_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED,
+                                 **chatlog_font_settings)
+        self.chatlog_display.grid(row=1, column=0, sticky="nsew")
+        messages_scrollbar = ttk.Scrollbar(messages_frame, command=self.chatlog_display.yview)
+        messages_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.chatlog_display.configure(yscrollcommand=messages_scrollbar.set)
+        
+        paned.add(messages_frame)
+
+        # Links panel
+        links_frame = ttk.Frame(paned, width=panel_sizes["links"])
+        links_frame.pack_propagate(False)  # Prevent shrinking below specified width
+        links_frame.columnconfigure(0, weight=1)
+        links_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(links_frame, text="Hyperlinks").grid(row=0, column=0, sticky="w")
+        self.links_display = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED,
+                               **chatlog_font_settings)
+        self.links_display.grid(row=1, column=0, sticky="nsew")
+        links_scrollbar = ttk.Scrollbar(links_frame, command=self.links_display.yview)
+        links_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.links_display.configure(yscrollcommand=links_scrollbar.set)
+        
+        self.links_display.tag_configure("hyperlink", foreground="blue", underline=True)
+        self.links_display.tag_bind("hyperlink", "<Button-1>", self.open_chatlog_hyperlink)
+        self.links_display.tag_bind("hyperlink", "<Enter>", self.show_chatlog_thumbnail_preview)
+        self.links_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
+        
+        paned.add(links_frame)
+
+        # Set initial sash positions based on saved sizes
+        def after_show():
+            total_width = paned.winfo_width()
+            users_width = panel_sizes["users"]
+            links_width = panel_sizes["links"]
+            messages_width = total_width - users_width - links_width
+            
+            # Set sash positions
+            paned.sashpos(0, users_width)  # Position between users and messages
+            paned.sashpos(1, users_width + messages_width)  # Position between messages and links
+
+        # Wait for window to be drawn before setting sash positions
+        self.chatlog_window.after(100, after_show)
+
+        # Save sizes when window is closed
+        self.chatlog_window.protocol("WM_DELETE_WINDOW", 
+            lambda: (self.save_panel_sizes(), self.chatlog_window.destroy()))
+
+        # Buttons frame at bottom
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.grid(row=1, column=0, sticky="ew", pady=5)
+        
+        ttk.Button(buttons_frame, text="Clear Chat", command=self.confirm_clear_chatlog).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Clear Links", command=self.confirm_clear_links).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Show All", command=self.show_all_messages).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Close", command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(buttons_frame, text="Change Font", command=self.show_change_font_window).pack(side=tk.RIGHT, padx=5)  # New button for changing font and colors
+
+        self.load_chatlog_list()
+        self.display_stored_links()
+        self.create_chatlog_context_menu()
+
+        self.master.after(100, self.show_all_messages)
+
+    def save_font_settings(self, window):
+        """Save the selected font settings and apply them to all text displays except BBS Output."""
         try:
+            if not all(self.current_selections.values()):
+                tk.messagebox.showerror("Error", "Please select an option from each list")
+                return
+                
+            # Create font settings dictionary
             font_settings = {
-                'font': (self.font_name.get(), self.font_size.get()),
-                'fg': self.current_font_settings.get('fg', 'white'),
-                'bg': self.current_font_settings.get('bg', 'black')
+                'font': (self.current_selections['font'], self.current_selections['size']),
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
             }
-            self.terminal_display.configure(**font_settings)
+            
+            # Apply to all text displays except BBS Output
+            self.chatlog_display.configure(**font_settings)
             self.directed_msg_display.configure(**font_settings)
             self.members_listbox.configure(**font_settings)
             self.actions_listbox.configure(**font_settings)
+            
+            # For BBS Output, only update font, not colors
+            self.terminal_display.configure(font=(self.current_selections['font'], 
+                                                self.current_selections['size']))
+            
+            # Store settings for future use
+            self.current_font_settings = font_settings
+            
+            # Save to file
+            settings_to_save = {
+                'font_name': self.current_selections['font'],
+                'font_size': self.current_selections['size'],
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
+            with open("font_settings.json", "w") as file:
+                json.dump(settings_to_save, file)
+            
+            window.destroy()
         except Exception as e:
-            print(f"Error updating display font: {e}")
+            tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
@@ -786,12 +854,12 @@ class BBSTerminalApp:
             self.start_connection()
 
     def start_connection(self):
-        """Start the telnetlib3 client in a background thread."""
+        """Start the telnetlib3 client and handle automated logon if enabled."""
         host = self.host.get()
         port = self.port.get()
         self.stop_event.clear()
 
-        # Reset the banner flag when starting a new connection
+        # Reset flags
         self.first_banner_seen = False
         self.actions_requested = False
         self.has_requested_actions = False
@@ -804,6 +872,36 @@ class BBSTerminalApp:
         thread.start()
         self.append_terminal_text(f"Connecting to {host}:{port}...\n", "normal")
         self.start_keep_alive()
+
+        # Start automated logon sequence if enabled
+        if self.logon_automation_enabled.get():
+            self.master.after(10000, self.automated_logon_sequence)
+
+    def automated_logon_sequence(self):
+        """Execute the automated logon sequence."""
+        if not self.connected or not self.writer:
+            return
+            
+        username = self.username.get()
+        password = self.password.get()
+        
+        # Send username
+        self.master.after(0, lambda: self.send_custom_message(username))
+        
+        # Send password after 2 seconds
+        self.master.after(2000, lambda: self.send_custom_message(password))
+        
+        # Send first enter after 1 second
+        self.master.after(3000, lambda: self.send_custom_message("\r\n"))
+        
+        # Send second enter after 1 second
+        self.master.after(4000, lambda: self.send_custom_message("\r\n"))
+        
+        # Send /go tele after 1 second
+        self.master.after(5000, lambda: self.send_custom_message("/go tele"))
+        
+        # Send join majorlink after 1 second
+        self.master.after(6000, lambda: self.send_custom_message("join majorlink"))
 
     async def telnet_client_task(self, host, port):
         """Async function connecting via telnetlib3 (CP437 + ANSI)."""
@@ -952,7 +1050,22 @@ class BBSTerminalApp:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
-            # Check for chatroom banner with rate limiting
+            # Check for directed messages or whispers
+            directed_patterns = [
+                r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)',
+                r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)'
+            ]
+            
+            for pattern in directed_patterns:
+                match = re.match(pattern, clean_line)
+                if match:
+                    sender = match.group(1)
+                    message = match.group(2)
+                    self.append_directed_message(f"From {sender}: {message}")
+                    self.play_directed_sound()
+                    break
+                    
+            # Continue with existing processing
             if ("You are in" in clean_line and 
                 "are here with you" in clean_line):
                 current_time = time.time()
@@ -1027,8 +1140,6 @@ class BBSTerminalApp:
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
-                if self.auto_login_enabled.get() or self.logon_automation_enabled.get():
-                    self.detect_logon_prompt(line)
 
             # Check for specific MajorLink entry message
             if (not self.has_requested_actions and 
@@ -1074,11 +1185,11 @@ class BBSTerminalApp:
         # Enhanced patterns to match different message types
         message_patterns = [
             # Whispered messages - check these first
-            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(whispered(?:\s+to\s+\S+)?\):\s*(.+)$',
+            r'^From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)$',
+            # Directed messages
+            r'^From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
             # Normal messages
-            r'^From\s+(\S+?)(?:@[\w.]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$',
-            # Directed messages (to someone)
-            r'^From\s+(\S+?)(?:@[\w.]+)?\s*\(to\s+[^)]+\):\s*(.+)$'
+            r'^From\s+(\S+?)(?:@[\w.-]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$'
         ]
 
         for pattern in message_patterns:
@@ -1090,6 +1201,13 @@ class BBSTerminalApp:
                 # Add timestamp if not present
                 if not clean_line.strip().startswith('['):
                     clean_line = time.strftime("[%Y-%m-%d %H:%M:%S] ") + clean_line
+
+                # Check for directed message or whisper
+                if "(whispered" in clean_line or "(to you)" in clean_line:
+                    self.append_directed_message(clean_line)
+                    self.play_directed_sound()
+                else:
+                    self.play_chat_sound()
 
                 # Save to chatlog
                 self.save_chatlog_message(sender, clean_line)
@@ -1752,129 +1870,6 @@ class BBSTerminalApp:
         except Exception as e:
             print(f"Error saving panel sizes: {e}")
 
-    def show_chatlog_window(self):
-        """Open a Toplevel window to manage chatlog and hyperlinks."""
-        if self.chatlog_window and self.chatlog_window.winfo_exists():
-            self.chatlog_window.lift()
-            self.chatlog_window.attributes('-topmost', True)
-            return
-
-        # Load saved font settings
-        saved_font_settings = self.load_font_settings()
-        chatlog_font_settings = {
-            'font': (saved_font_settings.get('font_name', "Courier New"), 
-                    saved_font_settings.get('font_size', 10)),
-            'fg': saved_font_settings.get('fg', 'white'),
-            'bg': saved_font_settings.get('bg', 'black')
-        }
-
-        # Load saved panel sizes or use defaults
-        panel_sizes = self.load_panel_sizes()
-
-        self.chatlog_window = tk.Toplevel(self.master)
-        self.chatlog_window.title("Chatlog")
-        self.chatlog_window.geometry("1200x600")
-        self.chatlog_window.attributes('-topmost', True)
-        
-        # Make the window resizable
-        self.chatlog_window.columnconfigure(0, weight=1)
-        self.chatlog_window.rowconfigure(0, weight=1)
-
-        main_frame = ttk.Frame(self.chatlog_window)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(0, weight=1)
-
-        # Create paned window with users/messages/links panels
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL, name="main_paned")
-        paned.grid(row=0, column=0, sticky="nsew")
-
-        # Users panel
-        users_frame = ttk.Frame(paned, width=panel_sizes["users"])
-        users_frame.pack_propagate(False)  # Prevent shrinking below specified width
-        users_frame.columnconfigure(0, weight=1)
-        users_frame.rowconfigure(1, weight=1)
-        
-        ttk.Label(users_frame, text="Users").grid(row=0, column=0, sticky="w")
-        self.chatlog_listbox = tk.Listbox(users_frame, height=10, **chatlog_font_settings)
-        self.chatlog_listbox.grid(row=1, column=0, sticky="nsew")
-        users_scrollbar = ttk.Scrollbar(users_frame, command=self.chatlog_listbox.yview)
-        users_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
-        self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
-        
-        paned.add(users_frame)
-
-        # Messages panel (takes remaining space)
-        messages_frame = ttk.Frame(paned)
-        messages_frame.columnconfigure(0, weight=1)
-        messages_frame.rowconfigure(1, weight=1)
-        
-        ttk.Label(messages_frame, text="Messages").grid(row=0, column=0, sticky="w")
-        self.chatlog_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED,
-                                 **chatlog_font_settings)
-        self.chatlog_display.grid(row=1, column=0, sticky="nsew")
-        messages_scrollbar = ttk.Scrollbar(messages_frame, command=self.chatlog_display.yview)
-        messages_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.chatlog_display.configure(yscrollcommand=messages_scrollbar.set)
-        
-        paned.add(messages_frame)
-
-        # Links panel
-        links_frame = ttk.Frame(paned, width=panel_sizes["links"])
-        links_frame.pack_propagate(False)  # Prevent shrinking below specified width
-        links_frame.columnconfigure(0, weight=1)
-        links_frame.rowconfigure(1, weight=1)
-        
-        ttk.Label(links_frame, text="Hyperlinks").grid(row=0, column=0, sticky="w")
-        self.links_display = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED,
-                               **chatlog_font_settings)
-        self.links_display.grid(row=1, column=0, sticky="nsew")
-        links_scrollbar = ttk.Scrollbar(links_frame, command=self.links_display.yview)
-        links_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.links_display.configure(yscrollcommand=links_scrollbar.set)
-        
-        self.links_display.tag_configure("hyperlink", foreground="blue", underline=True)
-        self.links_display.tag_bind("hyperlink", "<Button-1>", self.open_chatlog_hyperlink)
-        self.links_display.tag_bind("hyperlink", "<Enter>", self.show_chatlog_thumbnail_preview)
-        self.links_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
-        
-        paned.add(links_frame)
-
-        # Set initial sash positions based on saved sizes
-        def after_show():
-            total_width = paned.winfo_width()
-            users_width = panel_sizes["users"]
-            links_width = panel_sizes["links"]
-            messages_width = total_width - users_width - links_width
-            
-            # Set sash positions
-            paned.sashpos(0, users_width)  # Position between users and messages
-            paned.sashpos(1, users_width + messages_width)  # Position between messages and links
-
-        # Wait for window to be drawn before setting sash positions
-        self.chatlog_window.after(100, after_show)
-
-        # Save sizes when window is closed
-        self.chatlog_window.protocol("WM_DELETE_WINDOW", 
-            lambda: (self.save_panel_sizes(), self.chatlog_window.destroy()))
-
-        # Buttons frame at bottom
-        buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.grid(row=1, column=0, sticky="ew", pady=5)
-        
-        ttk.Button(buttons_frame, text="Clear Chat", command=self.confirm_clear_chatlog).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Clear Links", command=self.confirm_clear_links).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Show All", command=self.show_all_messages).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Close", command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(buttons_frame, text="Change Font", command=self.show_change_font_window).pack(side=tk.RIGHT, padx=5)  # New button for changing font and colors
-
-        self.load_chatlog_list()
-        self.display_stored_links()
-        self.create_chatlog_context_menu()
-
-        self.master.after(100, self.show_all_messages)
-
     def show_change_font_window(self):
         """Open a Toplevel window to change font, font size, font color, and background color."""
         font_window = tk.Toplevel(self.master)
@@ -2046,43 +2041,6 @@ class BBSTerminalApp:
         if current_bg in bg_colors:
             self.bg_listbox.selection_set(bg_colors.index(current_bg))
             self.bg_listbox.see(bg_colors.index(current_bg))
-
-    def save_font_settings(self, window):
-        """Save the selected font settings and apply them to all text displays."""
-        try:
-            if not all(self.current_selections.values()):
-                tk.messagebox.showerror("Error", "Please select an option from each list")
-                return
-                
-            # Create font settings dictionary
-            font_settings = {
-                'font': (self.current_selections['font'], self.current_selections['size']),
-                'fg': self.current_selections['color'],
-                'bg': self.current_selections['bg']
-            }
-            
-            # Apply to all text displays
-            self.chatlog_display.configure(**font_settings)
-            self.directed_msg_display.configure(**font_settings)
-            self.members_listbox.configure(**font_settings)
-            self.actions_listbox.configure(**font_settings)
-            
-            # Store settings for future use
-            self.current_font_settings = font_settings
-            
-            # Save to file
-            settings_to_save = {
-                'font_name': self.current_selections['font'],
-                'font_size': self.current_selections['size'],
-                'fg': self.current_selections['color'],
-                'bg': self.current_selections['bg']
-            }
-            with open("font_settings.json", "w") as file:
-                json.dump(settings_to_save, file)
-            
-            window.destroy()
-        except Exception as e:
-            tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
 
     def confirm_clear_chatlog(self):
         """Show confirmation dialog before clearing chatlog."""
@@ -2523,11 +2481,10 @@ class BBSTerminalApp:
             if os.path.exists("settings.json"):
                 with open("settings.json", "r") as f:
                     settings = json.load(f)
-                    # Apply loaded settings
+                    # Apply loaded settings - removed auto_login
                     self.font_name.set(settings.get('font_name', "Courier New"))
                     self.font_size.set(settings.get('font_size', 10))
                     self.logon_automation_enabled.set(settings.get('logon_automation', False))
-                    self.auto_login_enabled.set(settings.get('auto_login', False))
                     self.keep_alive_enabled.set(settings.get('keep_alive', False))
                     self.majorlink_mode.set(settings.get('majorlink_mode', True))
                     return settings
@@ -2642,6 +2599,51 @@ class BBSTerminalApp:
         if self.spell_popup:
             self.spell_popup.destroy()
             self.spell_popup = None
+
+    def play_chat_sound(self):
+        """Play sound for general chat messages."""
+        if os.path.exists(self.chat_sound_file):
+            try:
+                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except Exception as e:
+                print(f"Error playing chat sound: {e}")
+        else:
+            print(f"Chat sound file not found: {self.chat_sound_file}")
+
+    def play_directed_sound(self):
+        """Play sound for directed messages."""
+        if os.path.exists(self.directed_sound_file):
+            try:
+                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except Exception as e:
+                print(f"Error playing directed sound: {e}")
+        else:
+            print(f"Directed sound file not found: {self.directed_sound_file}")
+
+    def update_display_font(self):
+        """Update font settings for all text widgets."""
+        try:
+            # Create base font settings without colors for BBS terminal
+            terminal_font = (self.font_name.get(), self.font_size.get())
+            self.terminal_display.configure(font=terminal_font)
+            
+            # Full font settings for other displays
+            other_displays_settings = {
+                'font': terminal_font,
+                'fg': self.current_font_settings.get('fg', 'white'),
+                'bg': self.current_font_settings.get('bg', 'black')
+            }
+            
+            # Apply to secondary displays if they exist
+            if hasattr(self, 'directed_msg_display'):
+                self.directed_msg_display.configure(**other_displays_settings)
+            if hasattr(self, 'members_listbox'):
+                self.members_listbox.configure(**other_displays_settings)
+            if hasattr(self, 'actions_listbox'):
+                self.actions_listbox.configure(**other_displays_settings)
+                
+        except Exception as e:
+            print(f"Error updating display font: {e}")
 
 def main():
     root = tk.Tk()
