@@ -15,6 +15,11 @@ from io import BytesIO
 import winsound  # Import winsound for playing sound effects on Windows
 from tkinter import simpledialog  # Import simpledialog for input dialogs
 
+try:
+    import enchant
+except ImportError:
+    enchant = None
+
 
 ###############################################################################
 #                         BBS Telnet App (No Chatbot)
@@ -165,6 +170,19 @@ class BBSTerminalApp:
         self.last_banner_time = 0  # Add new timestamp tracker
 
         self.has_requested_actions = False  # Track if we've already requested actions this session
+
+        # At the beginning of __init__, after creating self.master
+        self.spell = None  # Spell checker instance
+        self.spell_popup = None  # Popup window for suggestions
+        self.autocorrect_enabled = tk.BooleanVar(value=True)  # Toggle for autocorrect
+        
+        # Initialize spell checker
+        try:
+            if enchant:
+                self.spell = enchant.Dict("en_US")
+        except Exception as e:
+            print("Error initializing spell checker:", e)
+            self.spell = None
 
         # 1.BUILD UI
         self.build_ui()
@@ -364,6 +382,25 @@ class BBSTerminalApp:
         # Make send button use command instead of bind
         self.send_button = ttk.Button(input_frame, text="Send", command=lambda: self.send_message(None))
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        # In the input frame section, after creating input_box
+        ttk.Checkbutton(
+            input_frame, 
+            text="Autocorrect", 
+            variable=self.autocorrect_enabled
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Configure style for suggestion buttons
+        style = ttk.Style()
+        style.configure(
+            "Spell.TButton",
+            foreground="darkblue",
+            background="white",
+            font=("Arial", 9),
+            padding=(5, 2)
+        )
+        
+        self.setup_autocorrect()
         
         # Restore frame sizes if saved
         if 'paned_pos' in self.frame_sizes:
@@ -2479,14 +2516,86 @@ class BBSTerminalApp:
         self.update_display_font()
 
     def on_closing(self):
-        """Extended closing handler to save frame sizes"""
+        """Extended closing handler to save frame sizes and cleanup."""
         self.save_frame_sizes()
+        self.close_spelling_popup()  # Add cleanup of spell popup
 
     def request_actions_list(self):
         """Send command to request actions list from BBS."""
         if self.connected and self.writer:
             print("[DEBUG] Sending /a list command")
             self.send_custom_message("/a list")
+
+    def setup_autocorrect(self):
+        """Initialize autocorrect functionality."""
+        self.input_box.bind('<KeyRelease>', self.check_spelling)
+
+    def check_spelling(self, event=None):
+        """Check spelling of input text."""
+        if not self.autocorrect_enabled.get() or not self.spell:
+            return
+        
+        text = self.input_var.get()
+        if not text or text.isspace():
+            return
+
+        words = text.split()
+        if not words:
+            return
+
+        last_word = words[-1]
+        
+        # Skip short words, commands, and URLs
+        if (len(last_word) < 4 or 
+            last_word.startswith('/') or 
+            '.' in last_word or 
+            '@' in last_word):
+            return
+
+        try:
+            if not self.spell.check(last_word):
+                suggestions = self.spell.suggest(last_word)
+                if suggestions:
+                    self.show_spelling_popup(last_word, suggestions)
+        except Exception as e:
+            print(f"Spell check error: {e}")
+
+    def show_spelling_popup(self, word, suggestions):
+        """Display spelling suggestions popup."""
+        if self.spell_popup:
+            self.spell_popup.destroy()
+        
+        self.spell_popup = tk.Toplevel(self.master)
+        self.spell_popup.title("Spelling Suggestions")
+        self.spell_popup.attributes('-topmost', True)
+        
+        x = self.input_box.winfo_rootx()
+        y = self.input_box.winfo_rooty() - 100
+        self.spell_popup.geometry(f"+{x}+{y}")
+        
+        for suggestion in suggestions[:5]:
+            btn = ttk.Button(
+                self.spell_popup,
+                text=suggestion,
+                command=lambda s=suggestion: self.apply_suggestion(word, s),
+                style="Spell.TButton"
+            )
+            btn.pack(padx=5, pady=2, fill=tk.X)
+        
+        self.master.after(3000, self.close_spelling_popup)
+
+    def apply_suggestion(self, old_word, new_word):
+        """Replace misspelled word with suggestion."""
+        current_text = self.input_var.get()
+        new_text = current_text.rsplit(old_word, 1)[0] + new_word
+        self.input_var.set(new_text)
+        self.close_spelling_popup()
+
+    def close_spelling_popup(self):
+        """Close the spelling suggestion popup."""
+        if self.spell_popup:
+            self.spell_popup.destroy()
+            self.spell_popup = None
 
 def main():
     root = tk.Tk()
