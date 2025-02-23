@@ -179,6 +179,10 @@ class BBSTerminalApp:
         self.spell_popup = None  # Popup window for suggestions
         self.autocorrect_enabled = tk.BooleanVar(value=True)  # Toggle for autocorrect
         
+        # Add spell checking suggestion tracking
+        self.current_suggestion = None
+        self.current_misspelled = None
+        
         # Initialize spell checker
         try:
             if enchant:
@@ -186,6 +190,16 @@ class BBSTerminalApp:
         except Exception as e:
             print("Error initializing spell checker:", e)
             self.spell = None
+
+        # Add page notifications pattern
+        self.page_pattern = re.compile(r'(\w+) is paging you from (\w+): (.+)')
+        
+        # Add current sound tracking
+        self.current_sound = None
+
+        # Add escape handling variables
+        self.escape_count = 0
+        self.escape_timer = None
 
         # 1.BUILD UI
         self.build_ui()
@@ -276,23 +290,17 @@ class BBSTerminalApp:
         self.connect_button = ttk.Button(self.conn_frame, text="Connect", command=self.toggle_connection, style="Connect.TButton")
         self.connect_button.grid(row=0, column=4, padx=5, pady=5)
         
-        # Replace Settings button with Change Font button
-        font_button = ttk.Button(self.conn_frame, text="Change Font", 
-                                command=self.show_change_font_window,
-                                style="Settings.TButton")
-        font_button.grid(row=0, column=5, padx=5, pady=5)
-        
         # Add the Favorites button
         favorites_button = ttk.Button(self.conn_frame, text="Favorites", 
                                     command=self.show_favorites_window, 
                                     style="Favorites.TButton")
-        favorites_button.grid(row=0, column=6, padx=5, pady=5)
+        favorites_button.grid(row=0, column=5, padx=5, pady=5)
         
         # Add the Triggers button
         triggers_button = ttk.Button(self.conn_frame, text="Triggers", 
                                    command=self.show_triggers_window, 
                                    style="Triggers.TButton")
-        triggers_button.grid(row=0, column=7, padx=5, pady=5)
+        triggers_button.grid(row=0, column=6, padx=5, pady=5)
 
         # Checkbox frame for visibility toggles
         checkbox_frame = ttk.Frame(top_frame)
@@ -403,6 +411,9 @@ class BBSTerminalApp:
             text="Autocorrect", 
             variable=self.autocorrect_enabled
         ).pack(side=tk.LEFT, padx=5)
+
+        # Add escape key binding to input box
+        self.input_box.bind("<Escape>", self.handle_escape)
 
         # Configure style for suggestion buttons
         style = ttk.Style()
@@ -1046,11 +1057,14 @@ class BBSTerminalApp:
         
         skip_display = False  # Flag to track if we're in a banner section
         
+        # Add message tracking
+        self.last_message = None
+        
         for line in lines[:-1]:
             # Remove ANSI codes for filtering purposes only.
             clean_line = ansi_regex.sub('', line).strip()
             
-            # Check for directed messages or whispers
+            # Process directed messages
             directed_patterns = [
                 r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)',
                 r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)'
@@ -1061,10 +1075,16 @@ class BBSTerminalApp:
                 if match:
                     sender = match.group(1)
                     message = match.group(2)
-                    self.append_directed_message(f"From {sender}: {message}")
-                    self.play_directed_sound()
-                    break
+                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+                    timestamped_message = f"{timestamp}From {sender}: {message}"
                     
+                    # Check if this is a duplicate message
+                    if timestamped_message != self.last_message:
+                        self.append_directed_message(timestamped_message)
+                        self.play_directed_sound()
+                        self.last_message = timestamped_message
+                    break
+
             # Continue with existing processing
             if ("You are in" in clean_line and 
                 "are here with you" in clean_line):
@@ -1182,14 +1202,32 @@ class BBSTerminalApp:
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
             return
 
+        # Check if message already has a timestamp
+        has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
+        
+        # Check for page notifications first
+        page_match = self.page_pattern.match(clean_line)
+        if page_match:
+            sender = page_match.group(1)
+            location = page_match.group(2)
+            message = page_match.group(3)
+            if not has_timestamp:
+                timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+                message_with_timestamp = f"{timestamp}Page from {sender} in {location}: {message}"
+            else:
+                message_with_timestamp = clean_line
+            self.append_directed_message(message_with_timestamp)
+            self.play_directed_sound()
+            return
+
         # Enhanced patterns to match different message types
         message_patterns = [
             # Whispered messages - check these first
-            r'^From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)$',
+            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)$',
             # Directed messages
-            r'^From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
+            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
             # Normal messages
-            r'^From\s+(\S+?)(?:@[\w.-]+)?(?:\s+\([^)]+\))?\s*:\s*(.+)$'
+            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
         ]
 
         for pattern in message_patterns:
@@ -1198,21 +1236,24 @@ class BBSTerminalApp:
                 sender = message_match.group(1)
                 message = message_match.group(2)
                 
-                # Add timestamp if not present
-                if not clean_line.strip().startswith('['):
-                    clean_line = time.strftime("[%Y-%m-%d %H:%M:%S] ") + clean_line
+                # Only add timestamp if not already present
+                if not has_timestamp:
+                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+                    message_with_timestamp = f"{timestamp}From {sender}: {message}"
+                else:
+                    message_with_timestamp = clean_line
 
                 # Check for directed message or whisper
                 if "(whispered" in clean_line or "(to you)" in clean_line:
-                    self.append_directed_message(clean_line)
+                    self.append_directed_message(message_with_timestamp)
                     self.play_directed_sound()
                 else:
                     self.play_chat_sound()
 
                 # Save to chatlog
-                self.save_chatlog_message(sender, clean_line)
+                self.save_chatlog_message(sender, message_with_timestamp)
                 # Extract any URLs (pass sender for attribution)
-                self.parse_and_store_hyperlinks(clean_line, sender)
+                self.parse_and_store_hyperlinks(message_with_timestamp, sender)
                 break
 
     def send_message(self, event=None):
@@ -1220,6 +1261,23 @@ class BBSTerminalApp:
         if not self.connected or not self.writer:
             self.append_terminal_text("Not connected to any BBS.\n", "normal")
             return
+
+        # Only apply autocorrect if escape wasn't pressed twice
+        if self.escape_count < 2:
+            # Apply top suggestion if available before sending
+            if hasattr(self, 'current_suggestion') and self.current_suggestion:
+                text = self.input_var.get()
+                if self.current_misspelled in text:
+                    text = text.rsplit(self.current_misspelled, 1)[0] + self.current_suggestion
+                    self.input_var.set(text)
+
+        # Reset autocorrect and escape state
+        self.current_suggestion = None
+        self.current_misspelled = None
+        self.escape_count = 0
+        if self.escape_timer:
+            self.master.after_cancel(self.escape_timer)
+            self.escape_timer = None
 
         user_input = self.input_var.get().strip()
         # Clear input before sending to prevent duplicates
@@ -2241,11 +2299,21 @@ class BBSTerminalApp:
         self.master.after(5000, self.refresh_chat_members)
 
     def append_directed_message(self, text):
-        """Append text to the directed messages display with a timestamp."""
-        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+        """Append text to the directed messages display."""
+        # Check if message already exists in the display
+        if not text.endswith('\n'):
+            text += '\n'
+            
         self.directed_msg_display.configure(state=tk.NORMAL)
-        self.insert_directed_message_with_hyperlinks(timestamp + text + "\n", "normal")
-        self.directed_msg_display.see(tk.END)
+        
+        # Get current content
+        current_content = self.directed_msg_display.get('1.0', tk.END)
+        
+        # Only append if the message isn't already present
+        if text not in current_content:
+            self.insert_directed_message_with_hyperlinks(text, "normal")
+            self.directed_msg_display.see(tk.END)
+            
         self.directed_msg_display.configure(state=tk.DISABLED)
 
     def play_ding_sound(self):
@@ -2466,8 +2534,17 @@ class BBSTerminalApp:
     def save_frame_sizes(self):
         """Save current frame sizes to file"""
         try:
+            # Get sash position based on paned window type
+            if isinstance(self.paned, ttk.PanedWindow):
+                sash_pos = self.paned.paneconfig(self.output_frame, 'weight')[4]
+            else:
+                try:
+                    sash_pos = self.paned.sash_coord(0)[0]
+                except:
+                    sash_pos = 200  # Default value if we can't get position
+
             sizes = {
-                'paned_pos': self.get_paned_position(),
+                'paned_pos': sash_pos,
                 'window_geometry': self.master.geometry()
             }
             with open("frame_sizes.json", "w") as f:
@@ -2499,14 +2576,19 @@ class BBSTerminalApp:
         # Apply paned window position if saved
         if self.paned and 'paned_pos' in settings and settings['paned_pos']:
             try:
+                # Use different methods based on paned window type
                 if isinstance(self.paned, ttk.PanedWindow):
-                    # For ttk.PanedWindow, we need to use a different approach
-                    self.master.after(100, lambda: self.paned.update())
+                    self.paned.paneconfig(self.output_frame, weight=settings['paned_pos'])
                 else:
                     # For tk.PanedWindow
-                    self.paned.set(settings['paned_pos'])
+                    def set_sash():
+                        try:
+                            self.paned.sash_place(0, settings['paned_pos'], 0)
+                        except Exception as e:
+                            print(f"Error setting sash position: {e}")
+                    self.master.after(100, set_sash)
             except Exception as e:
-                print(f"Error setting paned position: {e}")
+                print(f"Error applying paned window settings: {e}")
 
         # Apply window geometry if saved
         if 'window_geometry' in settings:
@@ -2534,7 +2616,7 @@ class BBSTerminalApp:
         self.input_box.bind('<KeyRelease>', self.check_spelling)
 
     def check_spelling(self, event=None):
-        """Check spelling of input text."""
+        """Check spelling and suggest corrections for the input text."""
         if not self.autocorrect_enabled.get() or not self.spell:
             return
         
@@ -2559,7 +2641,17 @@ class BBSTerminalApp:
             if not self.spell.check(last_word):
                 suggestions = self.spell.suggest(last_word)
                 if suggestions:
+                    # Store top suggestion
+                    self.current_suggestion = suggestions[0]
+                    self.current_misspelled = last_word
                     self.show_spelling_popup(last_word, suggestions)
+                else:
+                    self.current_suggestion = None
+                    self.current_misspelled = None
+            else:
+                self.current_suggestion = None
+                self.current_misspelled = None
+                self.close_spelling_popup()
         except Exception as e:
             print(f"Spell check error: {e}")
 
@@ -2572,11 +2664,13 @@ class BBSTerminalApp:
         self.spell_popup.title("Spelling Suggestions")
         self.spell_popup.attributes('-topmost', True)
         
-        x = self.input_box.winfo_rootx()
-        y = self.input_box.winfo_rooty() - 100
+        # Position popup to the right of input box
+        x = self.input_box.winfo_rootx() + self.input_box.winfo_width() + 10
+        y = self.input_box.winfo_rooty()
         self.spell_popup.geometry(f"+{x}+{y}")
         
-        for suggestion in suggestions[:5]:
+        # First suggestion is highlighted as the default
+        for i, suggestion in enumerate(suggestions[:5]):
             btn = ttk.Button(
                 self.spell_popup,
                 text=suggestion,
@@ -2584,6 +2678,8 @@ class BBSTerminalApp:
                 style="Spell.TButton"
             )
             btn.pack(padx=5, pady=2, fill=tk.X)
+            if i == 0:  # Highlight first suggestion
+                btn.configure(style="SpellDefault.TButton")
         
         self.master.after(3000, self.close_spelling_popup)
 
@@ -2604,9 +2700,16 @@ class BBSTerminalApp:
         """Play sound for general chat messages."""
         if os.path.exists(self.chat_sound_file):
             try:
+                # Stop any currently playing sound
+                if self.current_sound:
+                    winsound.PlaySound(None, winsound.SND_PURGE)
+                
+                # Play new sound
+                self.current_sound = "chat"
                 winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
             except Exception as e:
                 print(f"Error playing chat sound: {e}")
+                self.current_sound = None
         else:
             print(f"Chat sound file not found: {self.chat_sound_file}")
 
@@ -2614,9 +2717,16 @@ class BBSTerminalApp:
         """Play sound for directed messages."""
         if os.path.exists(self.directed_sound_file):
             try:
+                # Stop any currently playing sound
+                if self.current_sound:
+                    winsound.PlaySound(None, winsound.SND_PURGE)
+                
+                # Play new sound
+                self.current_sound = "directed"
                 winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
             except Exception as e:
                 print(f"Error playing directed sound: {e}")
+                self.current_sound = None
         else:
             print(f"Directed sound file not found: {self.directed_sound_file}")
 
@@ -2644,6 +2754,33 @@ class BBSTerminalApp:
                 
         except Exception as e:
             print(f"Error updating display font: {e}")
+
+    def handle_escape(self, event=None):
+        """Handle escape key press for autocorrect."""
+        self.escape_count += 1
+        
+        # Reset escape counter after 1 second
+        if self.escape_timer:
+            self.master.after_cancel(self.escape_timer)
+        self.escape_timer = self.master.after(1000, self.reset_escape_count)
+        
+        # If pressed twice, revert to original text
+        if self.escape_count >= 2:
+            if self.current_misspelled and self.current_suggestion:
+                # Revert any autocorrect changes
+                self.current_suggestion = None
+                self.current_misspelled = None
+                self.close_spelling_popup()
+                self.escape_count = 0
+                
+                # Visual feedback
+                self.input_box.configure(foreground='red')
+                self.master.after(500, lambda: self.input_box.configure(foreground=''))
+
+    def reset_escape_count(self):
+        """Reset the escape key counter."""
+        self.escape_count = 0
+        self.escape_timer = None
 
 def main():
     root = tk.Tk()
