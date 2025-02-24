@@ -364,13 +364,15 @@ class BBSTerminalApp:
         paned_container.columnconfigure(0, weight=1)
         paned_container.rowconfigure(0, weight=1)
         
-        self.paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, sashwidth=10, sashrelief=tk.RAISED)
+        # Switch to tk.PanedWindow with specific size and relief
+        self.paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, 
+                               sashwidth=5, sashrelief=tk.RAISED,
+                               height=400, width=600)
         self.paned.pack(fill=tk.BOTH, expand=True)
         
-        # Top pane: BBS Output
+        # Top pane: BBS Output with explicit minimum height
         self.output_frame = ttk.LabelFrame(self.paned, text="BBS Output")
-        self.paned.add(self.output_frame)
-        self.paned.paneconfig(self.output_frame, minsize=200)  # Set minimum size for the top pane
+        self.paned.add(self.output_frame, minsize=200, stretch="always")
         self.terminal_display = tk.Text(self.output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         scroll_bar = ttk.Scrollbar(self.output_frame, command=self.terminal_display.yview)
@@ -383,9 +385,8 @@ class BBSTerminalApp:
         self.terminal_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
         # Bottom pane: Messages to You
-        messages_frame = ttk.LabelFrame(self.paned, text="Messages to You")
-        self.paned.add(messages_frame)
-        self.paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
+        messages_frame = ttk.LabelFrame(self.paned, text="Messages to You") 
+        self.paned.add(messages_frame, minsize=100)
         self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10, "bold"))
         self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
         self.directed_msg_display.tag_configure("hyperlink", foreground="blue", underline=True)
@@ -429,7 +430,12 @@ class BBSTerminalApp:
         
         # Restore frame sizes if saved
         if 'paned_pos' in self.frame_sizes:
-            self.master.after(100, lambda: self.paned.sashpos(0, self.frame_sizes['paned_pos']))
+            pos = self.frame_sizes['paned_pos']
+            # Use different method based on paned window type
+            if isinstance(self.paned, ttk.PanedWindow):
+                self.master.after(100, lambda: self.paned.sashposition(0, pos))
+            else:
+                self.master.after(100, lambda: self.paned.sash_place(0, pos, 0))
 
         self.update_display_font()
 
@@ -915,37 +921,74 @@ class BBSTerminalApp:
         self.master.after(6000, lambda: self.send_custom_message("join majorlink"))
 
     async def telnet_client_task(self, host, port):
-        """Async function connecting via telnetlib3 (CP437 + ANSI)."""
+        """Enhanced async telnet client with debug logging and error handling."""
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Attempting connection to {host}:{port}")
+        
         try:
-            reader, writer = await telnetlib3.open_connection(
-                host=host,
-                port=port,
-                term=self.terminal_mode.get().lower(),
-                encoding='cp437',  # Use 'latin1' if your BBS uses it
-                cols=self.cols,    # Use the configured number of columns
-                rows=self.rows     # Use the configured number of rows
+            reader, writer = await asyncio.wait_for(
+                telnetlib3.open_connection(
+                    host,
+                    port,
+                    encoding=None,  # Handle raw bytes for proper CP437 decoding
+                    term=self.terminal_mode.get().lower(),
+                    cols=self.cols,
+                    rows=self.rows
+                ),
+                timeout=30.0
             )
+        except asyncio.TimeoutError:
+            self.msg_queue.put_nowait("Connection attempt timed out after 30 seconds\n")
+            return
         except Exception as e:
-            self.msg_queue.put_nowait(f"Connection failed: {e}\n")
+            self.msg_queue.put_nowait(f"Connection failed: {str(e)}\n")
             return
 
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Connected successfully")
+        
         self.reader = reader
         self.writer = writer
         self.connected = True
         self.connect_button.config(text="Disconnect")
         self.msg_queue.put_nowait(f"Connected to {host}:{port}\n")
 
+        # Buffer for incomplete lines
+        buffer = bytearray()
+        MAX_BUFFER_SIZE = 1024 * 1024  # 1MB max buffer size
+
         try:
             while not self.stop_event.is_set():
-                data = await reader.read(4096)
-                if not data:
+                try:
+                    data = await asyncio.wait_for(reader.read(4096), timeout=1.0)
+                    if not data:
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Connection closed by server")
+                        break
+
+                    # Log raw data for debugging
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Raw data received: {data!r}")
+
+                    # Add to buffer
+                    buffer.extend(data)
+                    
+                    # Check buffer size
+                    if len(buffer) > MAX_BUFFER_SIZE:
+                        print("Buffer overflow - clearing excess data")
+                        buffer = buffer[-MAX_BUFFER_SIZE:]
+
+                    self.msg_queue.put_nowait(bytes(buffer))
+                    buffer.clear()
+
+                except asyncio.TimeoutError:
+                    continue  # Normal timeout, keep waiting
+                except Exception as e:
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error reading data: {str(e)}")
                     break
-                self.msg_queue.put_nowait(data)
+
         except asyncio.CancelledError:
-            pass
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Connection cancelled")
         except Exception as e:
-            self.msg_queue.put_nowait(f"Error reading from server: {e}\n")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Connection error: {str(e)}")
         finally:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Disconnecting...")
             await self.disconnect_from_bbs()
 
     async def disconnect_from_bbs(self):
@@ -1024,155 +1067,124 @@ class BBSTerminalApp:
             self.master.after(100, self.process_incoming_messages)
 
     def decode_cp437(self, data):
-        """Decode CP437 encoded text, preserving special characters"""
-        # Convert bytes to list of integers if needed
-        if isinstance(data, bytes):
-            data = list(data)
-        
-        # Map each byte to its Unicode equivalent
-        result = ''
-        for byte in data:
-            if byte in self.cp437_map:
-                result += self.cp437_map[byte]
-            else:
-                result += chr(byte)
-        
-        return result
+        """Enhanced CP437 decoding with error handling."""
+        try:
+            # Convert bytes to list of integers if needed
+            if isinstance(data, bytes):
+                data = list(data)
+            
+            # Initialize result string
+            result = ''
+            
+            # Process each byte
+            for byte in data:
+                try:
+                    if byte in self.cp437_map:
+                        result += self.cp437_map[byte]
+                    else:
+                        # Handle unknown characters
+                        result += chr(byte) if 32 <= byte <= 126 else '?'
+                except Exception as e:
+                    print(f"Error decoding byte {byte}: {str(e)}")
+                    result += '?'
+            
+            return result
+            
+        except Exception as e:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error in CP437 decoding: {str(e)}")
+            return '?' * len(data)
 
     def process_data_chunk(self, data):
-        """Accumulate data, split on newlines, and process each complete line."""
-        # Decode CP437 data
-        if isinstance(data, bytes):
-            data = self.decode_cp437(data)
-        else:
-            data = self.decode_cp437(data.encode('cp437'))
-            
-        # Normalize newlines
-        data = data.replace('\r\n', '\n').replace('\r', '\n')
-        self.partial_line += data
-        lines = self.partial_line.split("\n")
-        
-        # Precompile an ANSI escape code regex
-        ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
-        
-        skip_display = False  # Flag to track if we're in a banner section
-        
-        # Add message tracking
-        self.last_message = None
-        
-        for line in lines[:-1]:
-            # Remove ANSI codes for filtering purposes only.
-            clean_line = ansi_regex.sub('', line).strip()
-            
-            # Process directed messages
-            directed_patterns = [
-                r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)',
-                r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)'
-            ]
-            
-            for pattern in directed_patterns:
-                match = re.match(pattern, clean_line)
-                if match:
-                    sender = match.group(1)
-                    message = match.group(2)
-                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
-                    timestamped_message = f"{timestamp}From {sender}: {message}"
-                    
-                    # Check if this is a duplicate message
-                    if timestamped_message != self.last_message:
-                        self.append_directed_message(timestamped_message)
-                        self.play_directed_sound()
-                        self.last_message = timestamped_message
-                    break
-
-            # Continue with existing processing
-            if ("You are in" in clean_line and 
-                "are here with you" in clean_line):
-                current_time = time.time()
-                # Only request actions if it's been more than 5 seconds since last banner
-                if (current_time - self.last_banner_time > 5 and 
-                    len(self.actions) == 0):
-                    print("[DEBUG] Detected chatroom banner, requesting actions list")
-                    self.last_banner_time = current_time
-                    self.request_actions_list()
-
-            # Add Actions list detection before MajorLink mode check
-            if "Action listing for:" in clean_line:
-                self.actions = []  # Clear existing actions
-                self.collecting_actions = True
-                self.actions_requested = False  # Reset flag after receiving list
-                # Send Enter keystroke immediately when we see the action listing
-                self.master.after(50, lambda: self.send_message(None))
-                continue
-            elif clean_line == ":" and self.collecting_actions:
-                self.collecting_actions = False
-                self.update_actions_listbox()  # Update the display
-                continue
-            elif self.collecting_actions:
-                # Split line into words and add valid actions
-                potential_actions = clean_line.split()
-                self.actions.extend(
-                    action for action in potential_actions 
-                    if action and len(action) >= 2  # Ensure valid action
-                )
-                continue
-
-            if self.majorlink_mode.get():
-                # --- Filter header lines ---
-                if self.collecting_users:
-                    self.user_list_buffer.append(line)
-                    if "are here with you." in clean_line:
-                        self.update_chat_members(self.user_list_buffer)
-                        self.collecting_users = False
-                        self.user_list_buffer = []
-                        skip_display = False  # End of banner section
-                        continue
-                    skip_display = True  # Skip displaying banner content
-                    continue
+        """Enhanced data processing with proper CP437 decoding and ANSI handling."""
+        try:
+            # Decode CP437 data if it's bytes
+            if isinstance(data, bytes):
+                decoded_data = self.decode_cp437(data)
+            else:
+                # If it's already a string, ensure it's properly decoded
+                decoded_data = self.decode_cp437(data.encode('cp437'))
                 
-                if clean_line.startswith("You are in"):
-                    self.user_list_buffer = [line]
-                    self.collecting_users = True
-                    skip_display = True  # Start of banner section
-                    continue
+            # Log decoded data for debugging
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Decoded data: {decoded_data!r}")
+            
+            # Normalize line endings
+            normalized_data = decoded_data.replace('\r\n', '\n').replace('\r', '\n')
+            
+            # Split into lines, keeping the last partial line
+            lines = normalized_data.split('\n')
+            complete_lines = lines[:-1]
+            self.partial_line += lines[-1]
+            
+            # Process complete lines
+            for line in complete_lines:
+                self.process_line(line)
                 
-                # Skip displaying banner-related lines
-                if any(pattern in clean_line for pattern in [
-                    "Topic:",
-                    "Just press",
-                    "are here with you"
-                ]):
-                    continue
+            # If the last line was complete (ended with newline), process it too
+            if normalized_data.endswith('\n'):
+                self.process_line(self.partial_line)
+                self.partial_line = ""
+                
+        except Exception as e:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error processing data: {str(e)}")
 
-            # Always collect users for member list functionality
-            if "You are in" in clean_line and not self.collecting_users:
-                self.user_list_buffer = [line]
-                self.collecting_users = True
-            elif self.collecting_users:
-                self.user_list_buffer.append(line)
-                if "are here with you." in clean_line:
-                    self.update_chat_members(self.user_list_buffer)
-                    self.collecting_users = False
-                    self.user_list_buffer = []
+    def process_line(self, line):
+        """Process an incoming line of text from the BBS."""
+        try:
+            # Clean the line of ANSI codes for filtering
+            clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+            
+            # Skip empty lines
+            if not clean_line.strip():
+                return
 
-            # Only skip display if in MajorLink mode and skip_display is true
-            if not (self.majorlink_mode.get() and skip_display) and clean_line:
-                self.append_terminal_text(line + "\n", "normal")
-                self.check_triggers(line)
-                self.parse_and_save_chatlog_message(line)
+            # Always display the raw line in the terminal first
+            self.append_terminal_text(line + "\n")
 
-            # Check for specific MajorLink entry message
-            if (not self.has_requested_actions and 
-                "Teleconference" in clean_line):
-                # Look for the next line to confirm MajorLink entry
-                next_line_idx = lines[:-1].index(line) + 1
-                if (next_line_idx < len(lines) - 1 and 
-                    "You are in the MajorLink channel" in ansi_regex.sub('', lines[next_line_idx]).strip()):
-                    print("[DEBUG] Detected MajorLink entry, requesting actions list")
-                    self.has_requested_actions = True  # Set flag to prevent future requests
-                    self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
+            # Then process for special handling
+            is_system = self.check_system_message(clean_line)
+            if not is_system:
+                # Check for various message types
+                self.detect_logon_prompt(clean_line)
+                self.parse_and_save_chatlog_message(clean_line)
+                
+                # Process for chat members list
+                if "are here with you" in clean_line:
+                    self.update_chat_members([clean_line])
 
-        self.partial_line = lines[-1]
+        except Exception as e:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error processing line: {str(e)}")
+
+    def handle_message(self, sender, message, msg_type, recipient=None):
+        """Handle different types of messages with appropriate actions."""
+        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+        
+        # Format the message based on type
+        if msg_type == "user_to_user":
+            formatted_msg = f"{timestamp}[{sender} to {recipient}] {message}"
+        elif msg_type == "whispered":
+            formatted_msg = f"{timestamp}[{sender} whispered] {message}"
+            self.append_directed_message(formatted_msg)
+            self.play_directed_sound()
+        elif msg_type == "directed":
+            formatted_msg = f"{timestamp}[{sender} to you] {message}"
+            self.append_directed_message(formatted_msg)
+            self.play_directed_sound()
+        else:  # regular
+            formatted_msg = f"{timestamp}[{sender}] {message}"
+            self.play_chat_sound()
+
+        # Extract username without domain
+        username = sender.split('@')[0]
+        
+        # Save to chatlog
+        self.save_chatlog_message(username, formatted_msg)
+        
+        # Parse any URLs
+        self.parse_and_store_hyperlinks(message, username)
+        
+        # Append to terminal if not already handled
+        if msg_type not in ["whispered", "directed"]:
+            self.append_terminal_text(formatted_msg + "\n", "normal")
 
     def detect_logon_prompt(self, line):
         """Simple triggers to automate login if toggles are on."""
@@ -1295,7 +1307,8 @@ class BBSTerminalApp:
         if self.connected and self.writer:
             async def send():
                 try:
-                    self.writer.write(message)
+                    # Encode the message as bytes before sending
+                    self.writer.write(message.encode('utf-8'))
                     await self.writer.drain()
                 except Exception as e:
                     print(f"Error sending message: {e}")
@@ -1306,7 +1319,7 @@ class BBSTerminalApp:
         """Send the username to the BBS."""
         if self.connected and self.writer:
             message = self.username.get() + "\r\n"
-            self.writer.write(message)
+            self.writer.write(message.encode('utf-8'))
             try:
                 self.loop.call_soon_threadsafe(self.writer.drain)
                 if self.remember_username.get():
@@ -1318,7 +1331,7 @@ class BBSTerminalApp:
         """Send the password to the BBS."""
         if self.connected and self.writer:
             message = self.password.get() + "\r\n"
-            self.writer.write(message)
+            self.writer.write(message.encode('utf-8'))
             try:
                 self.loop.call_soon_threadsafe(self.writer.drain)
                 if self.remember_password.get():
@@ -1341,7 +1354,8 @@ class BBSTerminalApp:
             message = message + "\r\n"
             async def send():
                 try:
-                    self.writer.write(message)
+                    # Encode the message as bytes before sending
+                    self.writer.write(message.encode('utf-8'))
                     await self.writer.drain()
                 except Exception as e:
                     print(f"Error sending custom message: {e}")
@@ -1544,12 +1558,36 @@ class BBSTerminalApp:
         self.triggers_window.destroy()
 
     def append_terminal_text(self, text, default_tag="normal"):
-        """Append text to the terminal display with optional ANSI parsing."""
-        self.terminal_display.configure(state=tk.NORMAL)
-        self.parse_ansi_and_insert(text)
-        self.terminal_display.see(tk.END)
-        self.master.update_idletasks()  # Force update to ensure proper display
-        self.terminal_display.configure(state=tk.DISABLED)
+        """Enhanced terminal text display with proper scrolling and buffer management."""
+        try:
+            # Ensure we're working with the terminal display widget
+            if not hasattr(self, 'terminal_display') or not self.terminal_display:
+                return
+                
+            self.terminal_display.configure(state=tk.NORMAL)
+            
+            # Check if buffer is too large (e.g., > 100KB)
+            if self.terminal_display.get("1.0", tk.END).encode('utf-8').__len__() > 100000:
+                # Remove the first 1000 lines
+                self.terminal_display.delete("1.0", "1000.0")
+            
+            # Store original yview position
+            original_yview = self.terminal_display.yview()
+            
+            # Insert text with ANSI parsing
+            self.parse_ansi_and_insert(text)
+            
+            # Auto-scroll only if already at bottom
+            if original_yview[1] > 0.9:
+                self.terminal_display.see(tk.END)
+            else:
+                # Restore original view position
+                self.terminal_display.yview_moveto(original_yview[0])
+                
+            self.terminal_display.configure(state=tk.DISABLED)
+            
+        except Exception as e:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error appending text: {str(e)}")
 
     def parse_ansi_and_insert(self, text_data):
         """Enhanced parser for ANSI codes including blink."""
@@ -2606,10 +2644,17 @@ class BBSTerminalApp:
         self.close_spelling_popup()  # Add cleanup of spell popup
 
     def request_actions_list(self):
-        """Send command to request actions list from BBS."""
+        """Send actions list request and immediately follow with ENTER."""
         if self.connected and self.writer:
-            print("[DEBUG] Sending /a list command")
+            print("[DEBUG] Requesting actions list")
+            self.collecting_actions = True
+            self.actions = []
+            
+            # Send /a list command
             self.send_custom_message("/a list")
+            
+            # Immediately send ENTER
+            self.master.after(100, lambda: self.send_custom_message("\r\n"))
 
     def setup_autocorrect(self):
         """Initialize autocorrect functionality."""
@@ -2781,6 +2826,26 @@ class BBSTerminalApp:
         """Reset the escape key counter."""
         self.escape_count = 0
         self.escape_timer = None
+
+    def check_system_message(self, line):
+        """Check if a line contains system messages that should be filtered/handled specially."""
+        # Common system message patterns
+        system_patterns = [
+            r"^\[System\]",
+            r"^Connected to",
+            r"^Disconnected from",
+            r"^Connection closed",
+            r"^Error:",
+            r"^Welcome to"
+        ]
+        
+        for pattern in system_patterns:
+            if re.match(pattern, line, re.IGNORECASE):
+                # Log system messages but don't filter them
+                print(f"[System] {line}")
+                return True
+        
+        return False
 
 def main():
     root = tk.Tk()
