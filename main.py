@@ -792,38 +792,34 @@ class BBSTerminalApp:
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
-        """Define text tags for ANSI colors and attributes including blink."""
-        self.terminal_display.tag_configure("normal", foreground="white")
-
-        # Configure color tags with proper colors
+        """Define text tags for ANSI colors and attributes."""
+        # Configure base colors with explicit RGB values for BBS standard colors
         color_configs = {
-            'black': '#000000',
-            'red': '#FF0000',
-            'green': '#00FF00',
-            'yellow': '#FFD700',  # Dark yellow (brown-ish)
-            'blue': '#3399FF',    # Lighter blue for visibility
-            'magenta': '#FF00FF',
-            'cyan': '#00FFFF',
-            'grey': '#A0A0A0',    # Medium gray
-            'white': '#FFFFFF',
-            'bright_black': '#808080',
-            'bright_red': '#FF5555',
-            'bright_green': '#55FF55',
-            'bright_yellow': '#FFFF55',
-            'bright_blue': '#5555FF',
-            'bright_magenta': '#FF55FF',
-            'bright_cyan': '#55FFFF',
+            'normal': '#FFFFFF',      # White
+            'black': '#000000',       # Black
+            'red': '#FF0000',         # Bright Red
+            'green': '#00FF00',       # Bright Green
+            'yellow': '#FFFF00',      # Bright Yellow
+            'blue': '#5555FF',        # Bright Blue (lighter)
+            'magenta': '#FF00FF',     # Bright Magenta
+            'cyan': '#00FFFF',        # Bright Cyan
+            'white': '#FFFFFF',       # Bright White
+            'dim_red': '#AA0000',     # Dim Red
+            'brown': '#AA5500',       # Brown (dim yellow)
+            'dim_green': '#00AA00',   # Dim Green
+            'dim_cyan': '#00AAAA',    # Dim Cyan
+            'dim_blue': '#0000AA',    # Dim Blue
+            'dim_magenta': '#AA00AA', # Dim Magenta
+            'gray': '#AAAAAA',        # Gray (dim white)
+            'dark_grey': '#555555',   # Dark Grey
         }
 
+        # Configure each color tag
         for tag, color in color_configs.items():
             self.terminal_display.tag_configure(tag, foreground=color)
-
-        # Add blink tags
-        self.terminal_display.tag_configure("blink", background="")
-        self.blink_tags = set()
-
-        # Start blink timer
-        self.blink_timer()
+        
+        # Add gray on black special case
+        self.terminal_display.tag_configure("gray_on_black", foreground='#AAAAAA', background='#000000')
 
     def blink_timer(self):
         """Toggle blink state every 500ms."""
@@ -1189,17 +1185,18 @@ class BBSTerminalApp:
             if match:
                 user_section = match.group(1).strip()
                 
-                # Split by commas and "and" to get raw username sections
-                parts = re.split(r',\s*(?:and\s+)?|\s+and\s+', user_section)
+                # Split on commas and 'and' while preserving whitespace
+                parts = re.split(r',\s*|\s+and\s+|\s+and\n', user_section)
                 
                 # Process each username part
                 for part in parts:
-                    # Extract clean username before any @ symbol
-                    username_match = re.match(r'^([A-Za-z][\w.-]*?)(?:@[\w.-]+)?$', part.strip())
+                    part = part.strip()
+                    # Match username with optional domain while preserving dots
+                    username_match = re.match(r'^([A-Za-z][\w.-]+?)(?:@[\w.-]+)?$', part)
                     if username_match:
-                        username = username_match.group(1)
+                        username = username_match.group(1)  # Remove trailing dot handling to keep dots
                         if username and len(username) >= 2:
-                            # Don't add if it's a common word
+                            # Skip common words
                             if username.lower() not in {'topic', 'the', 'channel', 'general', 'chat'}:
                                 self.chat_members.add(username)
                 
@@ -1295,7 +1292,7 @@ class BBSTerminalApp:
             # Directed messages
             r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
             # Normal messages
-            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
+            r'^(?:\[[\d-]+\\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
         ]
 
         for pattern in message_patterns:
@@ -1647,41 +1644,46 @@ class BBSTerminalApp:
 
     def parse_ansi_and_insert(self, text_data):
         """Enhanced parser for ANSI codes including blink."""
-        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
+        ansi_escape_regex = re.compile(r'\x1b\[([\d;]*)m')
         last_end = 0
         current_tags = ["normal"]
         blink_tag = None
     
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
+            # Insert text before the ANSI code with current tags
             if start > last_end:
                 segment = text_data[last_end:start]
                 self.insert_with_hyperlinks(segment, tuple(current_tags))
             
             code_string = match.group(1)
-            codes = code_string.split(';')
+            codes = [c for c in code_string.split(';') if c]  # Filter out empty strings
             
-            if '0' in codes:
+            if not codes or '0' in codes:
                 current_tags = ["normal"]
                 blink_tag = None
-                codes.remove('0')
-    
+                codes = [c for c in codes if c != '0']
+            
             for code in codes:
-                # Handle blink codes
-                if code in ['5', '6']:  # Both slow and rapid blink
-                    if not blink_tag:
-                        blink_tag = f"blink_{len(self.blink_tags)}"
-                        self.terminal_display.tag_configure(blink_tag, background="")
-                        self.blink_tags.add(blink_tag)
-                    if blink_tag not in current_tags:
-                        current_tags.append(blink_tag)
-                else:
-                    mapped_tag = self.map_code_to_tag(code)
-                    if mapped_tag and mapped_tag not in current_tags:
-                        current_tags.append(mapped_tag)
-                        
+                try:
+                    code = code.strip()
+                    if code in ['5', '6']:  # Blink codes
+                        if not blink_tag:
+                            blink_tag = f"blink_{len(self.blink_tags)}"
+                            self.terminal_display.tag_configure(blink_tag, background="")
+                            self.blink_tags.add(blink_tag)
+                        if blink_tag not in current_tags:
+                            current_tags.append(blink_tag)
+                    else:
+                        mapped_tag = self.map_code_to_tag(code)
+                        if mapped_tag and mapped_tag not in current_tags:
+                            current_tags = ["normal", mapped_tag]  # Reset to just normal + new color
+                except Exception as e:
+                    print(f"Error processing ANSI code {code}: {e}")
+                    
             last_end = end
     
+        # Insert any remaining text
         if last_end < len(text_data):
             segment = text_data[last_end:]
             self.insert_with_hyperlinks(segment, tuple(current_tags))
@@ -1916,28 +1918,28 @@ class BBSTerminalApp:
             self.preview_window = None
 
     def map_code_to_tag(self, color_code):
-        """Map ANSI color codes to Tk tags with proper colors."""
+        """Map ANSI color codes to Tk tags."""
         color_map = {
             # Standard colors
-            '30': 'black',      # Black
-            '31': 'red',        # Red
-            '32': 'green',      # Green
-            '33': 'yellow',     # Brown/Yellow
-            '34': 'blue',       # Blue
-            '35': 'magenta',    # Magenta
-            '36': 'cyan',       # Cyan
-            '37': 'grey',       # Grey (medium)
-            # Bright colors
-            '90': 'grey',       # Bright Black = Grey
-            '91': 'bright_red',      
-            '92': 'bright_green',    
-            '93': 'bright_yellow',   
-            '94': 'bright_blue',     
-            '95': 'bright_magenta',  
-            '96': 'bright_cyan',     
-            '97': 'white',          # Bright White
+            '30': 'black',           # [k] black
+            '31': 'red',            # [R] red
+            '32': 'green',          # [G] green
+            '33': 'yellow',         # [Y] yellow
+            '34': 'blue',           # [B] blue
+            '35': 'magenta',        # [M] magenta
+            '36': 'cyan',           # [C] cyan
+            '37': 'white',          # [W] white
+            # Dim colors
+            '91': 'dim_red',        # [r] dim red
+            '92': 'dim_green',      # [g] dim green
+            '93': 'brown',          # [y] brown
+            '94': 'dim_blue',       # [b] dim blue
+            '95': 'dim_magenta',    # [m] dim magenta
+            '96': 'dim_cyan',       # [c] dim cyan
+            '97': 'gray',           # [w] gray
+            '90': 'dark_grey',      # [K] dark grey
         }
-        return color_map.get(color_code, 'white')  # Default to white if code not found
+        return color_map.get(color_code, 'normal')
 
     def save_chatlog_message(self, username, message):
         """Save a message to the chatlog."""
@@ -2431,22 +2433,30 @@ class BBSTerminalApp:
     def on_action_select(self, event):
         """Handle action selection and send the action to the highlighted username."""
         selected_action_index = self.actions_listbox.curselection()
+        if not selected_action_index:
+            return
+            
+        action = self.actions_listbox.get(selected_action_index[0])
         selected_member_index = self.members_listbox.curselection()
         
-        if selected_action_index and selected_member_index:
-            action = self.actions_listbox.get(selected_action_index[0])
+        if selected_member_index:
+            # If a member is selected, append their name to the action
             username = self.members_listbox.get(selected_member_index[0])
-            
-            # Format and send the action command
-            action_command = f"{action} {username}"
-            if self.connected and self.writer:
-                asyncio.run_coroutine_threadsafe(
-                    self._send_message(action_command + "\r\n"), 
-                    self.loop
-                )
-                
-                # Only deselect the action, keep the member selected
-                self.actions_listbox.selection_clear(0, tk.END)
+            action = f"{action} {username}"
+        
+        # Send the action command (with or without username)
+        if self.connected and self.writer:
+            message = action + "\r\n"
+            async def send():
+                try:
+                    self.writer.write(message.encode())
+                    await self.writer.drain()
+                    # Only deselect the action, not the member
+                    self.actions_listbox.selection_clear(0, tk.END)
+                except Exception as e:
+                    print(f"Error sending action: {e}")
+                    
+            asyncio.run_coroutine_threadsafe(send(), self.loop)
 
     def store_hyperlink(self, url, sender="Unknown", timestamp=None):
         """Store a hyperlink with metadata."""
