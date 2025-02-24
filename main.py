@@ -175,7 +175,7 @@ class BBSTerminalApp:
         # At the beginning of __init__, after creating self.master
         self.spell = None  # Spell checker instance
         self.spell_popup = None  # Popup window for suggestions
-        self.autocorrect_enabled = tk.BooleanVar(value=True)  # Toggle for autocorrect
+        self.autocorrect_enabled = tk.BooleanVar(value=False)  # Toggle for autocorrect
         
         # Add spell checking suggestion tracking
         self.current_suggestion = None
@@ -795,43 +795,33 @@ class BBSTerminalApp:
         """Define text tags for ANSI colors and attributes including blink."""
         self.terminal_display.tag_configure("normal", foreground="white")
 
-        color_map = {
-            '30': 'black',
-            '31': 'red',
-            '32': 'green',
-            '33': 'yellow',
-            '34': 'blue',
-            '35': 'magenta',
-            '36': 'cyan',
-            '37': 'white',
-            '90': 'bright_black',
-            '91': 'bright_red',
-            '92': 'bright_green',
-            '93': 'bright_yellow',
-            '94': 'bright_blue',
-            '95': 'bright_magenta',
-            '96': 'bright_cyan',
-            '97': 'bright_white',
-            '38': 'grey'  # Custom tag for grey color
+        # Configure color tags with proper colors
+        color_configs = {
+            'black': '#000000',
+            'red': '#FF0000',
+            'green': '#00FF00',
+            'yellow': '#FFD700',  # Dark yellow (brown-ish)
+            'blue': '#3399FF',    # Lighter blue for visibility
+            'magenta': '#FF00FF',
+            'cyan': '#00FFFF',
+            'grey': '#A0A0A0',    # Medium gray
+            'white': '#FFFFFF',
+            'bright_black': '#808080',
+            'bright_red': '#FF5555',
+            'bright_green': '#55FF55',
+            'bright_yellow': '#FFFF55',
+            'bright_blue': '#5555FF',
+            'bright_magenta': '#FF55FF',
+            'bright_cyan': '#55FFFF',
         }
 
-        for code, tag in color_map.items():
-            if tag == 'blue':
-                # Use a lighter blue instead of the default dark blue
-                self.terminal_display.tag_configure(tag, foreground="#3399FF")
-            elif tag == 'grey':
-                # Set grey color to a visible shade
-                self.terminal_display.tag_configure(tag, foreground="#B0B0B0")
-            elif tag.startswith("bright_"):
-                base_color = tag.split("_", 1)[1]
-                self.terminal_display.tag_configure(tag, foreground=base_color)
-            else:
-                self.terminal_display.tag_configure(tag, foreground=tag)
+        for tag, color in color_configs.items():
+            self.terminal_display.tag_configure(tag, foreground=color)
 
         # Add blink tags
         self.terminal_display.tag_configure("blink", background="")
         self.blink_tags = set()
-    
+
         # Start blink timer
         self.blink_timer()
 
@@ -1129,17 +1119,28 @@ class BBSTerminalApp:
             # Always display the raw line in the terminal first
             self.append_terminal_text(line + "\n")
 
-            # Check for chatroom banner beginning
-            if "You are in" in clean_line and "channel" in clean_line:
-                # Clear current members before processing new banner
-                self.chat_members.clear()
-                self.user_list_buffer = []
-                self.collecting_users = True
+            # Check for MajorLink channel banner and request actions
+            if "You are in the MajorLink channel." in clean_line and not self.has_requested_actions:
+                self.has_requested_actions = True
                 
-                # If this is the first banner, request actions list
-                if not self.has_requested_actions:
-                    self.has_requested_actions = True
-                    self.master.after(1000, lambda: self.send_custom_message("/a list"))
+                # Schedule the action list request sequence
+                def request_sequence():
+                    # Send /a list
+                    self.send_custom_message("/a list")
+                    # Wait 1 second then send enter
+                    self.master.after(1000, lambda: self.send_custom_message("\r\n"))
+                
+                # Start sequence after 1 second
+                self.master.after(1000, request_sequence)
+                return
+
+            # If we're collecting actions and see 'MajorLink', stop collecting
+            if self.collecting_actions and 'MajorLink' in clean_line:
+                self.collecting_actions = False
+                # Process collected actions
+                self.actions = [action.strip() for action in self.action_buffer if action.strip()]
+                self.action_buffer = []
+                self.update_actions_listbox()
                 return
 
             # Check for action list beginning
@@ -1150,14 +1151,15 @@ class BBSTerminalApp:
 
             # Process action list
             if self.collecting_actions:
-                # If we see the chatroom banner, stop collecting actions
-                if "You are in" in clean_line and "channel" in clean_line:
-                    self.collecting_actions = False
-                    self.actions = [action.strip() for action in self.action_buffer if action.strip()]
-                    self.update_actions_listbox()
-                else:
-                    # Add line to action buffer
-                    self.action_buffer.append(clean_line)
+                self.action_buffer.append(clean_line)
+                return
+
+            # Check for chatroom banner beginning
+            if "You are in" in clean_line and "channel" in clean_line:
+                self.chat_members.clear()
+                self.user_list_buffer = []
+                self.collecting_users = True
+                return
 
             # Process user list if we're collecting users
             if self.collecting_users:
@@ -1183,23 +1185,26 @@ class BBSTerminalApp:
         """Parse chat members from the banner text."""
         try:
             # Find text between "Topic:" and "are here with you"
-            match = re.search(r'Topic:.*?([\w@\s,.-]+)(?=\s+are here with you)', combined_text, re.DOTALL)
+            match = re.search(r'Topic:.*?([\w@\s,.-]+?)(?=\s+are here with you)', combined_text, re.DOTALL)
             if match:
                 user_section = match.group(1).strip()
-                # Split on commas and "and"
-                users = re.split(r',\s*|\s+and\s+', user_section)
                 
-                # Process each username
-                for user in users:
-                    # Extract username before @ if present
-                    username = user.split('@')[0].strip()
-                    if username and len(username) >= 2:
-                        self.chat_members.add(username)
+                # Split by commas and "and" to get raw username sections
+                parts = re.split(r',\s*(?:and\s+)?|\s+and\s+', user_section)
                 
-                # Update the display
+                # Process each username part
+                for part in parts:
+                    # Extract clean username before any @ symbol
+                    username_match = re.match(r'^([A-Za-z][\w.-]*?)(?:@[\w.-]+)?$', part.strip())
+                    if username_match:
+                        username = username_match.group(1)
+                        if username and len(username) >= 2:
+                            # Don't add if it's a common word
+                            if username.lower() not in {'topic', 'the', 'channel', 'general', 'chat'}:
+                                self.chat_members.add(username)
+                
+                # Update the display and save
                 self.update_members_display()
-                
-                # Save to file
                 self.save_chat_members_file()
                 
         except Exception as e:
@@ -1911,26 +1916,28 @@ class BBSTerminalApp:
             self.preview_window = None
 
     def map_code_to_tag(self, color_code):
-        """Map numeric color code to a defined Tk tag."""
-        valid_codes = {
-            '30': 'black',
-            '31': 'red',
-            '32': 'green',
-            '33': 'yellow',
-            '34': 'blue',
-            '35': 'magenta',
-            '36': 'cyan',
-            '37': 'white',
-            '90': 'bright_black',
-            '91': 'bright_red',
-            '92': 'bright_green',
-            '93': 'bright_yellow',
-            '94': 'bright_blue',
-            '95': 'bright_magenta',
-            '96': 'bright_cyan',
-            '97': 'bright_white',
+        """Map ANSI color codes to Tk tags with proper colors."""
+        color_map = {
+            # Standard colors
+            '30': 'black',      # Black
+            '31': 'red',        # Red
+            '32': 'green',      # Green
+            '33': 'yellow',     # Brown/Yellow
+            '34': 'blue',       # Blue
+            '35': 'magenta',    # Magenta
+            '36': 'cyan',       # Cyan
+            '37': 'grey',       # Grey (medium)
+            # Bright colors
+            '90': 'grey',       # Bright Black = Grey
+            '91': 'bright_red',      
+            '92': 'bright_green',    
+            '93': 'bright_yellow',   
+            '94': 'bright_blue',     
+            '95': 'bright_magenta',  
+            '96': 'bright_cyan',     
+            '97': 'white',          # Bright White
         }
-        return valid_codes.get(color_code, None)
+        return color_map.get(color_code, 'white')  # Default to white if code not found
 
     def save_chatlog_message(self, username, message):
         """Save a message to the chatlog."""
@@ -2438,9 +2445,8 @@ class BBSTerminalApp:
                     self.loop
                 )
                 
-                # Deselect the action after sending
+                # Only deselect the action, keep the member selected
                 self.actions_listbox.selection_clear(0, tk.END)
-                self.members_listbox.selection_clear(0, tk.END)
 
     def store_hyperlink(self, url, sender="Unknown", timestamp=None):
         """Store a hyperlink with metadata."""
@@ -2689,13 +2695,19 @@ class BBSTerminalApp:
         if self.connected and self.writer:
             print("[DEBUG] Requesting actions list")
             self.collecting_actions = True
-            self.actions = []
+            self.action_buffer = []
             
-            # Send /a list command
-            self.send_custom_message("/a list")
-            
-            # Immediately send ENTER
-            self.master.after(100, lambda: self.send_custom_message("\r\n"))
+            async def send_commands():
+                # Send /a list command
+                self.writer.write("/a list\r\n".encode())
+                await self.writer.drain()
+                
+                # Wait a moment then send ENTER
+                await asyncio.sleep(0.1)
+                self.writer.write("\r\n".encode())
+                await self.writer.drain()
+                
+            asyncio.run_coroutine_threadsafe(send_commands(), self.loop)
 
     def setup_autocorrect(self):
         """Initialize autocorrect functionality."""
