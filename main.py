@@ -150,8 +150,6 @@ class BBSTerminalApp:
         self.actions = []
         self.collecting_actions = False
 
-        self.majorlink_mode = tk.BooleanVar(value=True)  # True = filtering enabled
-
         # Add frame size tracking
         self.frame_sizes = self.load_frame_sizes()
         
@@ -318,15 +316,6 @@ class BBSTerminalApp:
         password_check = ttk.Checkbutton(checkbox_frame, text="Show Password", variable=self.show_password, command=self.toggle_password)
         password_check.grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
 
-        # Add MajorLink Mode checkbox
-        majorlink_check = ttk.Checkbutton(
-            checkbox_frame, 
-            text="MajorLink Mode", 
-            variable=self.majorlink_mode,
-            command=self.toggle_majorlink_mode
-        )
-        majorlink_check.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        
         # Add the Keep Alive checkbox
         keep_alive_check = ttk.Checkbutton(self.conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
         keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
@@ -1140,19 +1129,81 @@ class BBSTerminalApp:
             # Always display the raw line in the terminal first
             self.append_terminal_text(line + "\n")
 
-            # Then process for special handling
+            # Check for chatroom banner beginning
+            if "You are in" in clean_line and "channel" in clean_line:
+                # Clear current members before processing new banner
+                self.chat_members.clear()
+                self.user_list_buffer = []
+                self.collecting_users = True
+                
+                # If this is the first banner, request actions list
+                if not self.has_requested_actions:
+                    self.has_requested_actions = True
+                    self.master.after(1000, lambda: self.send_custom_message("/a list"))
+                return
+
+            # Check for action list beginning
+            if "Action listing for: DEFAULT" in clean_line:
+                self.collecting_actions = True
+                self.action_buffer = []
+                return
+
+            # Process action list
+            if self.collecting_actions:
+                # If we see the chatroom banner, stop collecting actions
+                if "You are in" in clean_line and "channel" in clean_line:
+                    self.collecting_actions = False
+                    self.actions = [action.strip() for action in self.action_buffer if action.strip()]
+                    self.update_actions_listbox()
+                else:
+                    # Add line to action buffer
+                    self.action_buffer.append(clean_line)
+
+            # Process user list if we're collecting users
+            if self.collecting_users:
+                # Check for end of user list
+                if "Just type" in clean_line and "assistance" in clean_line:
+                    self.collecting_users = False
+                    # Process the collected user list
+                    combined = " ".join(self.user_list_buffer)
+                    self.parse_chat_members(combined)
+                else:
+                    self.user_list_buffer.append(clean_line)
+
+            # Continue with other message processing
             is_system = self.check_system_message(clean_line)
             if not is_system:
-                # Check for various message types
                 self.detect_logon_prompt(clean_line)
                 self.parse_and_save_chatlog_message(clean_line)
-                
-                # Process for chat members list
-                if "are here with you" in clean_line:
-                    self.update_chat_members([clean_line])
 
         except Exception as e:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error processing line: {str(e)}")
+
+    def parse_chat_members(self, combined_text):
+        """Parse chat members from the banner text."""
+        try:
+            # Find text between "Topic:" and "are here with you"
+            match = re.search(r'Topic:.*?([\w@\s,.-]+)(?=\s+are here with you)', combined_text, re.DOTALL)
+            if match:
+                user_section = match.group(1).strip()
+                # Split on commas and "and"
+                users = re.split(r',\s*|\s+and\s+', user_section)
+                
+                # Process each username
+                for user in users:
+                    # Extract username before @ if present
+                    username = user.split('@')[0].strip()
+                    if username and len(username) >= 2:
+                        self.chat_members.add(username)
+                
+                # Update the display
+                self.update_members_display()
+                
+                # Save to file
+                self.save_chat_members_file()
+                
+        except Exception as e:
+            print(f"Error parsing chat members: {e}")
 
     def handle_message(self, sender, message, msg_type, recipient=None):
         """Handle different types of messages with appropriate actions."""
@@ -2544,15 +2595,6 @@ class BBSTerminalApp:
             self.master.update_idletasks()
             self.terminal_display.see(tk.END)
 
-    def toggle_majorlink_mode(self):
-        """Handle toggling MajorLink mode on/off."""
-        self.terminal_display.configure(state=tk.NORMAL)
-        self.terminal_display.delete(1.0, tk.END)
-        self.terminal_display.configure(state=tk.DISABLED)
-        
-        mode = "enabled" if self.majorlink_mode.get() else "disabled"
-        self.append_terminal_text(f"\n--- MajorLink Mode {mode} ---\n\n", "normal")
-
     def limit_input_length(self, *args):
         """Limit input field to 255 characters"""
         value = self.input_var.get()
@@ -2601,7 +2643,6 @@ class BBSTerminalApp:
                     self.font_size.set(settings.get('font_size', 10))
                     self.logon_automation_enabled.set(settings.get('logon_automation', False))
                     self.keep_alive_enabled.set(settings.get('keep_alive', False))
-                    self.majorlink_mode.set(settings.get('majorlink_mode', True))
                     return settings
         except Exception as e:
             print(f"Error loading settings: {e}")
