@@ -236,11 +236,26 @@ class BBSTerminalApp:
 
         # Create the Actions listbox on the RIGHT
         actions_frame = ttk.LabelFrame(container, text="Actions")
-        self.actions_listbox = tk.Listbox(actions_frame, height=20, width=20, exportselection=False)
-        self.actions_listbox.pack(fill=tk.BOTH, expand=True)
+        self.actions_listbox = tk.Listbox(actions_frame, 
+                                     height=20,  # Increased height
+                                     width=20,   # Keep existing width
+                                     exportselection=False,
+                                     selectmode=tk.SINGLE)
+    
+        # Add scrollbar for actions
+        actions_scroll = ttk.Scrollbar(actions_frame, orient=tk.VERTICAL, 
+                                 command=self.actions_listbox.yview)
+        self.actions_listbox.configure(yscrollcommand=actions_scroll.set)
+    
+        # Pack widgets
+        self.actions_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        actions_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    
+        # Keep existing bindings
         self.actions_listbox.bind("<Double-Button-1>", self.on_action_select)
         self.actions_listbox.bind("<Return>", self.on_action_select)
         self.actions_listbox.bind("<Button-1>", self.on_action_select)
+    
         container.add(actions_frame, weight=0)
 
         # --- Row 0: Top frame (connection settings, username, password) ---
@@ -792,34 +807,48 @@ class BBSTerminalApp:
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
-        """Define text tags for ANSI colors and attributes."""
-        # Configure base colors with explicit RGB values for BBS standard colors
-        color_configs = {
-            'normal': '#FFFFFF',      # White
-            'black': '#000000',       # Black
-            'red': '#FF0000',         # Bright Red
-            'green': '#00FF00',       # Bright Green
-            'yellow': '#FFFF00',      # Bright Yellow
-            'blue': '#5555FF',        # Bright Blue (lighter)
-            'magenta': '#FF00FF',     # Bright Magenta
-            'cyan': '#00FFFF',        # Bright Cyan
-            'white': '#FFFFFF',       # Bright White
-            'dim_red': '#AA0000',     # Dim Red
-            'brown': '#AA5500',       # Brown (dim yellow)
-            'dim_green': '#00AA00',   # Dim Green
-            'dim_cyan': '#00AAAA',    # Dim Cyan
-            'dim_blue': '#0000AA',    # Dim Blue
-            'dim_magenta': '#AA00AA', # Dim Magenta
-            'gray': '#AAAAAA',        # Gray (dim white)
-            'dark_grey': '#555555',   # Dark Grey
+        """Define text tags for ANSI colors and attributes including blink."""
+        self.terminal_display.tag_configure("normal", foreground="white")
+
+        color_map = {
+            '30': 'black',
+            '31': 'red',
+            '32': 'green',
+            '33': 'yellow',
+            '34': 'blue',
+            '35': 'magenta',
+            '36': 'cyan',
+            '37': 'white',
+            '90': 'bright_black',
+            '91': 'bright_red',
+            '92': 'bright_green',
+            '93': 'bright_yellow',
+            '94': 'bright_blue',
+            '95': 'bright_magenta',
+            '96': 'bright_cyan',
+            '97': 'bright_white',
+            '38': 'grey'  # Custom tag for grey color
         }
 
-        # Configure each color tag
-        for tag, color in color_configs.items():
-            self.terminal_display.tag_configure(tag, foreground=color)
-        
-        # Add gray on black special case
-        self.terminal_display.tag_configure("gray_on_black", foreground='#AAAAAA', background='#000000')
+        for code, tag in color_map.items():
+            if tag == 'blue':
+                # Use a lighter blue instead of the default dark blue
+                self.terminal_display.tag_configure(tag, foreground="#3399FF")
+            elif tag == 'grey':
+                # Set grey color to a visible shade
+                self.terminal_display.tag_configure(tag, foreground="#B0B0B0")
+            elif tag.startswith("bright_"):
+                base_color = tag.split("_", 1)[1]
+                self.terminal_display.tag_configure(tag, foreground=base_color)
+            else:
+                self.terminal_display.tag_configure(tag, foreground=tag)
+
+        # Add blink tags
+        self.terminal_display.tag_configure("blink", background="")
+        self.blink_tags = set()
+    
+        # Start blink timer
+        self.blink_timer()
 
     def blink_timer(self):
         """Toggle blink state every 500ms."""
@@ -1115,39 +1144,33 @@ class BBSTerminalApp:
             # Always display the raw line in the terminal first
             self.append_terminal_text(line + "\n")
 
-            # Check for MajorLink channel banner and request actions
-            if "You are in the MajorLink channel." in clean_line and not self.has_requested_actions:
+            # Check for BBS banner to trigger actions list request
+            if "You are in the MajorLink channel" in clean_line and not self.has_requested_actions:
+                print("[DEBUG] First banner detected, requesting actions list")
                 self.has_requested_actions = True
-                
-                # Schedule the action list request sequence
-                def request_sequence():
-                    # Send /a list
-                    self.send_custom_message("/a list")
-                    # Wait 1 second then send enter
-                    self.master.after(1000, lambda: self.send_custom_message("\r\n"))
-                
-                # Start sequence after 1 second
-                self.master.after(1000, request_sequence)
-                return
-
-            # If we're collecting actions and see 'MajorLink', stop collecting
-            if self.collecting_actions and 'MajorLink' in clean_line:
-                self.collecting_actions = False
-                # Process collected actions
-                self.actions = [action.strip() for action in self.action_buffer if action.strip()]
-                self.action_buffer = []
-                self.update_actions_listbox()
+                self.master.after(1000, self.request_actions_list)
                 return
 
             # Check for action list beginning
             if "Action listing for: DEFAULT" in clean_line:
+                print("[DEBUG] Action list start detected")
                 self.collecting_actions = True
                 self.action_buffer = []
                 return
 
-            # Process action list
+            # Handle action list collection
             if self.collecting_actions:
-                self.action_buffer.append(clean_line)
+                # Stop collecting if we see MajorLink or empty line after actions
+                if 'MajorLink' in clean_line or (not clean_line.strip() and self.action_buffer):
+                    print("[DEBUG] Action list end detected")
+                    self.collecting_actions = False
+                    # Process all collected actions
+                    self.process_action_buffer()
+                    return
+                
+                # Add line to buffer if it's not the header
+                if "Action listing for:" not in clean_line and clean_line.strip():
+                    self.action_buffer.append(clean_line)
                 return
 
             # Check for chatroom banner beginning
@@ -1177,30 +1200,85 @@ class BBSTerminalApp:
         except Exception as e:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error processing line: {str(e)}")
 
+    def process_action_buffer(self):
+        """Process the collected action buffer into individual actions."""
+        try:
+            # Join all lines with spaces
+            combined = ' '.join(self.action_buffer)
+            
+            # Clean up the text
+            # Remove 'Action listing for: DEFAULT' and any header-like text
+            combined = re.sub(r'^Action listing for:.*?\n', '', combined, flags=re.IGNORECASE)
+            
+            # Split on whitespace and filter empty strings
+            actions = []
+            words = combined.split()
+            
+            for word in words:
+                # Clean up each word
+                action = word.strip()
+                # Validate action (at least 1 character, no special characters)
+                if action and re.match(r'^[a-zA-Z0-9]+$', action):
+                    actions.append(action)
+            
+            # Sort and remove duplicates
+            self.actions = sorted(list(set(actions)))
+            
+            print(f"[DEBUG] Processed {len(self.actions)} actions: {self.actions}")
+            self.update_actions_listbox()
+            
+        except Exception as e:
+            print(f"Error processing actions: {e}")
+            print(f"Action buffer contents: {self.action_buffer}")
+
     def parse_chat_members(self, combined_text):
         """Parse chat members from the banner text."""
         try:
-            # Find text between "Topic:" and "are here with you"
-            match = re.search(r'Topic:.*?([\w@\s,.-]+?)(?=\s+are here with you)', combined_text, re.DOTALL)
+            print(f"[DEBUG] Parsing banner: {combined_text}")
+            
+            # Extract user section between "Topic:" and "are here with you"
+            match = re.search(r'Topic:.*?\n(.*?)(?=\s+are here with you)', combined_text, re.DOTALL | re.IGNORECASE)
             if match:
                 user_section = match.group(1).strip()
+                print(f"[DEBUG] User section: {user_section}")
                 
-                # Split on commas and 'and' while preserving whitespace
-                parts = re.split(r',\s*|\s+and\s+|\s+and\n', user_section)
+                # First handle the special case of names joined by "and"
+                parts = []
+                sections = user_section.split(" and ")
                 
-                # Process each username part
+                # Handle the part before "and"
+                if len(sections) > 0:
+                    parts.extend(re.split(r',\s*', sections[0]))
+                
+                # Handle the part after "and" if it exists
+                if len(sections) > 1:
+                    parts.append(sections[1])
+                
+                # Process each potential username
                 for part in parts:
-                    part = part.strip()
-                    # Match username with optional domain while preserving dots
-                    username_match = re.match(r'^([A-Za-z][\w.-]+?)(?:@[\w.-]+)?$', part)
-                    if username_match:
-                        username = username_match.group(1)  # Remove trailing dot handling to keep dots
-                        if username and len(username) >= 2:
-                            # Skip common words
-                            if username.lower() not in {'topic', 'the', 'channel', 'general', 'chat'}:
-                                self.chat_members.add(username)
+                    # Clean up the part
+                    username = part.strip()
+                    
+                    # Remove domain if present
+                    if '@' in username:
+                        username = username.split('@')[0].strip()
+                    
+                    # Handle hidden periods by checking for word combinations
+                    if ' ' in username:
+                        # Replace space with period for cases like "Dirty Socks"
+                        username = username.replace(' ', '.')
+                    
+                    # Validate username
+                    if (len(username) >= 2 and
+                        username.lower() not in {'topic', 'general', 'chat', 'the', 'channel'} and
+                        re.match(r'^[A-Za-z][A-Za-z0-9._-]*$', username)):
+                        
+                        print(f"[DEBUG] Adding username: {username}")
+                        self.chat_members.add(username)
+                    else:
+                        print(f"[DEBUG] Skipping invalid username: {username}")
                 
-                # Update the display and save
+                print(f"[DEBUG] Final chat members: {sorted(self.chat_members)}")
                 self.update_members_display()
                 self.save_chat_members_file()
                 
@@ -1292,7 +1370,7 @@ class BBSTerminalApp:
             # Directed messages
             r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
             # Normal messages
-            r'^(?:\[[\d-]+\\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
+            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
         ]
 
         for pattern in message_patterns:
@@ -1644,46 +1722,41 @@ class BBSTerminalApp:
 
     def parse_ansi_and_insert(self, text_data):
         """Enhanced parser for ANSI codes including blink."""
-        ansi_escape_regex = re.compile(r'\x1b\[([\d;]*)m')
+        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
         last_end = 0
         current_tags = ["normal"]
         blink_tag = None
     
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
-            # Insert text before the ANSI code with current tags
             if start > last_end:
                 segment = text_data[last_end:start]
                 self.insert_with_hyperlinks(segment, tuple(current_tags))
             
             code_string = match.group(1)
-            codes = [c for c in code_string.split(';') if c]  # Filter out empty strings
+            codes = code_string.split(';')
             
-            if not codes or '0' in codes:
+            if '0' in codes:
                 current_tags = ["normal"]
                 blink_tag = None
-                codes = [c for c in codes if c != '0']
-            
+                codes.remove('0')
+    
             for code in codes:
-                try:
-                    code = code.strip()
-                    if code in ['5', '6']:  # Blink codes
-                        if not blink_tag:
-                            blink_tag = f"blink_{len(self.blink_tags)}"
-                            self.terminal_display.tag_configure(blink_tag, background="")
-                            self.blink_tags.add(blink_tag)
-                        if blink_tag not in current_tags:
-                            current_tags.append(blink_tag)
-                    else:
-                        mapped_tag = self.map_code_to_tag(code)
-                        if mapped_tag and mapped_tag not in current_tags:
-                            current_tags = ["normal", mapped_tag]  # Reset to just normal + new color
-                except Exception as e:
-                    print(f"Error processing ANSI code {code}: {e}")
-                    
+                # Handle blink codes
+                if code in ['5', '6']:  # Both slow and rapid blink
+                    if not blink_tag:
+                        blink_tag = f"blink_{len(self.blink_tags)}"
+                        self.terminal_display.tag_configure(blink_tag, background="")
+                        self.blink_tags.add(blink_tag)
+                    if blink_tag not in current_tags:
+                        current_tags.append(blink_tag)
+                else:
+                    mapped_tag = self.map_code_to_tag(code)
+                    if mapped_tag and mapped_tag not in current_tags:
+                        current_tags.append(mapped_tag)
+                        
             last_end = end
     
-        # Insert any remaining text
         if last_end < len(text_data):
             segment = text_data[last_end:]
             self.insert_with_hyperlinks(segment, tuple(current_tags))
@@ -1918,28 +1991,26 @@ class BBSTerminalApp:
             self.preview_window = None
 
     def map_code_to_tag(self, color_code):
-        """Map ANSI color codes to Tk tags."""
-        color_map = {
-            # Standard colors
-            '30': 'black',           # [k] black
-            '31': 'red',            # [R] red
-            '32': 'green',          # [G] green
-            '33': 'yellow',         # [Y] yellow
-            '34': 'blue',           # [B] blue
-            '35': 'magenta',        # [M] magenta
-            '36': 'cyan',           # [C] cyan
-            '37': 'white',          # [W] white
-            # Dim colors
-            '91': 'dim_red',        # [r] dim red
-            '92': 'dim_green',      # [g] dim green
-            '93': 'brown',          # [y] brown
-            '94': 'dim_blue',       # [b] dim blue
-            '95': 'dim_magenta',    # [m] dim magenta
-            '96': 'dim_cyan',       # [c] dim cyan
-            '97': 'gray',           # [w] gray
-            '90': 'dark_grey',      # [K] dark grey
+        """Map numeric color code to a defined Tk tag."""
+        valid_codes = {
+            '30': 'black',
+            '31': 'red',
+            '32': 'green',
+            '33': 'yellow',
+            '34': 'blue',
+            '35': 'magenta',
+            '36': 'cyan',
+            '37': 'white',
+            '90': 'bright_black',
+            '91': 'bright_red',
+            '92': 'bright_green',
+            '93': 'bright_yellow',
+            '94': 'bright_blue',
+            '95': 'bright_magenta',
+            '96': 'bright_cyan',
+            '97': 'bright_white',
         }
-        return color_map.get(color_code, 'normal')
+        return valid_codes.get(color_code, None)
 
     def save_chatlog_message(self, username, message):
         """Save a message to the chatlog."""
@@ -2426,37 +2497,51 @@ class BBSTerminalApp:
 
     def update_actions_listbox(self):
         """Update the Actions listbox with the current actions."""
-        self.actions_listbox.delete(0, tk.END)
-        for action in self.actions:
-            self.actions_listbox.insert(tk.END, action)
+        try:
+            print(f"[DEBUG] Updating actions listbox with {len(self.actions)} actions")
+            
+            # Clear existing items
+            self.actions_listbox.delete(0, tk.END)
+            
+            # Sort actions alphabetically and filter out invalid actions
+            valid_actions = [action for action in self.actions 
+                            if not re.match(r'^[0-9]+[a-zA-Z]$', action)  # Skip ANSI codes
+                            and len(action) > 1]  # Skip single-char actions
+            
+            sorted_actions = sorted(valid_actions)
+            
+            # Add each action to the listbox
+            for action in sorted_actions:
+                self.actions_listbox.insert(tk.END, action)
+            
+            print(f"[DEBUG] Added {self.actions_listbox.size()} actions to listbox")
+            
+            # Ensure proper sizing and update
+            self.actions_listbox.update_idletasks()
+            
+        except Exception as e:
+            print(f"[DEBUG] Error updating actions listbox: {e}")
 
     def on_action_select(self, event):
         """Handle action selection and send the action to the highlighted username."""
         selected_action_index = self.actions_listbox.curselection()
-        if not selected_action_index:
-            return
-            
-        action = self.actions_listbox.get(selected_action_index[0])
         selected_member_index = self.members_listbox.curselection()
         
-        if selected_member_index:
-            # If a member is selected, append their name to the action
+        if selected_action_index and selected_member_index:
+            action = self.actions_listbox.get(selected_action_index[0])
             username = self.members_listbox.get(selected_member_index[0])
-            action = f"{action} {username}"
-        
-        # Send the action command (with or without username)
-        if self.connected and self.writer:
-            message = action + "\r\n"
-            async def send():
-                try:
-                    self.writer.write(message.encode())
-                    await self.writer.drain()
-                    # Only deselect the action, not the member
-                    self.actions_listbox.selection_clear(0, tk.END)
-                except Exception as e:
-                    print(f"Error sending action: {e}")
-                    
-            asyncio.run_coroutine_threadsafe(send(), self.loop)
+            
+            # Format and send the action command
+            action_command = f"{action} {username}"
+            if self.connected and self.writer:
+                asyncio.run_coroutine_threadsafe(
+                    self._send_message(action_command + "\r\n"), 
+                    self.loop
+                )
+                
+                # Deselect the action after sending
+                self.actions_listbox.selection_clear(0, tk.END)
+                self.members_listbox.selection_clear(0, tk.END)
 
     def store_hyperlink(self, url, sender="Unknown", timestamp=None):
         """Store a hyperlink with metadata."""
@@ -2645,6 +2730,7 @@ class BBSTerminalApp:
             }
             with open("frame_sizes.json", "w") as f:
                 json.dump(sizes, f)
+                
         except Exception as e:
             print(f"Error saving frame sizes: {e}")
 
@@ -2703,20 +2789,21 @@ class BBSTerminalApp:
     def request_actions_list(self):
         """Send actions list request and immediately follow with ENTER."""
         if self.connected and self.writer:
-            print("[DEBUG] Requesting actions list")
-            self.collecting_actions = True
-            self.action_buffer = []
+            print("[DEBUG] Sending actions list request")
             
             async def send_commands():
-                # Send /a list command
-                self.writer.write("/a list\r\n".encode())
-                await self.writer.drain()
-                
-                # Wait a moment then send ENTER
-                await asyncio.sleep(0.1)
-                self.writer.write("\r\n".encode())
-                await self.writer.drain()
-                
+                try:
+                    # Send /a list command
+                    self.writer.write("/a list\r\n".encode())
+                    await self.writer.drain()
+                    
+                    # Wait a moment then send ENTER
+                    await asyncio.sleep(0.5)
+                    self.writer.write("\r\n".encode())
+                    await self.writer.drain()
+                except Exception as e:
+                    print(f"Error requesting actions list: {e}")
+                    
             asyncio.run_coroutine_threadsafe(send_commands(), self.loop)
 
     def setup_autocorrect(self):
