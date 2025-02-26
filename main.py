@@ -2826,7 +2826,7 @@ def main():
             finally:
                 root.destroy()
 
-    # Bind the closing handler
+    ## Bind the closing handler
     root.protocol("WM_DELETE_WINDOW", on_closing)
     
     # Restore window geometry if saved
