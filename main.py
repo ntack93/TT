@@ -2115,6 +2115,39 @@ class BBSTerminalApp:
             self.bg_listbox.selection_set(bg_colors.index(current_bg))
             self.bg_listbox.see(bg_colors.index(current_bg))
 
+        # Safely get current font settings
+        try:
+            current_font = self.chatlog_display.cget("font")
+            if isinstance(current_font, str):
+                # Handle string format "family size"
+                parts = current_font.split()
+                current_font = parts[0]
+                current_size = 10  # Default if can't parse size
+                if len(parts) > 1:
+                    try:
+                        current_size = int(''.join(filter(str.isdigit, parts[1])))
+                    except ValueError:
+                        current_size = 10
+            else:
+                # Handle tuple format (family, size, ...)
+                current_font = current_font[0]
+                current_size = int(current_font[1]) if len(current_font) > 1 else 10
+        except Exception as e:
+            print(f"Error parsing font settings: {e}")
+            current_font = "Courier New"
+            current_size = 10
+
+        current_fg = self.chatlog_display.cget("fg")
+        current_bg = self.chatlog_display.cget("bg")
+        
+        # Initialize current_selections with current values
+        self.current_selections = {
+            'font': current_font,
+            'size': current_size,
+            'color': current_fg,
+            'bg': current_bg
+        }
+
     def confirm_clear_chatlog(self):
         """Show confirmation dialog before clearing chatlog."""
         selected_index = self.chatlog_listbox.curselection()
