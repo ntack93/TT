@@ -201,6 +201,9 @@ class BBSTerminalApp:
         self.escape_count = 0
         self.escape_timer = None
 
+        # Add new variable for Messages to You visibility
+        self.show_messages_to_you = tk.BooleanVar(value=True)
+
         # 1.BUILD UI
         self.build_ui()
 
@@ -336,6 +339,12 @@ class BBSTerminalApp:
                                           variable=self.logon_automation_enabled)
         logon_auto_check.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
 
+        # Add Messages to You checkbox next to it
+        messages_check = ttk.Checkbutton(checkbox_frame, text="Messages to You",
+                                       variable=self.show_messages_to_you,
+                                       command=self.toggle_messages_frame)
+        messages_check.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
         # Username frame
         self.username_frame = ttk.LabelFrame(top_frame, text="Username")
         self.username_frame.grid(row=3, column=0, columnspan=5, sticky="ew", padx=5, pady=5)
@@ -364,13 +373,15 @@ class BBSTerminalApp:
         paned_container.columnconfigure(0, weight=1)
         paned_container.rowconfigure(0, weight=1)
         
-        self.paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, sashwidth=10, sashrelief=tk.RAISED)
+        # Switch to tk.PanedWindow with specific size and relief
+        self.paned = tk.PanedWindow(paned_container, orient=tk.VERTICAL, 
+                               sashwidth=5, sashrelief=tk.RAISED,
+                               height=400, width=600)
         self.paned.pack(fill=tk.BOTH, expand=True)
         
-        # Top pane: BBS Output
+        # Top pane: BBS Output with explicit minimum height
         self.output_frame = ttk.LabelFrame(self.paned, text="BBS Output")
-        self.paned.add(self.output_frame)
-        self.paned.paneconfig(self.output_frame, minsize=200)  # Set minimum size for the top pane
+        self.paned.add(self.output_frame, minsize=200, stretch="always")
         self.terminal_display = tk.Text(self.output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         scroll_bar = ttk.Scrollbar(self.output_frame, command=self.terminal_display.yview)
@@ -383,10 +394,9 @@ class BBSTerminalApp:
         self.terminal_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
         # Bottom pane: Messages to You
-        messages_frame = ttk.LabelFrame(self.paned, text="Messages to You")
-        self.paned.add(messages_frame)
-        self.paned.paneconfig(messages_frame, minsize=100)  # Set minimum size for the bottom pane
-        self.directed_msg_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10, "bold"))
+        self.messages_frame = ttk.LabelFrame(self.paned, text="Messages to You") 
+        self.paned.add(self.messages_frame, minsize=100)
+        self.directed_msg_display = tk.Text(self.messages_frame, wrap=tk.WORD, state=tk.DISABLED, bg="lightyellow", font=("Courier New", 10, "bold"))
         self.directed_msg_display.pack(fill=tk.BOTH, expand=True)
         self.directed_msg_display.tag_configure("hyperlink", foreground="blue", underline=True)
         self.directed_msg_display.tag_bind("hyperlink", "<Button-1>", self.open_directed_message_hyperlink)
@@ -429,7 +439,12 @@ class BBSTerminalApp:
         
         # Restore frame sizes if saved
         if 'paned_pos' in self.frame_sizes:
-            self.master.after(100, lambda: self.paned.sashpos(0, self.frame_sizes['paned_pos']))
+            pos = self.frame_sizes['paned_pos']
+            # Use different method based on paned window type
+            if isinstance(self.paned, ttk.PanedWindow):
+                self.master.after(100, lambda: self.paned.sashposition(0, pos))
+            else:
+                self.master.after(100, lambda: self.paned.sash_place(0, pos, 0))
 
         self.update_display_font()
 
@@ -2563,6 +2578,7 @@ class BBSTerminalApp:
                     self.font_size.set(settings.get('font_size', 10))
                     self.logon_automation_enabled.set(settings.get('logon_automation', False))
                     self.keep_alive_enabled.set(settings.get('keep_alive', False))
+                    self.show_messages_to_you.set(settings.get('show_messages', True))
                     self.majorlink_mode.set(settings.get('majorlink_mode', True))
                     return settings
         except Exception as e:
@@ -2596,6 +2612,10 @@ class BBSTerminalApp:
                 self.master.geometry(settings['window_geometry'])
             except Exception as e:
                 print(f"Error setting window geometry: {e}")
+
+        # Apply Messages to You visibility
+        if not settings.get('show_messages', True):
+            self.toggle_messages_frame()
 
         # Update display font
         self.update_display_font()
@@ -2781,6 +2801,18 @@ class BBSTerminalApp:
         """Reset the escape key counter."""
         self.escape_count = 0
         self.escape_timer = None
+
+
+    def toggle_messages_frame(self):
+        """Toggle visibility of the Messages to You frame."""
+        if self.show_messages_to_you.get():
+            # Show messages frame
+            self.paned.add(self.messages_frame, minsize=100)
+            self.paned.update()
+        else:
+            # Hide messages frame
+            self.paned.remove(self.messages_frame)
+            self.paned.update()
 
 def main():
     root = tk.Tk()
