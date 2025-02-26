@@ -1203,7 +1203,6 @@ class BBSTerminalApp:
             # Continue with other message processing
             is_system = self.check_system_message(clean_line)
             if not is_system:
-                self.detect_logon_prompt(clean_line)
                 self.parse_and_save_chatlog_message(clean_line)
 
         except Exception as e:
@@ -1325,15 +1324,6 @@ class BBSTerminalApp:
         # Append to terminal if not already handled
         if msg_type not in ["whispered", "directed"]:
             self.append_terminal_text(formatted_msg + "\n", "normal")
-
-    def detect_logon_prompt(self, line):
-        """Simple triggers to automate login if toggles are on."""
-        lower_line = line.lower()
-        # Typical BBS prompts
-        if "enter your password:" in lower_line:
-            self.master.after(500, self.send_password)
-        elif "type it in and press enter" in lower_line or 'otherwise type "new":' in lower_line:
-            self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, line):
         """Parse and save chat messages with timestamps."""
