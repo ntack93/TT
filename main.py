@@ -1144,19 +1144,23 @@ class BBSTerminalApp:
                         continue
                     skip_display = True  # Skip displaying banner content
                     continue
-                
+
+                # Reset skip_display at start of each line unless in collecting_users mode
+                skip_display = False
+
                 if clean_line.startswith("You are in"):
                     self.user_list_buffer = [line]
                     self.collecting_users = True
                     skip_display = True  # Start of banner section
                     continue
-                
-                # Skip displaying banner-related lines
+
+                # Skip displaying specific banner-related lines
                 if any(pattern in clean_line for pattern in [
                     "Topic:",
                     "Just press",
                     "are here with you"
                 ]):
+                    skip_display = True
                     continue
 
             # Always collect users for member list functionality
@@ -1180,12 +1184,15 @@ class BBSTerminalApp:
             if (not self.has_requested_actions and 
                 "Teleconference" in clean_line):
                 # Look for the next line to confirm MajorLink entry
-                next_line_idx = lines[:-1].index(line) + 1
-                if (next_line_idx < len(lines) - 1 and 
-                    "You are in the MajorLink channel" in ansi_regex.sub('', lines[next_line_idx]).strip()):
-                    print("[DEBUG] Detected MajorLink entry, requesting actions list")
-                    self.has_requested_actions = True  # Set flag to prevent future requests
-                    self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
+                try:
+                    next_line_idx = lines[:-1].index(line) + 1
+                    if (next_line_idx < len(lines) - 1 and 
+                        "You are in the MajorLink channel" in ansi_regex.sub('', lines[next_line_idx]).strip()):
+                        print("[DEBUG] Detected MajorLink entry, requesting actions list")
+                        self.has_requested_actions = True  # Set flag to prevent future requests
+                        self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
+                except ValueError:
+                    pass  # Line not found in the buffer
 
         self.partial_line = lines[-1]
 
@@ -2262,23 +2269,20 @@ class BBSTerminalApp:
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
         
-        # Extract users section between Topic and "are here with you"
+        # Extract users section using a more robust pattern
         user_section = ""
-        if "Topic:" in combined_clean and "are here with you" in combined_clean:
-            # Extract everything between Topic and "are here with you"
-            match = re.search(r'Topic:.*?(?=\s+(?:are|is)\s+here)', combined_clean, re.DOTALL)
-            if match:
-                user_section = match.group(0)
-                # Clean up the user section
-                user_section = re.sub(r'Topic:.*?[.]\s*', '', user_section)  # Remove Topic line
-                user_section = re.sub(r'\([^)]*\)', '', user_section)  # Remove parentheticals
-                user_section = re.sub(r'\s+', ' ', user_section)  # Normalize whitespace
-                print(f"[DEBUG] Cleaned user section: {user_section}")
+        # First try to match the standard format
+        match = re.search(r'Topic:.*?\.\s*(.*?)\s+(?:is|are)\s+here\s+with\s+you', combined_clean, re.DOTALL)
+        if not match:
+            # Fallback to matching everything between "You are in" and "here with you"
+            match = re.search(r'You are in.*?(?:Topic:.*?\.)?\s*(.*?)\s+(?:is|are)\s+here\s+with\s+you', combined_clean, re.DOTALL)
         
-        final_usernames = set()
-        
-        # Split on commas and "and" to get individual entries
-        if user_section:
+        if match:
+            user_section = match.group(1).strip()
+            print(f"[DEBUG] Cleaned user section: {user_section}")
+            
+            final_usernames = set()
+            
             # First normalize the text by replacing " and " with ", "
             user_section = user_section.replace(" and ", ", ")
             # Split on comma and handle potential whitespace
@@ -2286,7 +2290,7 @@ class BBSTerminalApp:
             
             for entry in entries:
                 # Extract username with or without domain
-                # This pattern matches both "username@domain" and standalone "username"
+                # Updated pattern to better handle variances
                 username_match = re.match(r'^([A-Za-z][A-Za-z0-9._-]+)(?:@[\w.-]+)?$', entry)
                 if username_match:
                     username = username_match.group(1)
@@ -2298,21 +2302,25 @@ class BBSTerminalApp:
                         print(f"[DEBUG] Added username: {username} from entry: {entry}")
                 else:
                     print(f"[DEBUG] No match for entry: {entry}")
-        
-        print(f"[DEBUG] Extracted usernames: {final_usernames}")
-        self.chat_members = final_usernames
-
-        # Update last seen timestamps
-        current_time = int(time.time())
-        for member in self.chat_members:
-            self.last_seen[member.lower()] = current_time
-        self.save_last_seen_file()
-
-        # Save the chat members to file
-        self.save_chat_members_file()
-
-        # Refresh the members display panel
-        self.update_members_display()
+                    
+            print(f"[DEBUG] Extracted usernames: {final_usernames}")
+            
+            if final_usernames:  # Only update if we found valid usernames
+                self.chat_members = final_usernames
+                
+                # Update last seen timestamps
+                current_time = int(time.time())
+                for member in self.chat_members:
+                    self.last_seen[member.lower()] = current_time
+                self.save_last_seen_file()
+                
+                # Save the chat members to file
+                self.save_chat_members_file()
+                
+                # Refresh the members display panel
+                self.update_members_display()
+        else:
+            print("[DEBUG] Failed to extract user section from banner")
 
     def load_chat_members_file(self):
         """Load chat members from chat_members.json, or return an empty set if not found."""
