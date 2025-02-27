@@ -2257,36 +2257,43 @@ class BBSTerminalApp:
 
     def update_chat_members(self, lines_with_users):
         """Update the chat members based on the provided lines."""
+        # Combine lines and clean ANSI codes
         combined = " ".join(lines_with_users)
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
         
-        # Extract all usernames from the banner
+        # Extract users section between Topic and "are here with you"
         user_section = ""
-        if "You are in" in combined_clean and "are here with you" in combined_clean:
-            # Extract everything between "Topic:" and "are here with you"
-            match = re.search(r'Topic:.*?(?=\s+are here with you\.)', combined_clean, re.DOTALL)
+        if "Topic:" in combined_clean and "are here with you" in combined_clean:
+            # Extract everything between Topic and "are here with you"
+            match = re.search(r'Topic:.*?(?=\s+(?:are|is)\s+here)', combined_clean, re.DOTALL)
             if match:
                 user_section = match.group(0)
-                # Remove the Topic line and any parenthetical content
-                user_section = re.sub(r'Topic:.*?\n', '\n', user_section, flags=re.DOTALL)
-                user_section = re.sub(r'\(.*?\)', '', user_section)
+                # Clean up the user section
+                user_section = re.sub(r'Topic:.*?[.]\s*', '', user_section)  # Remove Topic line
+                user_section = re.sub(r'\([^)]*\)', '', user_section)  # Remove parentheticals
+                user_section = re.sub(r'\s+', ' ', user_section)  # Normalize whitespace
+                print(f"[DEBUG] Cleaned user section: {user_section}")
         
         final_usernames = set()
         
-        # Modified pattern to handle usernames with or without domains
-        usernames = re.findall(
-            r'([A-Za-z][A-Za-z0-9._-]+?)(?:@[\w.-]*)?(?:,|\s+and\s+|(?=\s+are here)|\s*$)', 
-            user_section
-        )
-        
-        # Process each username
-        for username in usernames:
-            username = username.strip()
-            if (len(username) >= 2 and 
-                username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
-                re.match(r'^[A-Za-z][A-Za-z0-9._-]*$', username)):
-                final_usernames.add(username)
+        # Split on commas and "and" to get individual entries
+        if user_section:
+            # Split on comma or "and"
+            entries = re.split(r',\s*|\s+and\s+', user_section)
+            for entry in entries:
+                entry = entry.strip()
+                if not entry:
+                    continue
+                    
+                # Extract username from entry (with or without domain)
+                username_match = re.match(r'^([A-Za-z][A-Za-z0-9._-]+)(?:@[\w.-]+)?$', entry)
+                if username_match:
+                    username = username_match.group(1)
+                    if (len(username) >= 2 and 
+                        username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
+                        not re.search(r'\.(com|net|org|us)$', username)):  # Exclude domain suffixes
+                        final_usernames.add(username)
         
         print(f"[DEBUG] Extracted usernames: {final_usernames}")
         self.chat_members = final_usernames
