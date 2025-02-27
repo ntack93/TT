@@ -2279,21 +2279,25 @@ class BBSTerminalApp:
         
         # Split on commas and "and" to get individual entries
         if user_section:
-            # Split on comma or "and"
-            entries = re.split(r',\s*|\s+and\s+', user_section)
+            # First normalize the text by replacing " and " with ", "
+            user_section = user_section.replace(" and ", ", ")
+            # Split on comma and handle potential whitespace
+            entries = [entry.strip() for entry in user_section.split(",") if entry.strip()]
+            
             for entry in entries:
-                entry = entry.strip()
-                if not entry:
-                    continue
-                    
-                # Extract username from entry (with or without domain)
+                # Extract username with or without domain
+                # This pattern matches both "username@domain" and standalone "username"
                 username_match = re.match(r'^([A-Za-z][A-Za-z0-9._-]+)(?:@[\w.-]+)?$', entry)
                 if username_match:
                     username = username_match.group(1)
+                    # Additional validation
                     if (len(username) >= 2 and 
                         username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
-                        not re.search(r'\.(com|net|org|us)$', username)):  # Exclude domain suffixes
+                        not re.search(r'\.(com|net|org|us)$', username)):
                         final_usernames.add(username)
+                        print(f"[DEBUG] Added username: {username} from entry: {entry}")
+                else:
+                    print(f"[DEBUG] No match for entry: {entry}")
         
         print(f"[DEBUG] Extracted usernames: {final_usernames}")
         self.chat_members = final_usernames
