@@ -232,20 +232,46 @@ class BBSTerminalApp:
         main_frame.rowconfigure(2, weight=0)
         container.add(main_frame, weight=1)
 
-        # Create the Chatroom Members panel in the MIDDLE
+        # Create the Chatroom Members panel in the MIDDLE with bubble icons
         members_frame = ttk.LabelFrame(container, text="Chatroom Members")
-        self.members_listbox = tk.Listbox(members_frame, height=20, width=20, exportselection=False)
-        self.members_listbox.pack(fill=tk.BOTH, expand=True)
-        self.create_members_context_menu()
+        self.members_canvas = tk.Canvas(members_frame, highlightthickness=0)
+        self.members_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        members_scrollbar = ttk.Scrollbar(members_frame, orient=tk.VERTICAL, 
+                                         command=self.members_canvas.yview)
+        members_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.members_canvas.configure(yscrollcommand=members_scrollbar.set)
+        
+        self.members_frame = ttk.Frame(self.members_canvas)
+        self.members_canvas.create_window((0, 0), window=self.members_frame, 
+                                        anchor=tk.NW, tags="self.members_frame")
+        
+        def on_configure(event):
+            self.members_canvas.configure(scrollregion=self.members_canvas.bbox("all"))
+        
+        self.members_frame.bind('<Configure>', on_configure)
         container.add(members_frame, weight=0)
 
-        # Create the Actions listbox on the RIGHT
+        # Create the Actions listbox on the RIGHT with bubble icons
         actions_frame = ttk.LabelFrame(container, text="Actions")
-        self.actions_listbox = tk.Listbox(actions_frame, height=20, width=20, exportselection=False)
-        self.actions_listbox.pack(fill=tk.BOTH, expand=True)
-        self.actions_listbox.bind("<Double-Button-1>", self.on_action_select)
-        self.actions_listbox.bind("<Return>", self.on_action_select)
-        self.actions_listbox.bind("<Button-1>", self.on_action_select)
+        self.actions_canvas = tk.Canvas(actions_frame, highlightthickness=0)
+        self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        actions_scrollbar = ttk.Scrollbar(actions_frame, orient=tk.VERTICAL, 
+                                         command=self.actions_canvas.yview)
+        actions_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.actions_canvas.configure(yscrollcommand=actions_scrollbar.set)
+        
+        self.actions_frame = ttk.Frame(self.actions_canvas)
+        self.actions_canvas.create_window((0, 0), window=self.actions_frame, 
+                                        anchor=tk.NW, tags="self.actions_frame")
+        
+        def on_actions_configure(event):
+            self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
+        
+        self.actions_frame.bind('<Configure>', on_actions_configure)
         container.add(actions_frame, weight=0)
 
         # --- Row 0: Top frame (connection settings, username, password) ---
@@ -452,7 +478,7 @@ class BBSTerminalApp:
         self.master.after(100, self.apply_saved_settings)
 
     def configure_button_styles(self):
-        """Configure custom styles for buttons."""
+        """Configure custom styles for buttons including bubbles."""
         style = ttk.Style()
         
         # Enable themed widgets to use ttk styles
@@ -501,6 +527,28 @@ class BBSTerminalApp:
         # Add new button styles
         configure_button_style("Teleconference", "#20c997")  # Teal
         configure_button_style("BRB", "#6610f2")  # Purple
+
+        # Configure bubble styles
+        style.configure("Bubble.TButton",
+            padding=(10, 5),
+            relief="raised",
+            background="#f0f0f0",
+            borderwidth=2,
+            font=("Arial", 9))
+            
+        style.configure("BubbleHover.TButton",
+            padding=(10, 5),
+            relief="raised",
+            background="#e0e0e0",
+            borderwidth=2,
+            font=("Arial", 9))
+            
+        style.configure("BubbleSelected.TButton",
+            padding=(10, 5),
+            relief="sunken",
+            background="#d0d0d0",
+            borderwidth=2,
+            font=("Arial", 9))
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -855,6 +903,11 @@ class BBSTerminalApp:
         # Start blink timer
         self.blink_timer()
 
+        # Ensure color tags have priority over other tags
+        for tag in self.get_all_color_tags():
+            if hasattr(self.terminal_display, 'tag_raise'):
+                self.terminal_display.tag_raise(tag)
+
     def blink_timer(self):
         """Toggle blink state every 500ms."""
         self.blink_state = not self.blink_state
@@ -868,6 +921,69 @@ class BBSTerminalApp:
         
         # Schedule next blink
         self.master.after(500, self.blink_timer)
+
+    def get_all_color_tags(self):
+        """Return a set of all possible color tags."""
+        return {
+            'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+            'bright_black', 'bright_red', 'bright_green', 'bright_yellow',
+            'bright_blue', 'bright_magenta', 'bright_cyan', 'bright_white'
+        }
+
+    def parse_ansi_and_insert(self, text_data):
+        """Enhanced parser for ANSI codes including blink and overlapping colors."""
+        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
+        last_end = 0
+        current_tags = ["normal"]
+        color_stack = []
+        blink_tag = None
+
+        for match in ansi_escape_regex.finditer(text_data):
+            start, end = match.span()
+            if start > last_end:
+                segment = text_data[last_end:start]
+                self.insert_with_hyperlinks(segment, tuple(current_tags))
+            
+            code_string = match.group(1)
+            codes = code_string.split(';')
+            
+            # Handle reset code
+            if '0' in codes or not codes:
+                current_tags = ["normal"]
+                color_stack = []
+                blink_tag = None
+                codes = [code for code in codes if code not in ['0', '']]
+
+            for code in codes:
+                if code in ['5', '6']:  # Blink codes
+                    if not blink_tag:
+                        blink_tag = f"blink_{len(self.blink_tags)}"
+                        self.terminal_display.tag_configure(blink_tag, background="")
+                        self.blink_tags.add(blink_tag)
+                    if blink_tag not in current_tags:
+                        current_tags.append(blink_tag)
+                else:
+                    # Handle color codes
+                    mapped_tag = self.map_code_to_tag(code)
+                    if mapped_tag:
+                        # Remove any existing color tags before adding new one
+                        current_tags = [tag for tag in current_tags 
+                                      if tag not in self.get_all_color_tags()]
+                        current_tags.append(mapped_tag)
+                        if blink_tag and blink_tag in current_tags:
+                            # Ensure blink tag stays at end of list
+                            current_tags.remove(blink_tag)
+                            current_tags.append(blink_tag)
+                        
+                        # Update color stack
+                        color_stack.append(mapped_tag)
+
+            last_end = end
+
+        # Insert any remaining text
+        if last_end < len(text_data):
+            segment = text_data[last_end:]
+            self.insert_with_hyperlinks(segment, tuple(current_tags))
 
     # 1.5️⃣ CONNECT / DISCONNECT
     def toggle_connection(self):
@@ -1375,19 +1491,16 @@ class BBSTerminalApp:
         if not self.connected or not self.writer:
             return
             
-        selected_indices = self.members_listbox.curselection()
-        if selected_indices:
-            username = self.members_listbox.get(selected_indices[0])
-            action = f"{action} {username}"
+        if hasattr(self, 'selected_member') and self.selected_member:
+            action = f"{action} {self.selected_member}"
             
         message = action + "\r\n"
         async def send():
             try:
                 self.writer.write(message)
                 await self.writer.drain()
-                # Deselect the action after sending
-                self.actions_listbox.selection_clear(0, tk.END)
-                self.members_listbox.selection_clear(0, tk.END)
+                # Deselect the member after sending
+                self.deselect_all_members()
             except Exception as e:
                 print(f"Error sending action: {e}")
                 
@@ -1574,12 +1687,13 @@ class BBSTerminalApp:
         self.terminal_display.configure(state=tk.DISABLED)
 
     def parse_ansi_and_insert(self, text_data):
-        """Enhanced parser for ANSI codes including blink."""
+        """Enhanced parser for ANSI codes including blink and overlapping colors."""
         ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
         last_end = 0
         current_tags = ["normal"]
+        color_stack = []
         blink_tag = None
-    
+
         for match in ansi_escape_regex.finditer(text_data):
             start, end = match.span()
             if start > last_end:
@@ -1589,14 +1703,15 @@ class BBSTerminalApp:
             code_string = match.group(1)
             codes = code_string.split(';')
             
-            if '0' in codes:
+            # Handle reset code
+            if '0' in codes or not codes:
                 current_tags = ["normal"]
+                color_stack = []
                 blink_tag = None
-                codes.remove('0')
-    
+                codes = [code for code in codes if code not in ['0', '']]
+
             for code in codes:
-                # Handle blink codes
-                if code in ['5', '6']:  # Both slow and rapid blink
+                if code in ['5', '6']:  # Blink codes
                     if not blink_tag:
                         blink_tag = f"blink_{len(self.blink_tags)}"
                         self.terminal_display.tag_configure(blink_tag, background="")
@@ -1604,12 +1719,24 @@ class BBSTerminalApp:
                     if blink_tag not in current_tags:
                         current_tags.append(blink_tag)
                 else:
+                    # Handle color codes
                     mapped_tag = self.map_code_to_tag(code)
-                    if mapped_tag and mapped_tag not in current_tags:
+                    if mapped_tag:
+                        # Remove any existing color tags before adding new one
+                        current_tags = [tag for tag in current_tags 
+                                      if tag not in self.get_all_color_tags()]
                         current_tags.append(mapped_tag)
+                        if blink_tag and blink_tag in current_tags:
+                            # Ensure blink tag stays at end of list
+                            current_tags.remove(blink_tag)
+                            current_tags.append(blink_tag)
                         
+                        # Update color stack
+                        color_stack.append(mapped_tag)
+
             last_end = end
-    
+
+        # Insert any remaining text
         if last_end < len(text_data):
             segment = text_data[last_end:]
             self.insert_with_hyperlinks(segment, tuple(current_tags))
@@ -2257,10 +2384,39 @@ class BBSTerminalApp:
         self.chatlog_display.see(tk.END)
 
     def update_members_display(self):
-        """Update the chat members Listbox with the current chat_members set."""
-        self.members_listbox.delete(0, tk.END)
-        for member in sorted(self.chat_members):
-            self.members_listbox.insert(tk.END, member)
+        """Update the chat members display with bubble icons."""
+        # Clear existing members
+        for widget in self.members_frame.winfo_children():
+            widget.destroy()
+
+        # Configure style for bubble buttons
+        style = ttk.Style()
+        style.configure("Bubble.TButton",
+            padding=(10, 5),
+            relief="raised",
+            background="#f0f0f0",
+            borderwidth=2,
+            font=("Arial", 9))
+
+        # Create bubble button for each member
+        for i, member in enumerate(sorted(self.chat_members)):
+            button = ttk.Button(self.members_frame, 
+                              text=member,
+                              style="Bubble.TButton",
+                              cursor="hand2")
+            button.pack(pady=2, padx=5, fill=tk.X)
+            
+            # Bind click events
+            button.bind('<Button-1>', 
+                       lambda e, m=member: self.select_member(m))
+            
+            # Add hover effects
+            button.bind('<Enter>', 
+                       lambda e, b=button: self.on_button_hover(b, True))
+            button.bind('<Leave>', 
+                       lambda e, b=button: self.on_button_hover(b, False))
+
+        self.members_frame.update_idletasks()
 
     def update_chat_members(self, lines_with_users):
         """Update the chat members based on the provided lines."""
@@ -2394,31 +2550,46 @@ class BBSTerminalApp:
             await self.writer.drain()
 
     def update_actions_listbox(self):
-        """Update the Actions listbox with the current actions."""
-        self.actions_listbox.delete(0, tk.END)
-        for action in self.actions:
-            self.actions_listbox.insert(tk.END, action)
+        """Update the Actions listbox with bubble icons."""
+        # Clear existing actions
+        for widget in self.actions_frame.winfo_children():
+            widget.destroy()
 
-    def on_action_select(self, event):
-        """Handle action selection and send the action to the highlighted username."""
-        selected_action_index = self.actions_listbox.curselection()
-        selected_member_index = self.members_listbox.curselection()
-        
-        if selected_action_index and selected_member_index:
-            action = self.actions_listbox.get(selected_action_index[0])
-            username = self.members_listbox.get(selected_member_index[0])
+        # Create bubble button for each action
+        for action in self.actions:
+            button = ttk.Button(self.actions_frame, 
+                              text=action,
+                              style="Bubble.TButton",
+                              cursor="hand2")
+            button.pack(pady=2, padx=5, fill=tk.X)
             
+            # Bind click events
+            button.bind('<Button-1>', 
+                       lambda e, a=action: self.on_action_select(a))
+            button.bind('<Double-Button-1>', 
+                       lambda e, a=action: self.send_action(a))
+            
+            # Add hover effects
+            button.bind('<Enter>', 
+                       lambda e, b=button: self.on_button_hover(b, True))
+            button.bind('<Leave>', 
+                       lambda e, b=button: self.on_button_hover(b, False))
+
+        self.actions_frame.update_idletasks()
+
+    def on_action_select(self, action):
+        """Handle action selection and send the action to the highlighted username."""
+        if hasattr(self, 'selected_member') and self.selected_member:
             # Format and send the action command
-            action_command = f"{action} {username}"
+            action_command = f"{action} {self.selected_member}"
             if self.connected and self.writer:
                 asyncio.run_coroutine_threadsafe(
                     self._send_message(action_command + "\r\n"), 
                     self.loop
                 )
                 
-                # Deselect the action after sending
-                self.actions_listbox.selection_clear(0, tk.END)
-                self.members_listbox.selection_clear(0, tk.END)
+                # Deselect the member after sending
+                self.deselect_all_members()
 
     def store_hyperlink(self, url, sender="Unknown", timestamp=None):
         """Store a hyperlink with metadata."""
@@ -2865,6 +3036,41 @@ class BBSTerminalApp:
             # Hide messages frame
             self.paned.remove(self.messages_frame)
             self.paned.update()
+
+    def select_member(self, member):
+        """Select a member from the chat list."""
+        print(f"Selected member: {member}")
+        self.selected_member = member
+        # Highlight the selected member's button
+        for child in self.members_frame.winfo_children():
+            if isinstance(child, ttk.Button):
+                if child['text'] == member:
+                    child.configure(style="BubbleSelected.TButton")
+                else:
+                    child.configure(style="Bubble.TButton")
+
+    def on_button_hover(self, button, is_hovering):
+        """Handle hover effects for bubble buttons."""
+        if is_hovering:
+            # Don't change style if button is selected
+            if button['style'] != "BubbleSelected.TButton":
+                button.configure(style="BubbleHover.TButton")
+        else:
+            # Return to normal style only if not selected
+            if button['style'] != "BubbleSelected.TButton":
+                button.configure(style="Bubble.TButton")
+
+    # Add these new helper methods
+    def deselect_all_members(self):
+        """Deselect all members in the list."""
+        for child in self.members_frame.winfo_children():
+            if isinstance(child, ttk.Button):
+                child.configure(style="Bubble.TButton")
+        self.selected_member = None
+
+    def get_selected_member(self):
+        """Return the currently selected member."""
+        return getattr(self, 'selected_member', None)
 
 def main():
     root = tk.Tk()
