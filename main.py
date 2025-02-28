@@ -458,7 +458,7 @@ class BBSTerminalApp:
             "Spell.TButton",
             foreground="darkblue",
             background="white",
-            font=("Perfect DOS VGA 437", 9),
+            font=("Arial VGA 437", 9),
             padding=(5, 2)
         )
         
@@ -495,7 +495,7 @@ class BBSTerminalApp:
                 bordercolor=bg,
                 darkcolor=bg,
                 lightcolor=bg,
-                font=("Perfect DOS VGA 437", 9, "bold"),
+                font=("Arial VGA 437", 9, "bold"),
                 relief="raised",
                 padding=(10, 5)
             )
@@ -535,21 +535,21 @@ class BBSTerminalApp:
             relief="raised",
             background="#f0f0f0",
             borderwidth=2,
-            font=("Perfect DOS VGA 437", 9))
+            font=("Arial VGA 437", 9))
             
         style.configure("BubbleHover.TButton",
             padding=(10, 5),
             relief="raised",
             background="#e0e0e0",
             borderwidth=2,
-            font=("Perfect DOS VGA 437", 9))
+            font=("Arial VGA 437", 9))
             
         style.configure("BubbleSelected.TButton",
             padding=(10, 5),
             relief="sunken",
             background="#d0d0d0",
             borderwidth=2,
-            font=("Perfect DOS VGA 437", 9))
+            font=("Arial VGA 437", 9))
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -2400,7 +2400,7 @@ class BBSTerminalApp:
                 relief="raised",
                 background=bg_color,
                 borderwidth=2,
-                font=("Perfect DOS VGA 437", 9, "bold"))
+                font=("Arial VGA 437", 9, "bold"))
 
             button = ttk.Button(self.members_frame, 
                               text=member,
@@ -2570,7 +2570,7 @@ class BBSTerminalApp:
                 relief="raised",
                 background=bg_color,
                 borderwidth=2,
-                font=("Perfect DOS VGA 437", 9, "bold"))
+                font=("Arial VGA 437", 9, "bold"))
 
             button = ttk.Button(scrollable_frame, 
                               text=action,
