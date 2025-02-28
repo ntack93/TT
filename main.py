@@ -15,6 +15,7 @@ from io import BytesIO
 import winsound  # Import winsound for playing sound effects on Windows
 from tkinter import simpledialog  # Import simpledialog for input dialogs
 import random
+from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
 
 try:
     import enchant
@@ -26,33 +27,7 @@ except ImportError:
 #                         BBS Telnet App (No Chatbot)
 ###############################################################################
 
-def create_cp437_to_unicode_map():
-    """Create a mapping of CP437 codes to their Unicode equivalents"""
-    # Standard ASCII (0-127) maps directly
-    cp437_map = {i: chr(i) for i in range(128)}
-    
-    # Extended ASCII (128-255) special mapping
-    cp437_extended = [
-        # Box drawing and block elements (128-175)
-        '€', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
-        'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
-        'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
-        '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
-        '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
-        '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
-        # Special characters and symbols (0-31)
-        '␀', '☺', '☻', '♥', '♦', '♣', '♠', '•', '◘', '○', '◙', '♂', '♀', '♪', '♫', '☼',
-        '►', '◄', '↕', '‼', '¶', '§', '▬', '↨', '↑', '↓', '→', '←', '∟', '↔', '▲', '▼',
-        # Rest of extended ASCII (176-255)
-        'α', 'β', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
-        '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', ' '
-    ]
-    
-    # Add extended ASCII mappings
-    for i, char in enumerate(cp437_extended):
-        cp437_map[i + 128] = char
-        
-    return cp437_map
+
 
 class BBSTerminalApp:
     def __init__(self, master):
