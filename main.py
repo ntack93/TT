@@ -2478,10 +2478,14 @@ class BBSTerminalApp:
         
         # Extract users section using improved pattern
         if "Topic:" in combined_clean:
-            # Get everything after "Topic:" and before "are here with you"
-            user_section = re.search(r'Topic:.*?([^:]+?)(?:\s+(?:is|are)\s+here\s+with\s+you)', combined_clean)
-            if user_section:
-                users_text = user_section.group(1).strip()
+            # Modified pattern to properly handle the topic section
+            topic_pattern = r'Topic:\s*([^,]+),\s*(.*?)(?:\s+(?:is|are)\s+here\s+with\s+you)'
+            match = re.search(topic_pattern, combined_clean)
+            
+            if match:
+                topic = match.group(1).strip()  # Save topic for later if needed
+                users_text = match.group(2).strip()
+                print(f"[DEBUG] Found topic: {topic}")
                 print(f"[DEBUG] Found users text: {users_text}")
                 
                 # Split on commas and "and"
@@ -2490,18 +2494,26 @@ class BBSTerminalApp:
                 
                 final_usernames = set()
                 for entry in user_entries:
+                    if not entry:  # Skip empty entries
+                        continue
+                        
                     # Extract username from email-style addresses
                     username = entry.split('@')[0].strip() if '@' in entry else entry.strip()
+                    
+                    # Clean username but preserve dots for names like "Bill.The.Cat"
                     username = re.sub(r'[^A-Za-z0-9._-]', '', username)
                     
-                    # Enhanced validation
-                    if (len(username) >= 2 and
-                        username[0].isalpha() and  # Must start with letter
-                        not any(word in username.lower() for word in {
-                            'topic', 'general', 'chat', 'channel', 'majorlink',
-                            'net', 'com', 'org', 'bbs'  # Exclude common TLDs
-                        }) and
-                        not re.search(r'\.(net|com|org|bbs)$', username.lower())):
+                    # Enhanced validation with special cases
+                    special_users = {'Chatbot', 'Hornet'}  # Add other special usernames here
+                    
+                    if (username in special_users or
+                        (len(username) >= 2 and
+                         username[0].isalpha() and  # Must start with letter
+                         not any(word.lower() == username.lower() for word in {
+                             'topic', 'general', 'chat', 'channel', 'majorlink',
+                             'net', 'com', 'org', 'bbs'  # Exclude common TLDs
+                         }) and
+                         not re.search(r'\.(net|com|org|bbs)$', username.lower()))):
                         
                         print(f"[DEBUG] Adding valid username: {username}")
                         final_usernames.add(username)
@@ -2513,7 +2525,7 @@ class BBSTerminalApp:
                     self.save_chat_members_file()
                     self.update_members_display()
                     
-                    # Use the non-async wrapper to request actions
+                    # Request actions list if this is first banner this session
                     current_time = time.time()
                     if (not self.banner_seen_this_session and 
                         current_time - self.last_banner_time > 5):
