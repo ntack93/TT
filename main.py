@@ -1008,9 +1008,13 @@ class BBSTerminalApp:
         self.has_requested_actions = False
 
         def run_telnet():
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self.telnet_client_task(host, port))
-
+            try:
+                asyncio.set_event_loop(self.loop)
+                self.loop.run_until_complete(self.telnet_client_task(host, port))
+            except Exception as e:
+                print(f"[DEBUG] Error in telnet thread: {e}")
+                self.msg_queue.put_nowait(f"Connection error: {e}\n")
+        
         thread = threading.Thread(target=run_telnet, daemon=True)
         thread.start()
         self.append_terminal_text(f"Connecting to {host}:{port}...\n", "normal")
@@ -1231,6 +1235,7 @@ class BBSTerminalApp:
 
             # Add Actions list detection before MajorLink mode check
             if "Action listing for:" in clean_line:
+                print(f"[DEBUG] Action list start detected: {clean_line}")
                 self.actions = []  # Clear existing actions
                 self.collecting_actions = True
                 self.actions_requested = False  # Reset flag after receiving list
@@ -1238,16 +1243,16 @@ class BBSTerminalApp:
                 self.master.after(50, lambda: self.send_message(None))
                 continue
             elif clean_line == ":" and self.collecting_actions:
+                print(f"[DEBUG] Action list complete, found {len(self.actions)} actions")
                 self.collecting_actions = False
                 self.update_actions_listbox()  # Update the display
                 continue
             elif self.collecting_actions:
                 # Split line into words and add valid actions
-                potential_actions = clean_line.split()
-                self.actions.extend(
-                    action for action in potential_actions 
-                    if action and len(action) >= 2  # Ensure valid action
-                )
+                actions = [word.strip() for word in clean_line.split() 
+                         if len(word.strip()) >= 2 and word.strip().isalpha()]
+                self.actions.extend(actions)
+                print(f"[DEBUG] Added actions from line: {actions}")
                 continue
 
             if self.majorlink_mode.get():
@@ -1475,18 +1480,31 @@ class BBSTerminalApp:
                 # Send the associated response
                 self.send_custom_message(trigger_obj['response'])
 
+    async def _send_message(self, message):
+        """Improved async message sending with proper error handling."""
+        if not (self.connected and self.writer):
+            return
+            
+        try:
+            self.writer.write(message)
+            await self.writer.drain()
+        except Exception as e:
+            print(f"[DEBUG] Error sending message: {e}")
+            # Don't propagate the error to avoid crashes
+
     def send_custom_message(self, message):
-        """Send a custom message (for trigger responses)."""
-        if self.connected and self.writer:
-            message = message + "\r\n"
-            async def send():
-                try:
-                    self.writer.write(message)
-                    await self.writer.drain()
-                except Exception as e:
-                    print(f"Error sending custom message: {e}")
-                    
-            asyncio.run_coroutine_threadsafe(send(), self.loop)
+        """Enhanced message sending with proper async handling."""
+        if not (self.connected and self.writer):
+            return
+            
+        message = message + "\r\n"
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._send_message(message), 
+                self.loop
+            )
+        except Exception as e:
+            print(f"[DEBUG] Error in send_custom_message: {e}")
 
     def send_action(self, action):
         """Send an action to the BBS, optionally appending the highlighted username."""
@@ -1514,7 +1532,7 @@ class BBSTerminalApp:
         while not self.keep_alive_stop_event.is_set():
             if self.connected and self.writer:
                 self.writer.write("\r\n")
-                await self.writer.drain()
+                await asyncio.drain()
             await asyncio.sleep(60)
 
     def start_keep_alive(self):
@@ -2416,18 +2434,15 @@ class BBSTerminalApp:
         self.members_frame.update_idletasks()
 
     def update_chat_members(self, lines_with_users):
-        """Update the chat members based on the provided lines."""
-        # Combine lines and clean ANSI codes
+        """Update chat members, handling duplicate usernames with different domains."""
         combined = " ".join(lines_with_users)
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
         
-        # Extract users section using a more robust pattern
+        # Extract users section using updated pattern
         user_section = ""
-        # First try to match the standard format
         match = re.search(r'Topic:.*?\.\s*(.*?)\s+(?:is|are)\s+here\s+with\s+you', combined_clean, re.DOTALL)
         if not match:
-            # Fallback to matching everything between "You are in" and "here with you"
             match = re.search(r'You are in.*?(?:Topic:.*?\.)?\s*(.*?)\s+(?:is|are)\s+here\s+with\s+you', combined_clean, re.DOTALL)
         
         if match:
@@ -2435,45 +2450,48 @@ class BBSTerminalApp:
             print(f"[DEBUG] Cleaned user section: {user_section}")
             
             final_usernames = set()
+            username_domains = {}  # Track domains for duplicate usernames
             
-            # First normalize the text by replacing " and " with ", "
+            # Normalize text and split into entries
             user_section = user_section.replace(" and ", ", ")
-            # Split on comma and handle potential whitespace
             entries = [entry.strip() for entry in user_section.split(",") if entry.strip()]
             
             for entry in entries:
-                # Extract username with or without domain
-                # Updated pattern to better handle variances
-                username_match = re.match(r'^([A-Za-z][A-Za-z0-9._-]+)(?:@[\w.-]+)?$', entry)
+                # Match username with optional domain
+                username_match = re.match(r'^([A-Za-z][A-Za-z0-9._-]+)(?:@([\w.-]+))?$', entry)
                 if username_match:
                     username = username_match.group(1)
-                    # Additional validation
-                    if (len(username) >= 2 and 
-                        username.lower() not in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} and
-                        not re.search(r'\.(com|net|org|us)$', username)):
-                        final_usernames.add(username)
-                        print(f"[DEBUG] Added username: {username} from entry: {entry}")
+                    domain = username_match.group(2) or "local"
+                    
+                    # Skip invalid usernames
+                    if (len(username) < 2 or
+                        username.lower() in {'in', 'the', 'chat', 'general', 'channel', 'topic', 'majorlink'} or
+                        re.search(r'\.(com|net|org|us)$', username)):
+                        continue
+                    
+                    # Handle duplicate usernames by appending domain
+                    base_username = username
+                    if username in username_domains:
+                        # If this username exists but with a different domain
+                        if domain != username_domains[username]:
+                            username = f"{username}_{domain.split('.')[0]}"
+                    
+                    username_domains[base_username] = domain
+                    final_usernames.add(username)
+                    print(f"[DEBUG] Added username: {username} from entry: {entry}")
                 else:
                     print(f"[DEBUG] No match for entry: {entry}")
-                    
+            
             print(f"[DEBUG] Extracted usernames: {final_usernames}")
             
-            if final_usernames:  # Only update if we found valid usernames
+            if final_usernames:
                 self.chat_members = final_usernames
-                
-                # Update last seen timestamps
                 current_time = int(time.time())
                 for member in self.chat_members:
                     self.last_seen[member.lower()] = current_time
                 self.save_last_seen_file()
-                
-                # Save the chat members to file
                 self.save_chat_members_file()
-                
-                # Refresh the members display panel
                 self.update_members_display()
-        else:
-            print("[DEBUG] Failed to extract user section from banner")
 
     def load_chat_members_file(self):
         """Load chat members from chat_members.json, or return an empty set if not found."""
@@ -2789,12 +2807,12 @@ class BBSTerminalApp:
         try:
             # Get sash position based on paned window type
             if isinstance(self.paned, ttk.PanedWindow):
-                sash_pos = self.paned.paneconfig(self.output_frame, 'weight')[4]
+                self.paned.paneconfig(self.output_frame, 'weight')[4]
             else:
                 try:
-                    sash_pos = self.paned.sash_coord(0)[0]
+                    self.paned.sash_coord(0)[0]
                 except:
-                    sash_pos = 200  # Default value if we can't get position
+                    200  # Default value if we can't get position
 
             sizes = {
                 'paned_pos': sash_pos,
