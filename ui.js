@@ -161,7 +161,7 @@ function saveSettings() {
 // Split View functionality: clones the main container and appends it
 function splitView() {
     const mainContainer = document.getElementById('mainContainer');
-    const clone = mainContainer.cloneNode(true);
+    const clone = mainContainer.cloneNode=True;
     mainContainer.parentNode.appendChild(clone);
     console.log("Split View button clicked");
 }
