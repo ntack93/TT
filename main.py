@@ -14,6 +14,7 @@ import requests
 from io import BytesIO
 import winsound  # Import winsound for playing sound effects on Windows
 from tkinter import simpledialog  # Import simpledialog for input dialogs
+import random
 
 try:
     import enchant
@@ -406,7 +407,7 @@ class BBSTerminalApp:
         self.paned.pack(fill=tk.BOTH, expand=True)
         
         # Top pane: BBS Output with explicit minimum height
-        self.output_frame = ttk.LabelFrame(self.paned, text="BBS Output")
+        self.output_frame = ttk.LabelFrame(self.paned, text="Terminal")
         self.paned.add(self.output_frame, minsize=200, stretch="always")
         self.terminal_display = tk.Text(self.output_frame, wrap=tk.WORD, state=tk.DISABLED, bg="black", font=("Courier New", 10))
         self.terminal_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -457,7 +458,7 @@ class BBSTerminalApp:
             "Spell.TButton",
             foreground="darkblue",
             background="white",
-            font=("Arial", 9),
+            font=("Perfect DOS VGA 437", 9),
             padding=(5, 2)
         )
         
@@ -494,7 +495,7 @@ class BBSTerminalApp:
                 bordercolor=bg,
                 darkcolor=bg,
                 lightcolor=bg,
-                font=("Arial", 9, "bold"),
+                font=("Perfect DOS VGA 437", 9, "bold"),
                 relief="raised",
                 padding=(10, 5)
             )
@@ -534,21 +535,21 @@ class BBSTerminalApp:
             relief="raised",
             background="#f0f0f0",
             borderwidth=2,
-            font=("Arial", 9))
+            font=("Perfect DOS VGA 437", 9))
             
         style.configure("BubbleHover.TButton",
             padding=(10, 5),
             relief="raised",
             background="#e0e0e0",
             borderwidth=2,
-            font=("Arial", 9))
+            font=("Perfect DOS VGA 437", 9))
             
         style.configure("BubbleSelected.TButton",
             padding=(10, 5),
             relief="sunken",
             background="#d0d0d0",
             borderwidth=2,
-            font=("Arial", 9))
+            font=("Perfect DOS VGA 437", 9))
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -1056,26 +1057,27 @@ class BBSTerminalApp:
                 cols=self.cols,    # Use the configured number of columns
                 rows=self.rows     # Use the configured number of rows
             )
+            self.reader = reader
+            self.writer = writer
+            self.connected = True
+            self.connect_button.config(text="Disconnect")
+            self.msg_queue.put_nowait(f"Connected to {host}:{port}\n")
+
+            while not self.stop_event.is_set():
+                try:
+                    data = await reader.read(4096)
+                    if not data:
+                        break
+                    self.msg_queue.put_nowait(data)
+                except ConnectionResetError:
+                    self.msg_queue.put_nowait("Connection was reset by the server.\n")
+                    break
+                except Exception as e:
+                    self.msg_queue.put_nowait(f"Error reading from server: {e}\n")
+                    break
+
         except Exception as e:
             self.msg_queue.put_nowait(f"Connection failed: {e}\n")
-            return
-
-        self.reader = reader
-        self.writer = writer
-        self.connected = True
-        self.connect_button.config(text="Disconnect")
-        self.msg_queue.put_nowait(f"Connected to {host}:{port}\n")
-
-        try:
-            while not self.stop_event.is_set():
-                data = await reader.read(4096)
-                if not data:
-                    break
-                self.msg_queue.put_nowait(data)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            self.msg_queue.put_nowait(f"Error reading from server: {e}\n")
         finally:
             await self.disconnect_from_bbs()
 
@@ -2385,36 +2387,31 @@ class BBSTerminalApp:
 
     def update_members_display(self):
         """Update the chat members display with bubble icons."""
-        # Clear existing members
         for widget in self.members_frame.winfo_children():
             widget.destroy()
 
-        # Configure style for bubble buttons
         style = ttk.Style()
-        style.configure("Bubble.TButton",
-            padding=(10, 5),
-            relief="raised",
-            background="#f0f0f0",
-            borderwidth=2,
-            font=("Arial", 9))
-
-        # Create bubble button for each member
         for i, member in enumerate(sorted(self.chat_members)):
+            bg_color = self.random_color()
+            # Create unique style for each button
+            style_name = f"Member{i}.TButton"
+            style.configure(style_name,
+                padding=(10, 5),
+                relief="raised",
+                background=bg_color,
+                borderwidth=2,
+                font=("Perfect DOS VGA 437", 9, "bold"))
+
             button = ttk.Button(self.members_frame, 
                               text=member,
-                              style="Bubble.TButton",
-                              cursor="hand2")
+                              style=style_name,
+                              cursor="hand2",
+                              width=20)  # Fixed width for consistency
             button.pack(pady=2, padx=5, fill=tk.X)
             
-            # Bind click events
-            button.bind('<Button-1>', 
-                       lambda e, m=member: self.select_member(m))
-            
-            # Add hover effects
-            button.bind('<Enter>', 
-                       lambda e, b=button: self.on_button_hover(b, True))
-            button.bind('<Leave>', 
-                       lambda e, b=button: self.on_button_hover(b, False))
+            button.bind('<Button-1>', lambda e, m=member: self.select_member(m))
+            button.bind('<Enter>', lambda e, b=button, s=style_name: self.on_button_hover(b, True, s))
+            button.bind('<Leave>', lambda e, b=button, s=style_name: self.on_button_hover(b, False, s))
 
         self.members_frame.update_idletasks()
 
@@ -2551,31 +2548,49 @@ class BBSTerminalApp:
 
     def update_actions_listbox(self):
         """Update the Actions listbox with bubble icons."""
-        # Clear existing actions
         for widget in self.actions_frame.winfo_children():
             widget.destroy()
 
-        # Create bubble button for each action
-        for action in self.actions:
-            button = ttk.Button(self.actions_frame, 
+        canvas = tk.Canvas(self.actions_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.actions_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        # Configure scrolling
+        scrollable_frame.bind("<Configure>", 
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=200)  # Fixed width
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        style = ttk.Style()
+        for i, action in enumerate(self.actions):
+            bg_color = self.random_color()
+            style_name = f"Action{i}.TButton"
+            style.configure(style_name,
+                padding=(10, 5),
+                relief="raised",
+                background=bg_color,
+                borderwidth=2,
+                font=("Perfect DOS VGA 437", 9, "bold"))
+
+            button = ttk.Button(scrollable_frame, 
                               text=action,
-                              style="Bubble.TButton",
-                              cursor="hand2")
+                              style=style_name,
+                              cursor="hand2",
+                              width=20)  # Fixed width
             button.pack(pady=2, padx=5, fill=tk.X)
             
-            # Bind click events
-            button.bind('<Button-1>', 
-                       lambda e, a=action: self.on_action_select(a))
-            button.bind('<Double-Button-1>', 
-                       lambda e, a=action: self.send_action(a))
-            
-            # Add hover effects
-            button.bind('<Enter>', 
-                       lambda e, b=button: self.on_button_hover(b, True))
-            button.bind('<Leave>', 
-                       lambda e, b=button: self.on_button_hover(b, False))
+            button.bind('<Button-1>', lambda e, a=action: self.on_action_select(a))
+            button.bind('<Enter>', lambda e, b=button, s=style_name: self.on_button_hover(b, True, s))
+            button.bind('<Leave>', lambda e, b=button, s=style_name: self.on_button_hover(b, False, s))
 
-        self.actions_frame.update_idletasks()
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        scrollable_frame.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
     def on_action_select(self, action):
         """Handle action selection and send the action to the highlighted username."""
@@ -3049,16 +3064,33 @@ class BBSTerminalApp:
                 else:
                     child.configure(style="Bubble.TButton")
 
-    def on_button_hover(self, button, is_hovering):
+    def on_button_hover(self, button, is_hovering, style_name):
         """Handle hover effects for bubble buttons."""
+        style = ttk.Style()
         if is_hovering:
-            # Don't change style if button is selected
-            if button['style'] != "BubbleSelected.TButton":
-                button.configure(style="BubbleHover.TButton")
+            if not hasattr(button, '_original_bg'):
+                button._original_bg = style.lookup(style_name, 'background')
+            # Darken the button slightly on hover
+            style.configure(style_name, background=self.darken_color(button._original_bg))
         else:
-            # Return to normal style only if not selected
-            if button['style'] != "BubbleSelected.TButton":
-                button.configure(style="Bubble.TButton")
+            if hasattr(button, '_original_bg'):
+                style.configure(style_name, background=button._original_bg)
+
+    def darken_color(self, color):
+        """Darken a hex color by 20%."""
+        # Remove the # and convert to RGB
+        rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+        # Darken each component by 20%
+        darkened = tuple(int(c * 0.8) for c in rgb)
+        return f"#{darkened[0]:02x}{darkened[1]:02x}{darkened[2]:02x}"
+
+    def random_color(self):
+        """Generate a random color with sufficient contrast."""
+        # Generate pastel colors for better readability
+        r = random.randint(100, 255)
+        g = random.randint(100, 255)
+        b = random.randint(100, 255)
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     # Add these new helper methods
     def deselect_all_members(self):
