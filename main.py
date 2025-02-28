@@ -1528,19 +1528,29 @@ class BBSTerminalApp:
 
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
-        """Send an <ENTER> keystroke every 10 seconds."""
+        """Send an <ENTER> keystroke every minute."""
         while not self.keep_alive_stop_event.is_set():
             if self.connected and self.writer:
-                self.writer.write("\r\n")
-                await asyncio.drain()
+                try:
+                    self.writer.write("\r\n")
+                    await self.writer.drain()  # Fixed: was using nonexistent asyncio.drain()
+                except Exception as e:
+                    print(f"[DEBUG] Keep-alive error: {e}")
             await asyncio.sleep(60)
 
     def start_keep_alive(self):
         """Start the keep-alive coroutine if enabled."""
         if self.keep_alive_enabled.get():
+            print("[DEBUG] Starting keep-alive task")
             self.keep_alive_stop_event.clear()
             if self.loop:
-                self.keep_alive_task = self.loop.create_task(self.keep_alive())
+                try:
+                    self.keep_alive_task = asyncio.run_coroutine_threadsafe(
+                        self.keep_alive(), 
+                        self.loop
+                    )
+                except Exception as e:
+                    print(f"[DEBUG] Error starting keep-alive: {e}")
 
     def stop_keep_alive(self):
         """Stop the keep-alive coroutine."""
@@ -2604,11 +2614,33 @@ class BBSTerminalApp:
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # Updated mousewheel handling
         def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        scrollable_frame.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+            # Only scroll if mouse is over the canvas
+            if event.widget is canvas or event.widget.winfo_parent() == str(scrollable_frame):
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+
+        # Bind mousewheel only when mouse enters the canvas or scrollable frame
+        canvas.bind('<Enter>', _bind_mousewheel)
+        canvas.bind('<Leave>', _unbind_mousewheel)
+        scrollable_frame.bind('<Enter>', _bind_mousewheel)
+        scrollable_frame.bind('<Leave>', _unbind_mousewheel)
+
+        # Clean up bindings when frame is destroyed
+        def _on_destroy(event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind('<Enter>')
+            canvas.unbind('<Leave>')
+            scrollable_frame.unbind('<Enter>')
+            scrollable_frame.unbind('<Leave>')
+            
+        scrollable_frame.bind("<Destroy>", _on_destroy)
 
     def on_action_select(self, action):
         """Handle action selection and send the action to the highlighted username."""
