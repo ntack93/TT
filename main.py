@@ -218,10 +218,11 @@ class BBSTerminalApp:
         main_frame.rowconfigure(0, weight=0)
         main_frame.rowconfigure(1, weight=3)
         main_frame.rowconfigure(2, weight=0)
-        container.add(main_frame, weight=1)
+        container.add(main_frame, weight=3)  # Give main frame more weight
 
         # Create the Chatroom Members panel in the MIDDLE with bubble icons
-        members_frame = ttk.LabelFrame(container, text="Chatroom Members")
+        members_frame = ttk.LabelFrame(container, text="Chatroom Members", width=160)
+        members_frame.pack_propagate(False)  # Prevent frame from shrinking
         self.members_canvas = tk.Canvas(members_frame, highlightthickness=0)
         self.members_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -239,10 +240,11 @@ class BBSTerminalApp:
             self.members_canvas.configure(scrollregion=self.members_canvas.bbox("all"))
         
         self.members_frame.bind('<Configure>', on_configure)
-        container.add(members_frame, weight=0)
+        container.add(members_frame, weight=1)
 
         # Create the Actions listbox on the RIGHT with bubble icons
-        actions_frame = ttk.LabelFrame(container, text="Actions")
+        actions_frame = ttk.LabelFrame(container, text="Actions", width=160)
+        actions_frame.pack_propagate(False)  # Prevent frame from shrinking
         self.actions_canvas = tk.Canvas(actions_frame, highlightthickness=0)
         self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -260,7 +262,7 @@ class BBSTerminalApp:
             self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
         
         self.actions_frame.bind('<Configure>', on_actions_configure)
-        container.add(actions_frame, weight=0)
+        container.add(actions_frame, weight=1)
 
         # --- Row 0: Top frame (connection settings, username, password) ---
         top_frame = ttk.Frame(main_frame)
@@ -1195,6 +1197,11 @@ class BBSTerminalApp:
         self.last_message = None
         
         for line in lines[:-1]:
+            # First process any text replacements before ANSI cleaning
+            if self.pbx_mode.get() and self.majorlink_mode.get():
+                if 'Just type "?" if you need any assistance.' in line:
+                    line = line.replace('Just type "?" if you need any assistance.', '\u25BA')  # Unicode right triangle
+                
             clean_line = ansi_regex.sub('', line).strip()
             
             # Enhanced action list detection
@@ -1323,6 +1330,7 @@ class BBSTerminalApp:
 
             # Only skip display if in MajorLink mode and skip_display is true
             if not (self.majorlink_mode.get() and skip_display) and clean_line:
+                # Don't replace the text here again, we already did it above
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
@@ -1340,6 +1348,13 @@ class BBSTerminalApp:
                         self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
                 except ValueError:
                     pass  # Line not found in the buffer
+
+            # Add special handling for the help text replacement in PBX mode
+            if self.pbx_mode.get() and self.majorlink_mode.get():
+                assistance_text = 'Just type "?" if you need any assistance.'
+                if assistance_text in line:
+                    line = line.replace(assistance_text, '►')
+                    clean_line = ansi_regex.sub('', line).strip()
 
         self.partial_line = lines[-1]
 
@@ -2677,18 +2692,22 @@ class BBSTerminalApp:
             print(f"[DEBUG] Error creating action button: {e}")
 
     def on_action_select(self, action):
-        """Handle action selection and send the action to the highlighted username."""
-        if hasattr(self, 'selected_member') and self.selected_member:
-            # Format and send the action command
-            action_command = f"{action} {self.selected_member}"
-            if self.connected and self.writer:
-                asyncio.run_coroutine_threadsafe(
-                    self._send_message(action_command + "\r\n"), 
-                    self.loop
-                )
+        """Handle action selection with or without a target username."""
+        if self.connected and self.writer:
+            # Format action command based on whether a member is selected
+            if hasattr(self, 'selected_member') and self.selected_member:
+                action_command = f"{action} {self.selected_member}"
+            else:
+                action_command = action
                 
-                # Deselect the member after sending
-                self.deselect_all_members()
+            # Send the action
+            asyncio.run_coroutine_threadsafe(
+                self._send_message(action_command + "\r\n"), 
+                self.loop
+            )
+            
+            # Deselect member if one was selected
+            self.deselect_all_members()
 
     def store_hyperlink(self, url, sender="Unknown", timestamp=None):
         """Store a hyperlink with metadata."""
@@ -3268,19 +3287,45 @@ class BBSTerminalApp:
         self.append_terminal_text(f"\n--- PBX Mode {mode} ---\n\n", "normal")
 
     def process_pbx_line(self, clean_line):
-        """Process a line in PBX mode."""
+        """Process a line in PBX mode including chat logging."""
         try:
-            # Add debug output
-            print(f"[DEBUG] Processing PBX line: {clean_line}")
+            # Check for chat messages first
+            message_patterns = [
+                # Directed messages
+                (r'^From\s+(\S+?)(?:@[\w.-]+)?\s*\((?:whispered|to\s+you)\):\s*(.+)', True),
+                # Normal messages
+                (r'^From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)', False)
+            ]
             
-            # Check for action list
+            for pattern, is_directed in message_patterns:
+                match = re.match(pattern, clean_line)
+                if match:
+                    sender = match.group(1)
+                    message = match.group(2)
+                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+                    formatted_message = f"{timestamp} From {sender}: {message}"
+                    
+                    # Save to chatlog
+                    self.save_chatlog_message(sender, formatted_message)
+                    
+                    # Handle directed messages
+                    if is_directed:
+                        self.append_directed_message(formatted_message)
+                        self.play_directed_sound()
+                    else:
+                        self.play_chat_sound()
+                    
+                    # Parse any URLs in the message
+                    self.parse_and_store_hyperlinks(message, sender)
+                    return
+
+            # Continue with existing action list processing
             if "Action listing for:" in clean_line:
                 print("[DEBUG] Action list detected")
                 self.collecting_actions = True
                 self.actions = []
                 return
-            
-            # Collect actions
+                
             if self.collecting_actions:
                 if clean_line.strip() == "":
                     self.collecting_actions = False
@@ -3288,14 +3333,9 @@ class BBSTerminalApp:
                     self.update_actions_listbox()
                     return
                     
-                # Extract action words (2 or more letters)
                 words = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
                 self.actions.extend([w for w in words if w.lower() not in {'action', 'list', 'for', 'the', 'and'}])
-                return
                 
-            # Process the rest of the line normally
-            # ...rest of process_pbx_line implementation...
-            
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
             traceback.print_exc()
