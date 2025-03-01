@@ -274,30 +274,44 @@ class BBSTerminalApp:
         master_check = ttk.Checkbutton(top_frame, text="Show All", variable=self.show_all, command=self.toggle_all_sections)
         master_check.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
 
-        # Add Teleconference Action buttons
-        wave_button = ttk.Button(top_frame, text="Wave", command=lambda: self.send_action("wave"), style="Wave.TButton")
-        wave_button.grid(row=0, column=1, padx=5, pady=5)
-        smile_button = ttk.Button(top_frame, text="Smile", command=lambda: self.send_action("smile"), style="Smile.TButton")
-        smile_button.grid(row=0, column=2, padx=5, pady=5)
-        dance_button = ttk.Button(top_frame, text="Dance", command=lambda: self.send_action("dance"), style="Dance.TButton")
-        dance_button.grid(row=0, column=3, padx=5, pady=5)
-        bow_button = ttk.Button(top_frame, text="Bow", command=lambda: self.send_action("bow"), style="Bow.TButton")
-        bow_button.grid(row=0, column=4, padx=5, pady=5)
+        # Create a container frame for the action buttons to keep them together
+        action_buttons_frame = ttk.Frame(top_frame)
+        action_buttons_frame.grid(row=0, column=1, sticky="w", padx=5)
         
-        # Add new Go Teleconference and BRB buttons
-        tele_button = ttk.Button(top_frame, text="Go Teleconference", 
+        # Add Teleconference Action buttons with minimal spacing
+        wave_button = ttk.Button(action_buttons_frame, text="Wave", 
+                                command=lambda: self.send_action("wave"), style="Wave.TButton")
+        wave_button.pack(side=tk.LEFT, padx=1)
+        
+        smile_button = ttk.Button(action_buttons_frame, text="Smile", 
+                                 command=lambda: self.send_action("smile"), style="Smile.TButton")
+        smile_button.pack(side=tk.LEFT, padx=1)
+        
+        dance_button = ttk.Button(action_buttons_frame, text="Dance", 
+                                 command=lambda: self.send_action("dance"), style="Dance.TButton")
+        dance_button.pack(side=tk.LEFT, padx=1)
+        
+        bow_button = ttk.Button(action_buttons_frame, text="Bow", 
+                               command=lambda: self.send_action("bow"), style="Bow.TButton")
+        bow_button.pack(side=tk.LEFT, padx=(1, 10))  # Extra right padding to separate from utility buttons
+
+        # Utility buttons in their own frame
+        util_buttons_frame = ttk.Frame(top_frame)
+        util_buttons_frame.grid(row=0, column=2, sticky="w")
+        
+        tele_button = ttk.Button(util_buttons_frame, text="Go Teleconference", 
                                 command=lambda: self.send_custom_message("/go tele"), 
                                 style="Teleconference.TButton")
-        tele_button.grid(row=0, column=5, padx=5, pady=5)
+        tele_button.pack(side=tk.LEFT, padx=2)
         
-        brb_button = ttk.Button(top_frame, text="BRB", 
+        brb_button = ttk.Button(util_buttons_frame, text="BRB", 
                                command=lambda: self.send_custom_message("ga will be right back!"), 
                                 style="BRB.TButton")
-        brb_button.grid(row=0, column=6, padx=5, pady=5)
+        brb_button.pack(side=tk.LEFT, padx=2)
         
-        # Add the Chatlog button (moved to column 7)
-        chatlog_button = ttk.Button(top_frame, text="Chatlog", command=self.show_chatlog_window, style="Chatlog.TButton")
-        chatlog_button.grid(row=0, column=7, padx=5, pady=5)
+        chatlog_button = ttk.Button(util_buttons_frame, text="Chatlog", 
+                                   command=self.show_chatlog_window, style="Chatlog.TButton")
+        chatlog_button.pack(side=tk.LEFT, padx=2)
 
         # Connection settings example:
         self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
@@ -1083,11 +1097,11 @@ class BBSTerminalApp:
         # Send second enter after 1 second
         self.master.after(4000, lambda: self.send_custom_message("\r\n"))
         
-        # Send /go tele after 1 second
-        self.master.after(5000, lambda: self.send_custom_message("/go tele"))
+        # Send third enter after 1 second
+        self.master.after(5000, lambda: self.send_custom_message("/go chat"))
         
-        # Send join majorlink after 1 second
-        self.master.after(6000, lambda: self.send_custom_message("join majorlink"))
+        # Send C after 1 second
+        self.master.after(6000, lambda: self.send_custom_message("t"))
 
     async def telnet_client_task(self, host, port):
         """Async function connecting via telnetlib3 (CP437 + ANSI)."""
@@ -1435,7 +1449,7 @@ class BBSTerminalApp:
             # Directed messages
             r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
             # Normal messages
-            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
+            r'^(?:\[[\d-]+\\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
         ]
 
         for pattern in message_patterns:
@@ -2465,28 +2479,47 @@ class BBSTerminalApp:
         self.chatlog_display.see(tk.END)
 
     def update_members_display(self):
-        """Update the chat members display with bubble icons."""
+        """Update the chat members display with bubble icons and adjust panel width."""
+        # Clear existing widgets
         for widget in self.members_frame.winfo_children():
             widget.destroy()
 
+        # Create a temporary label to measure text width
+        font = ("Arial VGA 437", 9, "bold")
+        test_label = ttk.Label(self.members_frame, font=font)
+        
+        # Calculate max width using character-based estimation
+        max_width = 0
+        for member in sorted(self.chat_members):
+            # Estimate width: each character is roughly 7 pixels wide in this font
+            # Add extra padding (40 pixels) for button margins and safety
+            text_width = (len(member) * 7) + 40
+            max_width = max(max_width, text_width)
+        
+        test_label.destroy()
+        
+        # Set minimum width and add padding for scrollbar
+        panel_width = max(max_width, 100) + 30  # Minimum 100px + scrollbar width
+        members_frame = self.members_frame.master.master  # Get the outer frame
+        members_frame.configure(width=panel_width)
+
+        # Create member buttons
         style = ttk.Style()
         for i, member in enumerate(sorted(self.chat_members)):
             bg_color = self.random_color()
-            # Create unique style for each button
             style_name = f"Member{i}.TButton"
             style.configure(style_name,
                 padding=(10, 5),
                 relief="raised",
                 background=bg_color,
                 borderwidth=2,
-                font=("Arial VGA 437", 9, "bold"))
+                font=font)
 
             button = ttk.Button(self.members_frame, 
                               text=member,
                               style=style_name,
-                              cursor="hand2")  # Removed fixed width property
-            # Add padding around text instead
-            button.pack(pady=2, padx=5, fill=tk.X, expand=False, ipadx=10)  # Added ipadx for minimal padding
+                              cursor="hand2")
+            button.pack(pady=2, padx=5, fill=tk.X, expand=False, ipadx=10)
             
             button.bind('<Button-1>', lambda e, m=member: self.select_member(m))
             button.bind('<Enter>', lambda e, b=button, s=style_name: self.on_button_hover(b, True, s))
@@ -2640,66 +2673,75 @@ class BBSTerminalApp:
             await self.writer.drain()
 
     def update_actions_listbox(self):
-        """Update the Actions panel with parsed actions."""
+        """Update the Actions panel with parsed actions and adjust panel width."""
         if not self.actions:
             print("[DEBUG] No actions to display")
             return
             
-        print(f"[DEBUG] Updating actions listbox with {len(self.actions)} actions")
+        # Calculate max width using character-based estimation
+        font = ("Arial VGA 437", 9, "bold")
+        max_width = 0
+        for action in sorted(set(self.actions)):
+            # Estimate width: each character is roughly 7 pixels wide in this font
+            # Add extra padding (40 pixels) for button margins and safety
+            text_width = (len(action) * 7) + 40
+            max_width = max(max_width, text_width)
         
-        try:
-            # Create canvas and scrollbar if they don't exist
-            if not hasattr(self, 'actions_scrollable_frame'):
-                # Create a canvas with scrollbar
-                self.actions_canvas = tk.Canvas(self.actions_frame, highlightthickness=0)
-                self.actions_scrollbar = ttk.Scrollbar(self.actions_frame, orient=tk.VERTICAL, 
-                                                    command=self.actions_canvas.yview)
-                
-                # Create inner frame for buttons
-                self.actions_scrollable_frame = ttk.Frame(self.actions_canvas)
-                
-                # Configure canvas scrolling
-                self.actions_scrollable_frame.bind(
-                    "<Configure>",
-                    lambda e: self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
-                )
-                
-                # Create window in canvas for the frame
-                self.actions_canvas.create_window((0, 0), window=self.actions_scrollable_frame, anchor="nw")
-                self.actions_canvas.configure(yscrollcommand=self.actions_scrollbar.set)
-                
-                # Configure mousewheel scrolling
-                def on_mousewheel(event):
-                    self.actions_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-                    
-                self.actions_canvas.bind_all("<MouseWheel>", on_mousewheel)
-                
-                # Bind frame destruction to remove mousewheel binding
-                self.actions_scrollable_frame.bind(
-                    "<Destroy>",
-                    lambda e: self.actions_canvas.unbind_all("<MouseWheel>")
-                )
+        # Set minimum width and add padding for scrollbar
+        panel_width = max(max_width, 100) + 30  # Minimum 100px + scrollbar width
+        actions_frame = self.actions_frame.master.master  # Get the outer frame
+        actions_frame.configure(width=panel_width)
 
-            # Clear existing buttons
-            for widget in self.actions_scrollable_frame.winfo_children():
-                widget.destroy()
-
-            # Add buttons for each action
-            for i, action in enumerate(sorted(set(self.actions))):
-                self.create_action_button(i, action)
-
-            # Configure canvas and scrollbar
-            if not self.actions_canvas.winfo_ismapped():
-                self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-                self.actions_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Continue with existing button creation code...
+        # Create canvas and scrollbar if they don't exist
+        if not hasattr(self, 'actions_scrollable_frame'):
+            # Create a canvas with scrollbar
+            self.actions_canvas = tk.Canvas(self.actions_frame, highlightthickness=0)
+            self.actions_scrollbar = ttk.Scrollbar(self.actions_frame, orient=tk.VERTICAL, 
+                                                command=self.actions_canvas.yview)
+            
+            # Create inner frame for buttons
+            self.actions_scrollable_frame = ttk.Frame(self.actions_canvas)
+            
+            # Configure canvas scrolling
+            self.actions_scrollable_frame.bind(
+                "<Configure>",
+                lambda e: self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
+            )
+            
+            # Create window in canvas for the frame
+            self.actions_canvas.create_window((0, 0), window=self.actions_scrollable_frame, anchor="nw")
+            self.actions_canvas.configure(yscrollcommand=self.actions_scrollbar.set)
+            
+            # Configure mousewheel scrolling
+            def on_mousewheel(event):
+                self.actions_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
                 
-            # Set fixed height to show ~20 items
-            button_height = 30  # Approximate height of each button
-            visible_height = min(20 * button_height, len(self.actions) * button_height)
-            self.actions_canvas.configure(height=visible_height)
-                
-        except Exception as e:
-            print(f"[DEBUG] Error updating actions listbox: {e}")
+            self.actions_canvas.bind_all("<MouseWheel>", on_mousewheel)
+            
+            # Bind frame destruction to remove mousewheel binding
+            self.actions_scrollable_frame.bind(
+                "<Destroy>",
+                lambda e: self.actions_canvas.unbind_all("<MouseWheel>")
+            )
+
+        # Clear existing buttons
+        for widget in self.actions_scrollable_frame.winfo_children():
+            widget.destroy()
+
+        # Add buttons for each action
+        for i, action in enumerate(sorted(set(self.actions))):
+            self.create_action_button(i, action)
+
+        # Configure canvas and scrollbar
+        if not self.actions_canvas.winfo_ismapped():
+            self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            self.actions_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+        # Set fixed height to show ~20 items
+        button_height = 30  # Approximate height of each button
+        visible_height = min(20 * button_height, len(self.actions) * button_height)
+        self.actions_canvas.configure(height=visible_height)
 
     def create_action_button(self, index, action):
         """Helper method to create an action button."""
