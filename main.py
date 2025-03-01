@@ -1401,7 +1401,7 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, line):
-        """Parse and save chat messages with timestamps."""
+        """Parse and save chat messages with timestamps, handling both normal and PBX formats."""
         # Remove any ANSI escape sequences
         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
         
@@ -1422,21 +1422,12 @@ class BBSTerminalApp:
         # Check if message already has a timestamp
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
         
-        # Check for page notifications first
-        page_match = self.page_pattern.match(clean_line)
-        if page_match:
-            sender = page_match.group(1)
-            location = page_match.group(2)
-            message = page_match.group(3)
-            if not has_timestamp:
-                timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
-                message_with_timestamp = f"{timestamp}Page from {sender} in {location}: {message}"
-            else:
-                message_with_timestamp = clean_line
-            self.append_directed_message(message_with_timestamp)
-            self.play_directed_sound()
-            return
-
+        if self.pbx_mode.get():
+            # Handle PBX format
+            if self.process_pbx_line(clean_line):
+                return
+        
+        # If not in PBX mode or if PBX parsing failed, use normal parsing
         # Enhanced patterns to match different message types
         message_patterns = [
             # Whispered messages - check these first
@@ -3339,42 +3330,55 @@ class BBSTerminalApp:
     def process_pbx_line(self, clean_line):
         """Process a line in PBX mode including chat logging."""
         try:
-            # Check for chat messages first
-            message_patterns = [
-                # Directed messages
-                (r'^From\s+(\S+?)(?:@[\w.-]+)?\s*\((?:whispered|to\s+you)\):\s*(.+)', True),
-                # Normal messages
-                (r'^From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)', False)
+            # PBX message patterns for different message types
+            pbx_patterns = [
+                # Third party to third party with domain mix - Public message
+                (r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)', 'public'),
+                # Directed messages to you - Private message
+                (r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)', 'direct'),
+                # Whispered messages - Most private
+                (r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered\):\]\s*(.+)', 'whisper')
             ]
             
-            for pattern, is_directed in message_patterns:
+            for pattern, msg_type in pbx_patterns:
                 match = re.match(pattern, clean_line)
                 if match:
-                    sender = match.group(1)
-                    message = match.group(2)
                     timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
-                    formatted_message = f"{timestamp} From {sender}: {message}"
                     
-                    # Save to chatlog
-                    self.save_chatlog_message(sender, formatted_message)
+                    if msg_type == 'public':
+                        # Public message between others
+                        sender, recipient, message = match.groups()
+                        formatted_message = f"{timestamp} {sender} to {recipient}: {message}"
+                        base_sender = sender.split('@')[0]
+                        
+                        # Save to chatlog and play chat sound
+                        self.save_chatlog_message(base_sender, formatted_message)
+                        self.play_chat_sound()
+                        
+                    else:  # direct or whisper
+                        sender, message = match.groups()
+                        base_sender = sender.split('@')[0]
+                        formatted_message = f"{timestamp} From {sender}: {message}"
+                        
+                        if msg_type == 'whisper':
+                            # Whispers only go to Messages to You frame
+                            self.append_directed_message(formatted_message)
+                            self.play_directed_sound()
+                        else:  # direct
+                            # Direct messages go to both Messages to You and chatlog
+                            self.append_directed_message(formatted_message)
+                            self.save_chatlog_message(base_sender, formatted_message)
+                            self.play_directed_sound()
                     
-                    # Handle directed messages and play sounds regardless of mode
-                    if is_directed:
-                        self.append_directed_message(formatted_message)
-                        self.play_directed_sound()
-                    else:
-                        self.play_chat_sound()  # Play chat sound for normal messages
-                    
-                    # Parse any URLs in the message
-                    self.parse_and_store_hyperlinks(message, sender)
-                    return True  # Indicate we handled a message
+                    # Always parse URLs regardless of message type
+                    self.parse_and_store_hyperlinks(message, base_sender)
+                    return True
 
-            # Continue with existing action list processing
-            # ...existing code...
+            return False
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
             traceback.print_exc()
-        return False  # Indicate no message was handled
+            return False
 
     def process_data_chunk(self, data):
         """Process incoming data with improved action list handling."""
