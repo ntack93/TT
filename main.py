@@ -816,7 +816,7 @@ class BBSTerminalApp:
         self.master.after(100, self.show_all_messages)
 
     def save_font_settings(self, window):
-        """Save the selected font settings and apply them to all text displays except BBS Output."""
+        """Save the selected font settings and apply them to terminal displays only."""
         try:
             if not all(self.current_selections.values()):
                 tk.messagebox.showerror("Error", "Please select an option from each list")
@@ -829,15 +829,13 @@ class BBSTerminalApp:
                 'bg': self.current_selections['bg']
             }
             
-            # Apply to all text displays except BBS Output
+            # Apply only to terminal displays
             self.chatlog_display.configure(**font_settings)
             self.directed_msg_display.configure(**font_settings)
-            self.members_listbox.configure(**font_settings)
-            self.actions_listbox.configure(**font_settings)
             
             # For BBS Output, only update font, not colors
             self.terminal_display.configure(font=(self.current_selections['font'], 
-                                                self.current_selections['size']))
+                                               self.current_selections['size']))
             
             # Store settings for future use
             self.current_font_settings = font_settings
@@ -1197,11 +1195,6 @@ class BBSTerminalApp:
         self.last_message = None
         
         for line in lines[:-1]:
-            # First process any text replacements before ANSI cleaning
-            if self.pbx_mode.get() and self.majorlink_mode.get():
-                if 'Just type "?" if you need any assistance.' in line:
-                    line = line.replace('Just type "?" if you need any assistance.', '\u25BA')  # Unicode right triangle
-                
             clean_line = ansi_regex.sub('', line).strip()
             
             # Enhanced action list detection
@@ -1330,7 +1323,6 @@ class BBSTerminalApp:
 
             # Only skip display if in MajorLink mode and skip_display is true
             if not (self.majorlink_mode.get() and skip_display) and clean_line:
-                # Don't replace the text here again, we already did it above
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
@@ -1348,13 +1340,6 @@ class BBSTerminalApp:
                         self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
                 except ValueError:
                     pass  # Line not found in the buffer
-
-            # Add special handling for the help text replacement in PBX mode
-            if self.pbx_mode.get() and self.majorlink_mode.get():
-                assistance_text = 'Just type "?" if you need any assistance.'
-                if assistance_text in line:
-                    line = line.replace(assistance_text, '►')
-                    clean_line = ansi_regex.sub('', line).strip()
 
         self.partial_line = lines[-1]
 
@@ -3162,7 +3147,7 @@ class BBSTerminalApp:
             print(f"Directed sound file not found: {self.directed_sound_file}")
 
     def update_display_font(self):
-        """Update font settings for all text widgets."""
+        """Update font settings for terminal displays only."""
         try:
             # Create base font settings without colors for BBS terminal
             terminal_font = (self.font_name.get(), self.font_size.get())
@@ -3175,13 +3160,11 @@ class BBSTerminalApp:
                 'bg': self.current_font_settings.get('bg', 'black')
             }
             
-            # Apply to secondary displays if they exist
+            # Apply only to terminal displays
             if hasattr(self, 'directed_msg_display'):
                 self.directed_msg_display.configure(**other_displays_settings)
-            if hasattr(self, 'members_listbox'):
-                self.members_listbox.configure(**other_displays_settings)
-            if hasattr(self, 'actions_listbox'):
-                self.actions_listbox.configure(**other_displays_settings)
+            if hasattr(self, 'chatlog_display'):
+                self.chatlog_display.configure(**other_displays_settings)
                 
         except Exception as e:
             print(f"Error updating display font: {e}")
