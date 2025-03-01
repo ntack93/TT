@@ -2588,28 +2588,64 @@ class BBSTerminalApp:
             
         print(f"[DEBUG] Updating actions listbox with {len(self.actions)} actions")
         
-        # Remove duplicates and sort
-        unique_actions = sorted(set(self.actions))
-        
         try:
+            # Create canvas and scrollbar if they don't exist
+            if not hasattr(self, 'actions_scrollable_frame'):
+                # Create a canvas with scrollbar
+                self.actions_canvas = tk.Canvas(self.actions_frame, highlightthickness=0)
+                self.actions_scrollbar = ttk.Scrollbar(self.actions_frame, orient=tk.VERTICAL, 
+                                                    command=self.actions_canvas.yview)
+                
+                # Create inner frame for buttons
+                self.actions_scrollable_frame = ttk.Frame(self.actions_canvas)
+                
+                # Configure canvas scrolling
+                self.actions_scrollable_frame.bind(
+                    "<Configure>",
+                    lambda e: self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
+                )
+                
+                # Create window in canvas for the frame
+                self.actions_canvas.create_window((0, 0), window=self.actions_scrollable_frame, anchor="nw")
+                self.actions_canvas.configure(yscrollcommand=self.actions_scrollbar.set)
+                
+                # Configure mousewheel scrolling
+                def on_mousewheel(event):
+                    self.actions_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+                    
+                self.actions_canvas.bind_all("<MouseWheel>", on_mousewheel)
+                
+                # Bind frame destruction to remove mousewheel binding
+                self.actions_scrollable_frame.bind(
+                    "<Destroy>",
+                    lambda e: self.actions_canvas.unbind_all("<MouseWheel>")
+                )
+
             # Clear existing buttons
-            for widget in self.actions_frame.winfo_children():
+            for widget in self.actions_scrollable_frame.winfo_children():
                 widget.destroy()
 
-            # Create new buttons for each action
-            for i, action in enumerate(unique_actions):
-                print(f"[DEBUG] Creating button for action: {action}")
+            # Add buttons for each action
+            for i, action in enumerate(sorted(set(self.actions))):
                 self.create_action_button(i, action)
 
-            # Force layout update
-            self.actions_frame.update_idletasks()
-            
+            # Configure canvas and scrollbar
+            if not self.actions_canvas.winfo_ismapped():
+                self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                self.actions_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                
+            # Set fixed height to show ~20 items
+            button_height = 30  # Approximate height of each button
+            visible_height = min(20 * button_height, len(self.actions) * button_height)
+            self.actions_canvas.configure(height=visible_height)
+                
         except Exception as e:
             print(f"[DEBUG] Error updating actions listbox: {e}")
 
     def create_action_button(self, index, action):
         """Helper method to create an action button."""
         try:
+            # Create the button in the scrollable frame instead of actions_frame
             style = ttk.Style()
             style_name = f"Action{index}.TButton"
             bg_color = self.random_color()
@@ -2624,7 +2660,7 @@ class BBSTerminalApp:
             )
 
             button = ttk.Button(
-                self.actions_frame,
+                self.actions_scrollable_frame,  # Changed from self.actions_frame
                 text=action,
                 style=style_name,
                 cursor="hand2",
