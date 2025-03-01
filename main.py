@@ -91,6 +91,8 @@ class BBSTerminalApp:
         self.keep_alive_stop_event = threading.Event()
         self.keep_alive_task = None
         self.keep_alive_enabled = tk.BooleanVar(value=False)
+        self.keep_alive_minutes = tk.StringVar(value="1")
+        self.keep_alive_seconds = tk.StringVar(value="0")
 
         # Our own event loop for asyncio
         self.loop = asyncio.new_event_loop()
@@ -355,19 +357,46 @@ class BBSTerminalApp:
         pbx_check.grid(row=0, column=4, padx=5, pady=5, sticky=tk.W)
 
         # Add the Keep Alive checkbox
-        keep_alive_check = ttk.Checkbutton(self.conn_frame, text="Keep Alive", variable=self.keep_alive_enabled, command=self.toggle_keep_alive)
-        keep_alive_check.grid(row=0, column=8, padx=5, pady=5)
+        keep_alive_frame = ttk.Frame(self.conn_frame)
+        keep_alive_frame.grid(row=0, column=8, padx=5, pady=5)
+        
+        keep_alive_check = ttk.Checkbutton(keep_alive_frame, text="Keep Alive", 
+                                         variable=self.keep_alive_enabled, 
+                                         command=self.toggle_keep_alive)
+        keep_alive_check.pack(side=tk.LEFT)
 
-        # Add new row for automation controls
-        logon_auto_check = ttk.Checkbutton(checkbox_frame, text="Logon Automation", 
-                                          variable=self.logon_automation_enabled)
-        logon_auto_check.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        # Add timing controls
+        timing_frame = ttk.Frame(keep_alive_frame)
+        timing_frame.pack(side=tk.LEFT)
+        
+        minutes_entry = ttk.Entry(timing_frame, textvariable=self.keep_alive_minutes, 
+                                width=2, justify='center')
+        minutes_entry.pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Label(timing_frame, text="m").pack(side=tk.LEFT)
+        
+        seconds_entry = ttk.Entry(timing_frame, textvariable=self.keep_alive_seconds, 
+                                width=2, justify='center')
+        seconds_entry.pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Label(timing_frame, text="s").pack(side=tk.LEFT)
 
-        # Add Messages to You checkbox next to it
-        messages_check = ttk.Checkbutton(checkbox_frame, text="Messages to You",
-                                       variable=self.show_messages_to_you,
-                                       command=self.toggle_messages_frame)
-        messages_check.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+        # Add validation
+        def validate_time(var, new_value):
+            if new_value == "": return True
+            try:
+                value = int(new_value)
+                if var == self.keep_alive_minutes:
+                    return 0 <= value <= 59
+                else:  # seconds
+                    return 0 <= value <= 59
+            except ValueError:
+                return False
+                
+        minutes_entry.config(validate='key', 
+            validatecommand=(self.master.register(
+                lambda new_val: validate_time(self.keep_alive_minutes, new_val)), '%P'))
+        seconds_entry.config(validate='key',
+            validatecommand=(self.master.register(
+                lambda new_val: validate_time(self.keep_alive_seconds, new_val)), '%P'))
 
         # Username frame
         self.username_frame = ttk.LabelFrame(top_frame, text="Username")
@@ -1539,12 +1568,23 @@ class BBSTerminalApp:
 
     # 1.7️⃣ KEEP-ALIVE
     async def keep_alive(self):
-        """Send an <ENTER> keystroke every 10 seconds."""
+        """Send an <ENTER> keystroke at the specified interval."""
         while not self.keep_alive_stop_event.is_set():
             if self.connected and self.writer:
                 self.writer.write("\r\n")
                 await self.writer.drain()
-            await asyncio.sleep(60)
+            
+            # Calculate total seconds from minutes and seconds
+            try:
+                minutes = int(self.keep_alive_minutes.get() or "0")
+                seconds = int(self.keep_alive_seconds.get() or "0")
+                total_seconds = (minutes * 60) + seconds
+                if total_seconds < 1:  # Minimum 1 second
+                    total_seconds = 60  # Default to 60 seconds
+            except ValueError:
+                total_seconds = 60  # Default if invalid values
+                
+            await asyncio.sleep(total_seconds)
 
     def start_keep_alive(self):
         """Start the keep-alive coroutine if enabled."""
@@ -2434,9 +2474,9 @@ class BBSTerminalApp:
             button = ttk.Button(self.members_frame, 
                               text=member,
                               style=style_name,
-                              cursor="hand2",
-                              width=20)  # Fixed width for consistency
-            button.pack(pady=2, padx=5, fill=tk.X)
+                              cursor="hand2")  # Removed fixed width property
+            # Add padding around text instead
+            button.pack(pady=2, padx=5, fill=tk.X, expand=False, ipadx=10)  # Added ipadx for minimal padding
             
             button.bind('<Button-1>', lambda e, m=member: self.select_member(m))
             button.bind('<Enter>', lambda e, b=button, s=style_name: self.on_button_hover(b, True, s))
@@ -2660,13 +2700,12 @@ class BBSTerminalApp:
             )
 
             button = ttk.Button(
-                self.actions_scrollable_frame,  # Changed from self.actions_frame
+                self.actions_scrollable_frame,
                 text=action,
                 style=style_name,
-                cursor="hand2",
-                width=20
-            )
-            button.pack(pady=2, padx=5, fill=tk.X)
+                cursor="hand2")  # Removed fixed width property
+            # Add padding around text instead
+            button.pack(pady=2, padx=5, fill=tk.X, expand=False, ipadx=10)  # Added ipadx for minimal padding
             
             # Bind events
             button.bind('<Button-1>', lambda e, a=action: self.on_action_select(a))
@@ -3291,86 +3330,193 @@ class BBSTerminalApp:
                     # Save to chatlog
                     self.save_chatlog_message(sender, formatted_message)
                     
-                    # Handle directed messages
+                    # Handle directed messages and play sounds regardless of mode
                     if is_directed:
                         self.append_directed_message(formatted_message)
                         self.play_directed_sound()
                     else:
-                        self.play_chat_sound()
+                        self.play_chat_sound()  # Play chat sound for normal messages
                     
                     # Parse any URLs in the message
                     self.parse_and_store_hyperlinks(message, sender)
-                    return
+                    return True  # Indicate we handled a message
 
             # Continue with existing action list processing
-            if "Action listing for:" in clean_line:
-                print("[DEBUG] Action list detected")
-                self.collecting_actions = True
-                self.actions = []
-                return
-                
-            if self.collecting_actions:
-                if clean_line.strip() == "":
-                    self.collecting_actions = False
-                    print(f"[DEBUG] Collected actions: {self.actions}")
-                    self.update_actions_listbox()
-                    return
-                    
-                words = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
-                self.actions.extend([w for w in words if w.lower() not in {'action', 'list', 'for', 'the', 'and'}])
-                
+            # ...existing code...
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
             traceback.print_exc()
+        return False  # Indicate no message was handled
 
-    def parse_pbx_chat_members(self, banner_text):
-        """Parse chat members from PBX format banner."""
-        try:
-            print(f"[DEBUG] Processing banner: {banner_text}")
+    def process_data_chunk(self, data):
+        """Process incoming data with improved action list handling."""
+        # Decode CP437 data
+        if isinstance(data, bytes):
+            data = self.decode_cp437(data)
+        else:
+            data = self.decode_cp437(data.encode('cp437'))
             
-            # Look for users between "Topic:" and "are here with you"
-            match = re.search(r'Topic:[^:]*?\s+(.*?)(?:\s+(?:is|are)\s+here\s+with\s+you)', banner_text, re.DOTALL)
-            if match:
-                user_section = match.group(1).strip()
-                print(f"[DEBUG] Found user section: {user_section}")
+        # Normalize newlines
+        data = data.replace('\r\n', '\n').replace('\r', '\n')
+        self.partial_line += data
+        lines = self.partial_line.split("\n")
+        
+        # Precompile an ANSI escape code regex
+        ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
+        
+        skip_display = False  # Flag to track if we're in a banner section
+        
+        # Add message tracking
+        self.last_message = None
+        
+        for line in lines[:-1]:
+            clean_line = ansi_regex.sub('', line).strip()
+            
+            # Enhanced action list detection
+            if "Action listing for:" in clean_line:
+                print("[DEBUG] Action listing header detected")
+                self.actions = []
+                self.collecting_actions = True
+                continue
+            elif self.collecting_actions:
+                if clean_line == ":" or clean_line == "" or "Just press" in clean_line:
+                    if self.actions:  # Only if we collected some actions
+                        print(f"[DEBUG] Finished collecting actions: {self.actions}")
+                        self.collecting_actions = False
+                        self.master.after_idle(self.update_actions_listbox)
+                    continue
                 
-                # Split on commas and "and"
-                user_section = user_section.replace(" and ", ", ")
-                entries = [entry.strip() for entry in user_section.split(",")]
+                # More aggressive action extraction
+                action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
+                valid_actions = [
+                    word for word in action_matches 
+                    if (word.lower() not in {
+                        'action', 'list', 'for', 'the', 'and', 'you', 'are',
+                        'can', 'use', 'these', 'actions', 'available'
+                    } and len(word) >= 2)
+                ]
                 
-                final_usernames = set()
-                for entry in entries:
-                    # Skip empty entries
-                    if not entry.strip():
-                        continue
-                        
-                    # Clean and validate username
-                    username = entry.split('@')[0].strip() if '@' in entry else entry.strip()
-                    username = re.sub(r'[^A-Za-z0-9._-]', '', username)
-                    
-                    # Additional validation
-                    if (len(username) >= 2 and
-                        not any(word in username.lower() for word in {'topic', 'general', 'chat', 'channel', 'majorlink'}) and
-                        username[0].isalpha() and
-                        not username.lower().endswith(('.net', '.com', '.org', '.bbs'))):
-                        
-                        print(f"[DEBUG] Adding valid username: {username} from entry: {entry}")
-                        final_usernames.add(username)
-                    else:
-                        print(f"[DEBUG] Skipping invalid username: {username} from entry: {entry}")
-                
-                if final_usernames:
-                    self.chat_members = final_usernames
-                    self.update_members_display()
-                    self.save_chat_members_file()
-                    print(f"[DEBUG] Updated members list: {sorted(final_usernames)}")
-                    
-                    # Request actions list after successful member parse
-                    self.master.after(1000, self.request_actions_list)
+                if valid_actions:
+                    print(f"[DEBUG] Found valid actions: {valid_actions}")
+                    self.actions.extend(valid_actions)
+                continue
 
-        except Exception as e:
-            print(f"Error parsing PBX chat members: {e}")
-            traceback.print_exc()
+            # Process directed messages
+            directed_patterns = [
+                r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)',
+                r'From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)'
+            ]
+            
+            for pattern in directed_patterns:
+                match = re.match(pattern, clean_line)
+                if match:
+                    sender = match.group(1)
+                    message = match.group(2)
+                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
+                    timestamped_message = f"{timestamp}From {sender}: {message}"
+                    
+                    # Check if this is a duplicate message
+                    if timestamped_message != self.last_message:
+                        self.append_directed_message(timestamped_message)
+                        self.play_directed_sound()
+                        self.last_message = timestamped_message
+                    break
+
+            # Continue with existing processing
+            if ("You are in" in clean_line and 
+                "are here with you" in clean_line):
+                current_time = time.time()
+                # Only request actions if it's been more than 5 seconds since last banner
+                if (current_time - self.last_banner_time > 5 and 
+                    len(self.actions) == 0):
+                    print("[DEBUG] Detected chatroom banner, requesting actions list")
+                    self.last_banner_time = current_time
+                    self.request_actions_list()
+
+            # Add Actions list detection before MajorLink mode check
+            if "Action listing for:" in clean_line:
+                self.actions = []  # Clear existing actions
+                self.collecting_actions = True
+                self.actions_requested = False  # Reset flag after receiving list
+                # Send Enter keystroke immediately when we see the action listing
+                self.master.after(50, lambda: self.send_message(None))
+                continue
+            elif clean_line == ":" and self.collecting_actions:
+                self.collecting_actions = False
+                self.update_actions_listbox()  # Update the display
+                continue
+            elif self.collecting_actions:
+                # Split line into words and add valid actions
+                potential_actions = clean_line.split()
+                self.actions.extend(
+                    action for action in potential_actions 
+                    if action and len(action) >= 2  # Ensure valid action
+                )
+                continue
+
+            if self.majorlink_mode.get():
+                # --- Filter header lines ---
+                if self.collecting_users:
+                    self.user_list_buffer.append(line)
+                    if "are here with you." in clean_line:
+                        self.update_chat_members(self.user_list_buffer)
+                        self.collecting_users = False
+                        self.user_list_buffer = []
+                        skip_display = False  # End of banner section
+                        continue
+                    skip_display = True  # Skip displaying banner content
+                    continue
+
+                # Reset skip_display at start of each line unless in collecting_users mode
+                skip_display = False
+
+                if clean_line.startswith("You are in"):
+                    self.user_list_buffer = [line]
+                    self.collecting_users = True
+                    skip_display = True  # Start of banner section
+                    continue
+
+                # Skip displaying specific banner-related lines
+                if any(pattern in clean_line for pattern in [
+                    "Topic:",
+                    "Just press",
+                    "are here with you"
+                ]):
+                    skip_display = True
+                    continue
+
+            # Always collect users for member list functionality
+            if "You are in" in clean_line and not self.collecting_users:
+                self.user_list_buffer = [line]
+                self.collecting_users = True
+            elif self.collecting_users:
+                self.user_list_buffer.append(line)
+                if "are here with you." in clean_line:
+                    self.update_chat_members(self.user_list_buffer)
+                    self.collecting_users = False
+                    self.user_list_buffer = []
+
+            # Only skip display if in MajorLink mode and skip_display is true
+            if not (self.majorlink_mode.get() and skip_display) and clean_line:
+                self.append_terminal_text(line + "\n", "normal")
+                self.check_triggers(line)
+                self.parse_and_save_chatlog_message(line)
+
+            # Check for specific MajorLink entry message
+            if (not self.has_requested_actions and 
+                "Teleconference" in clean_line):
+                # Look for the next line to confirm MajorLink entry
+                try:
+                    next_line_idx = lines[:-1].index(line) + 1
+                    if (next_line_idx < len(lines) - 1 and 
+                        "You are in the MajorLink channel" in ansi_regex.sub('', lines[next_line_idx]).strip()):
+                        print("[DEBUG] Detected MajorLink entry, requesting actions list")
+                        self.has_requested_actions = True  # Set flag to prevent future requests
+                        self.master.after(500, self.request_actions_list)  # Small delay to ensure connection is ready
+                except ValueError:
+                    pass  # Line not found in the buffer
+
+        self.partial_line = lines[-1]
 
 def main():
     root = tk.Tk()
