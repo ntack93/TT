@@ -3546,29 +3546,35 @@ class BBSTerminalApp:
 
         self.partial_line = lines[-1]
 
+    def on_closing(self):
+        """Extended closing handler to save frame sizes and cleanup."""
+        self.save_frame_sizes()
+        self.close_spelling_popup()  # Add cleanup of spell popup
+        self.master.quit()  # Ensure the main loop is stopped
+
+async def cleanup(app):
+    """Async cleanup function to handle disconnection."""
+    try:
+        # Cancel all pending tasks first
+        for task in asyncio.all_tasks(app.loop):
+            task.cancel()
+
+        # Clear only the active members list
+        app.clear_chat_members()
+
+        # Then handle the disconnect
+        if app.connected:
+            await app.disconnect_from_bbs()
+
+        # Finally close the loop 
+        app.loop.stop()
+        app.loop.close()
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+
 def main():
     root = tk.Tk()
     app = BBSTerminalApp(root)
-    
-    async def cleanup():
-        """Async cleanup function to handle disconnection."""
-        try:
-            # Cancel all pending tasks first
-            for task in asyncio.all_tasks(app.loop):
-                task.cancel()
-            
-            # Clear only the active members list
-            app.clear_chat_members()
-            
-            # Then handle the disconnect
-            if app.connected:
-                await app.disconnect_from_bbs()
-                
-            # Finally close the loop
-            app.loop.stop()
-            app.loop.close()
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
 
     def on_closing():
         """Handle window closing event."""
@@ -3577,9 +3583,9 @@ def main():
             # Create a new event loop for cleanup
             cleanup_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(cleanup_loop)
-            
+
             # Run cleanup synchronously with a timeout
-            cleanup_loop.run_until_complete(asyncio.wait_for(cleanup(), timeout=5.0))
+            cleanup_loop.run_until_complete(asyncio.wait_for(cleanup(app), timeout=5.0))
             cleanup_loop.close()
         except (asyncio.TimeoutError, Exception) as e:
             print(f"Error or timeout during cleanup: {e}")
@@ -3592,11 +3598,11 @@ def main():
 
     # Bind the closing handler
     root.protocol("WM_DELETE_WINDOW", on_closing)
-    
+
     # Restore window geometry if saved
     if 'window_geometry' in app.frame_sizes:
         root.geometry(app.frame_sizes['window_geometry'])
-    
+
     # Start the main loop
     root.mainloop()
 
