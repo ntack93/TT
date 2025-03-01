@@ -501,6 +501,25 @@ class BBSTerminalApp:
 
         self.update_display_font()
 
+        # In the checkbox_frame section, add back the Messages to You checkbox:
+        # After the PBX Mode checkbox
+        pbx_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="PBX Mode",
+            variable=self.pbx_mode,
+            command=self.toggle_pbx_mode
+        )
+        pbx_check.grid(row=0, column=4, padx=5, pady=5, sticky=tk.W)
+
+        # Add Messages to You checkbox
+        messages_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Messages to You",
+            variable=self.show_messages_to_you,
+            command=self.toggle_messages_frame
+        )
+        messages_check.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
+
         # At the end of build_ui, apply saved settings
         self.master.after(100, self.apply_saved_settings)
 
@@ -2493,15 +2512,24 @@ class BBSTerminalApp:
         
         # Extract users section using improved pattern
         if "Topic:" in combined_clean:
-            # Modified pattern to properly handle the topic section
-            topic_pattern = r'Topic:\s*([^,]+),\s*(.*?)(?:\s+(?:is|are)\s+here\s+with\s+you)'
+            # Modified pattern to include the topic text in the username parsing
+            topic_pattern = r'Topic:\s*([^,]+)((?:,|\s+and\s+)?.*?)(?:\s+(?:is|are)\s+here\s+with\s+you)'
             match = re.search(topic_pattern, combined_clean)
             
             if match:
                 topic = match.group(1).strip()  # Save topic for later if needed
+                # Include any usernames that might be in the topic portion
+                topic_users = [x.strip() for x in topic.split() if x.strip()]
+                # Get the rest of the users text
                 users_text = match.group(2).strip()
                 print(f"[DEBUG] Found topic: {topic}")
                 print(f"[DEBUG] Found users text: {users_text}")
+                
+                # Combine potential usernames from topic and users text
+                users_text = ', '.join(filter(None, [
+                    ', '.join(topic_users),
+                    users_text
+                ]))
                 
                 # Split on commas and "and"
                 users_text = users_text.replace(" and ", ", ")
@@ -2519,7 +2547,7 @@ class BBSTerminalApp:
                     username = re.sub(r'[^A-Za-z0-9._-]', '', username)
                     
                     # Enhanced validation with special cases
-                    special_users = {'Chatbot', 'Hornet'}  # Add other special usernames here
+                    special_users = {'Chatbot', 'Hornet', 'BlaZ'}  # Add other special usernames here
                     
                     if (username in special_users or
                         (len(username) >= 2 and
