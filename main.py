@@ -16,6 +16,7 @@ import winsound  # Import winsound for playing sound effects on Windows
 from tkinter import simpledialog  # Import simpledialog for input dialogs
 import random
 from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
+from init_config import init_config_files, verify_sound_files  # Add this line
 
 try:
     import enchant
