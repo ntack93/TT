@@ -2510,13 +2510,15 @@ class BBSTerminalApp:
                 # Remove topic line from user parsing
                 combined_clean = re.sub(r'Topic:.*?\n', '', combined_clean)
 
-            # Remove any remaining system messages
-            combined_clean = re.sub(r'Just type.*$', '', combined_clean, flags=re.MULTILINE)
-            combined_clean = re.sub(r'You are in.*?\n', '', combined_clean, flags=re.MULTILINE)
+            # Clean up the user list text
+            # Remove system message parts
+            combined_clean = re.sub(r'You are in.*?:', '', combined_clean)
+            combined_clean = re.sub(r'are here with you\.?$', '', combined_clean)
+            combined_clean = re.sub(r'with you\.?$', '', combined_clean)
             
-            # Split on commas and "and", handling line breaks
-            content = combined_clean.replace('\n', ' ').replace(' and ', ', ')
-            users = [u.strip() for u in content.split(',') if u.strip()]
+            # Split users on commas and "and"
+            users_text = combined_clean.replace(' and ', ', ')
+            users = [u.strip() for u in users_text.split(',') if u.strip()]
             
             final_usernames = set()
             for user in users:
@@ -2525,10 +2527,10 @@ class BBSTerminalApp:
                 # Clean username but preserve dots
                 username = re.sub(r'[^A-Za-z0-9._-]', '', username)
                 
-                # Validate username but always include 'Chatbot'
+                # Validate username with more flexible rules
                 if username == 'Chatbot' or (len(username) >= 2 and 
                     not re.search(r'\.(net|com|org|bbs)$', username.lower()) and
-                    not username.startswith('Topic')):  # Prevent topic from becoming username
+                    not username.startswith('Topic')):
                     print(f"[DEBUG] Adding valid username: {username}")
                     final_usernames.add(username)
                 else:
@@ -3331,6 +3333,16 @@ class BBSTerminalApp:
     def process_pbx_line(self, clean_line):
         """Process a line in PBX mode including chat logging."""
         try:
+            # First check if this is a system message (topic/user list)
+            system_patterns = [
+                r'Topic:.*$',
+                r'.*(?:are here with you|with you)\.$'
+            ]
+            
+            # Skip processing if this is a system message
+            if any(re.match(pattern, clean_line) for pattern in system_patterns):
+                return False
+
             patterns = {
                 'public': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
                 'direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
