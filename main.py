@@ -2502,54 +2502,60 @@ class BBSTerminalApp:
         
         # Modified pattern to better handle PBX format and topic
         if "Topic:" in combined_clean:
-            # Extract topic and users separately
-            topic_match = re.match(r'Topic:\s*([^\n]+)', combined_clean)
-            if topic_match:
-                self.current_topic = topic_match.group(1).strip()
-                print(f"[DEBUG] Found topic: {self.current_topic}")
-                # Remove topic line from user parsing
-                combined_clean = re.sub(r'Topic:.*?\n', '', combined_clean)
-
-            # Clean up the user list text
-            # Remove system message parts
-            combined_clean = re.sub(r'You are in.*?:', '', combined_clean)
-            combined_clean = re.sub(r'are here with you\.?$', '', combined_clean)
-            combined_clean = re.sub(r'with you\.?$', '', combined_clean)
-            
-            # Split users on commas and "and"
-            users_text = combined_clean.replace(' and ', ', ')
-            users = [u.strip() for u in users_text.split(',') if u.strip()]
-            
-            final_usernames = set()
-            for user in users:
-                # Extract username from email-style addresses
-                username = user.split('@')[0].strip()
-                # Clean username but preserve dots
-                username = re.sub(r'[^A-Za-z0-9._-]', '', username)
-                
-                # Validate username with more flexible rules
-                if username == 'Chatbot' or (len(username) >= 2 and 
-                    not re.search(r'\.(net|com|org|bbs)$', username.lower()) and
-                    not username.startswith('Topic')):
-                    print(f"[DEBUG] Adding valid username: {username}")
-                    final_usernames.add(username)
+            # Extract everything after "General Chat"
+            parts = combined_clean.split("General Chat", 1)
+            if len(parts) > 1:
+                after_chat = parts[1]
+                # Find first comma to separate potential username from the rest
+                first_comma_pos = after_chat.find(',')
+                if first_comma_pos != -1:
+                    # Extract first potential username
+                    first_user = after_chat[:first_comma_pos].strip()
+                    # Get rest of users
+                    remaining_users = after_chat[first_comma_pos + 1:]
                 else:
-                    print(f"[DEBUG] Skipping invalid username: {username}")
-            
-            # Ensure 'Chatbot' is always included
-            final_usernames.add('Chatbot')
-            
-            if final_usernames:
-                print(f"[DEBUG] Final usernames: {final_usernames}")
-                self.chat_members = final_usernames
-                self.save_chat_members_file()
-                self.update_members_display()
+                    first_user = ""
+                    remaining_users = after_chat
+
+                # Clean up user strings
+                users_text = (first_user + "," + remaining_users if first_user else remaining_users)
+                users_text = re.sub(r'are here with you\.?$', '', users_text)
+                users_text = re.sub(r'with you\.?$', '', users_text)
+                users_text = users_text.replace(' and ', ', ')
                 
-                # Only request actions if not already requested this session
-                if not getattr(self, 'actions_requested_this_session', False):
-                    print("[DEBUG] First banner this session, requesting actions")
-                    self.actions_requested_this_session = True
-                    self.master.after(1000, self.send_actions_request)
+                # Split into individual users
+                users = [u.strip() for u in users_text.split(',') if u.strip()]
+                
+                final_usernames = set()
+                for user in users:
+                    # Extract username from email-style addresses
+                    username = user.split('@')[0].strip()
+                    # Clean username but preserve dots
+                    username = re.sub(r'[^A-Za-z0-9._-]', '', username)
+                    
+                    # Validate username
+                    if (len(username) >= 2 and 
+                        not re.search(r'\.(net|com|org|bbs)$', username.lower()) and
+                        not username.startswith('Topic:')):
+                        print(f"[DEBUG] Adding valid username: {username}")
+                        final_usernames.add(username)
+                    else:
+                        print(f"[DEBUG] Skipping invalid username: {username}")
+                
+                # Ensure 'Chatbot' is always included
+                final_usernames.add('Chatbot')
+                
+                if final_usernames:
+                    print(f"[DEBUG] Final usernames: {final_usernames}")
+                    self.chat_members = final_usernames
+                    self.save_chat_members_file()
+                    self.update_members_display()
+                    
+                    # Only request actions if not already requested this session
+                    if not getattr(self, 'actions_requested_this_session', False):
+                        print("[DEBUG] First banner this session, requesting actions")
+                        self.actions_requested_this_session = True
+                        self.master.after(1000, self.send_actions_request)
 
     def load_chat_members_file(self):
         """Load chat members from chat_members.json, or return an empty set if not found."""
@@ -2652,7 +2658,7 @@ class BBSTerminalApp:
             with open("last_seen.json", "w") as file:
                 json.dump(self.last_seen, file)
         except Exception as e:
-            print(f"Error saving last seen file: {e}")
+            print("Error saving last seen file: {e}")
 
     def refresh_chat_members(self):
         """Periodically refresh the chat members list."""
@@ -3603,6 +3609,10 @@ class BBSTerminalApp:
             self.input_var.set(self.current_command)
 
 def main():
+    # Initialize configuration files
+    init_config_files()
+    verify_sound_files()
+    
     root = tk.Tk()
     app = BBSTerminalApp(root)
 
