@@ -2525,14 +2525,17 @@ class BBSTerminalApp:
                 # Clean username but preserve dots
                 username = re.sub(r'[^A-Za-z0-9._-]', '', username)
                 
-                # Validate username
-                if (len(username) >= 2 and 
+                # Validate username but always include 'Chatbot'
+                if username == 'Chatbot' or (len(username) >= 2 and 
                     not re.search(r'\.(net|com|org|bbs)$', username.lower()) and
                     not username.startswith('Topic')):  # Prevent topic from becoming username
                     print(f"[DEBUG] Adding valid username: {username}")
                     final_usernames.add(username)
                 else:
                     print(f"[DEBUG] Skipping invalid username: {username}")
+            
+            # Ensure 'Chatbot' is always included
+            final_usernames.add('Chatbot')
             
             if final_usernames:
                 print(f"[DEBUG] Final usernames: {final_usernames}")
