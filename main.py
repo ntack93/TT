@@ -202,6 +202,10 @@ class BBSTerminalApp:
         # Add mousewheel handler
         self.current_scrollable_frame = None
 
+        # Add session state tracking
+        self.actions_requested_this_session = False
+        self.current_topic = ""
+
         # 1.BUILD UI
         self.build_ui()
 
@@ -1097,6 +1101,10 @@ class BBSTerminalApp:
         self.actions_requested = False
         self.has_requested_actions = False
 
+        # Reset session state
+        self.actions_requested_this_session = False
+        self.current_topic = ""
+
         def run_telnet():
             asyncio.set_event_loop(self.loop)
             self.loop.run_until_complete(self.telnet_client_task(host, port))
@@ -1269,7 +1277,7 @@ class BBSTerminalApp:
         return result
 
     def process_data_chunk(self, data):
-        """Process incoming data with improved action list handling."""
+        """Process incoming data chunks with improved banner handling."""
         # Decode CP437 data
         if isinstance(data, bytes):
             data = self.decode_cp437(data)
@@ -1284,85 +1292,56 @@ class BBSTerminalApp:
         # Precompile an ANSI escape code regex
         ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
         
-        skip_display = False  # Flag to track if we're in a banner section
-        
-        # Add message tracking
-        self.last_message = None
+        # Track banner lines for replacement
+        in_banner = False
+        banner_lines = []
         
         for line in lines[:-1]:
             clean_line = ansi_regex.sub('', line).strip()
             
-            # Check for banner start with more flexible matching
+            # Check for banner start
             if any(x in clean_line for x in ["Topic:", "You are in"]):
                 print("[DEBUG] Banner start detected:", clean_line)
                 self.user_list_buffer = [line]
                 self.collecting_users = True
+                in_banner = True
+                banner_lines = [line]
                 continue
                 
-            elif self.collecting_users:
+            # Collect banner lines
+            if in_banner:
                 self.user_list_buffer.append(line)
-                # More flexible end-of-banner detection
+                banner_lines.append(line)
                 if "you." in clean_line or "with you." in clean_line:
-                    print("[DEBUG] Banner end detected, processing users")
+                    # Process banner in background
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
+                    in_banner = False
                     
-                    # Trigger actions request after banner
-                    current_time = time.time()
-                    if current_time - self.last_banner_time > 5:
-                        print("[DEBUG] Banner processed, requesting actions")
-                        self.last_banner_time = current_time
-                        self.has_requested_actions = True
-                        self.master.after(500, self.request_actions_list)
-
-            # First check for actions list
-            if "Action listing for:" in clean_line:
-                print("[DEBUG] Action listing header detected")
-                self.actions = []
-                self.collecting_actions = True
-                continue
-            elif self.collecting_actions:
-                if clean_line == ":" or clean_line == "" or "Just press" in clean_line:
-                    if self.actions:
-                        print(f"[DEBUG] Finished collecting actions: {self.actions}")
-                        self.collecting_actions = False
-                        self.master.after_idle(self.update_actions_listbox)
+                    # Display replacement character if both modes enabled
+                    if self.pbx_mode.get() and self.majorlink_mode.get():
+                        self.append_terminal_text(self.cp437_map[16] + "\n", "normal")  # Index 16 is the right-facing triangle
+                    else:
+                        # Display original banner if modes not both enabled
+                        for banner_line in banner_lines:
+                            self.append_terminal_text(banner_line + "\n", "normal")
+                            
+                    # Request actions if needed
+                    if not self.actions_requested_this_session:
+                        current_time = time.time()
+                        if current_time - self.last_banner_time > 5:
+                            self.last_banner_time = current_time
+                            self.actions_requested_this_session = True
+                            self.master.after(500, self.send_actions_request)
                     continue
-                    
-                action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
-                valid_actions = [
-                    word for word in action_matches 
-                    if (word.lower() not in {
-                        'action', 'list', 'for', 'the', 'and', 'you', 'are',
-                        'can', 'use', 'these', 'actions', 'available'
-                    } and len(word) >= 2)
-                ]
-                    
-                if valid_actions:
-                    print(f"[DEBUG] Found valid actions: {valid_actions}")
-                    self.actions.extend(valid_actions)
                 continue
 
-            # Check for user list in banner
-            if "You are in" in clean_line and not self.collecting_users:
-                self.user_list_buffer = [line]
-                self.collecting_users = True
-                
-            elif self.collecting_users:
-                self.user_list_buffer.append(line)
-                if "are here with you." in clean_line:
-                    self.update_chat_members(self.user_list_buffer)
-                    self.collecting_users = False
-                    self.user_list_buffer = []
-
-            # Handle PBX mode
+            # Handle rest of line processing normally
             display_line = True
             if self.pbx_mode.get():
                 if self.process_pbx_line(clean_line):
-                    display_line = False  # Skip display if PBX line was processed
-            
-            # Handle MajorLink mode filtering
+                    display_line = False
             elif self.majorlink_mode.get():
                 if any(pattern in clean_line for pattern in [
                     "Topic:",
@@ -1371,22 +1350,11 @@ class BBSTerminalApp:
                 ]):
                     display_line = False
 
-            # Display the line if it hasn't been filtered out
+            # Display the line if it hasn't been filtered
             if display_line and clean_line:
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
                 self.parse_and_save_chatlog_message(line)
-
-            # Check for entry messages and request actions if needed
-            if (not self.has_requested_actions and 
-                "You are in" in clean_line and 
-                "are here with you" in clean_line):
-                current_time = time.time()
-                if current_time - self.last_banner_time > 5:
-                    print("[DEBUG] Detected room entry, requesting actions list")
-                    self.last_banner_time = current_time
-                    self.has_requested_actions = True
-                    self.master.after(500, self.request_actions_list)
 
         self.partial_line = lines[-1]
 
@@ -2532,14 +2500,22 @@ class BBSTerminalApp:
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
         
-        # Modified pattern to better handle PBX format
+        # Modified pattern to better handle PBX format and topic
         if "Topic:" in combined_clean:
-            # Remove "Topic:" line and "Just type" line
-            content = re.sub(r'Topic:.*?\n', '', combined_clean)
-            content = re.sub(r'Just type.*$', '', content, flags=re.MULTILINE)
+            # Extract topic and users separately
+            topic_match = re.match(r'Topic:\s*([^\n]+)', combined_clean)
+            if topic_match:
+                self.current_topic = topic_match.group(1).strip()
+                print(f"[DEBUG] Found topic: {self.current_topic}")
+                # Remove topic line from user parsing
+                combined_clean = re.sub(r'Topic:.*?\n', '', combined_clean)
+
+            # Remove any remaining system messages
+            combined_clean = re.sub(r'Just type.*$', '', combined_clean, flags=re.MULTILINE)
+            combined_clean = re.sub(r'You are in.*?\n', '', combined_clean, flags=re.MULTILINE)
             
             # Split on commas and "and", handling line breaks
-            content = content.replace('\n', ' ').replace(' and ', ', ')
+            content = combined_clean.replace('\n', ' ').replace(' and ', ', ')
             users = [u.strip() for u in content.split(',') if u.strip()]
             
             final_usernames = set()
@@ -2550,7 +2526,9 @@ class BBSTerminalApp:
                 username = re.sub(r'[^A-Za-z0-9._-]', '', username)
                 
                 # Validate username
-                if len(username) >= 2 and not re.search(r'\.(net|com|org|bbs)$', username.lower()):
+                if (len(username) >= 2 and 
+                    not re.search(r'\.(net|com|org|bbs)$', username.lower()) and
+                    not username.startswith('Topic')):  # Prevent topic from becoming username
                     print(f"[DEBUG] Adding valid username: {username}")
                     final_usernames.add(username)
                 else:
@@ -2562,12 +2540,10 @@ class BBSTerminalApp:
                 self.save_chat_members_file()
                 self.update_members_display()
                 
-                # Request actions list if this is first banner this session
-                current_time = time.time()
-                if not self.banner_seen_this_session:
-                    print("[DEBUG] First banner seen, requesting actions")
-                    self.banner_seen_this_session = True
-                    self.last_banner_time = current_time
+                # Only request actions if not already requested this session
+                if not getattr(self, 'actions_requested_this_session', False):
+                    print("[DEBUG] First banner this session, requesting actions")
+                    self.actions_requested_this_session = True
                     self.master.after(1000, self.send_actions_request)
 
     def load_chat_members_file(self):
@@ -2714,67 +2690,54 @@ class BBSTerminalApp:
             
         # Calculate max width using character-based estimation
         font = ("Arial VGA 437", 9, "bold")
-        max_width = 0
-        for action in sorted(set(self.actions)):
-            # Estimate width: each character is roughly 7 pixels wide in this font
-            # Add extra padding (40 pixels) for button margins and safety
-            text_width = (len(action) * 7) + 40
-            max_width = max(max_width, text_width)
-        
-        # Set minimum width and add padding for scrollbar
+        max_width = max((len(action) * 7) + 40 for action in sorted(set(self.actions)))
         panel_width = max(max_width, 100) + 30  # Minimum 100px + scrollbar width
-        actions_frame = self.actions_frame.master.master  # Get the outer frame
+        
+        # Set panel width
+        actions_frame = self.actions_frame.master.master
         actions_frame.configure(width=panel_width)
 
-        # Continue with existing button creation code...
-        # Create canvas and scrollbar if they don't exist
+        # Cleanup old mousewheel binding if it exists
+        if hasattr(self, 'actions_canvas'):
+            self.actions_canvas.unbind_all("<MouseWheel>")
+
+        # Create new scrollable frame
         if not hasattr(self, 'actions_scrollable_frame'):
-            # Create a canvas with scrollbar
             self.actions_canvas = tk.Canvas(self.actions_frame, highlightthickness=0)
             self.actions_scrollbar = ttk.Scrollbar(self.actions_frame, orient=tk.VERTICAL, 
                                                 command=self.actions_canvas.yview)
-            
-            # Create inner frame for buttons
             self.actions_scrollable_frame = ttk.Frame(self.actions_canvas)
             
-            # Configure canvas scrolling
-            self.actions_scrollable_frame.bind(
-                "<Configure>",
-                lambda e: self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
-            )
-            
-            # Create window in canvas for the frame
+            # Configure scrolling
+            self.actions_scrollable_frame.bind("<Configure>",
+                lambda e: self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all")))
             self.actions_canvas.create_window((0, 0), window=self.actions_scrollable_frame, anchor="nw")
             self.actions_canvas.configure(yscrollcommand=self.actions_scrollbar.set)
-            
-            # Configure mousewheel scrolling
+
+            # Configure mousewheel with proper cleanup
             def on_mousewheel(event):
                 self.actions_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-                
-            self.actions_canvas.bind_all("<MouseWheel>", on_mousewheel)
             
-            # Bind frame destruction to remove mousewheel binding
-            self.actions_scrollable_frame.bind(
-                "<Destroy>",
-                lambda e: self.actions_canvas.unbind_all("<MouseWheel>")
-            )
+            def on_destroy(event):
+                self.actions_canvas.unbind_all("<MouseWheel>")
+            
+            self.actions_canvas.bind_all("<MouseWheel>", on_mousewheel)
+            self.actions_scrollable_frame.bind("<Destroy>", on_destroy)
 
-        # Clear existing buttons
+        # Clear and recreate action buttons
         for widget in self.actions_scrollable_frame.winfo_children():
             widget.destroy()
 
-        # Add buttons for each action
         for i, action in enumerate(sorted(set(self.actions))):
             self.create_action_button(i, action)
 
-        # Configure canvas and scrollbar
+        # Update canvas layout
         if not self.actions_canvas.winfo_ismapped():
             self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             self.actions_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            
-        # Set fixed height to show ~20 items
-        button_height = 30  # Approximate height of each button
-        visible_height = min(20 * button_height, len(self.actions) * button_height)
+        
+        # Set visible height
+        visible_height = min(20 * 30, len(self.actions) * 30)  # 30px per button
         self.actions_canvas.configure(height=visible_height)
 
     def create_action_button(self, index, action):
@@ -3098,10 +3061,10 @@ class BBSTerminalApp:
             self.actions_list_requested = True
             
             try:
-                # Send action list request
+                # Send action list request with proper writer access
                 print("[DEBUG] Sending /a list command")
                 self.writer.write("/a list\r\n")
-                await self.writer.drain()
+                await self.writer.drain()  # Use writer's drain method
                 
                 # Wait briefly
                 await asyncio.sleep(0.5)
@@ -3109,12 +3072,9 @@ class BBSTerminalApp:
                 # Send enter keystroke
                 print("[DEBUG] Sending enter keystroke")
                 self.writer.write("\r\n")
-                await self.writer.drain()
+                await self.writer.drain()  # Use writer's drain method
                 
                 print("[DEBUG] Actions list request sequence completed")
-                
-                # Wait for response processing
-                await asyncio.sleep(1)
                 
             except Exception as e:
                 print(f"[DEBUG] Error in request_actions_list: {e}")
@@ -3123,7 +3083,7 @@ class BBSTerminalApp:
 
     def send_actions_request(self):
         """Non-async wrapper for requesting actions list."""
-        if self.connected and self.writer:
+        if self.connected and self.writer and self.loop:
             async def send():
                 try:
                     await self.request_actions_list()
@@ -3148,12 +3108,12 @@ class BBSTerminalApp:
             try:
                 # Send action list request
                 self.writer.write("/a list\r\n")
-                await self.writer.drain()
+                await self.drain()
                 
                 # Wait briefly then send Enter
                 await asyncio.sleep(0.5)
                 self.writer.write("\r\n")
-                await self.writer.drain()
+                await self.drain()
                 
                 print("[DEBUG] Sent action list request")
             except Exception as e:
@@ -3228,44 +3188,6 @@ class BBSTerminalApp:
                 style="Spell.TButton"
             )
             btn.pack(padx=5, pady=2, fill=tk.X)
-            if i == 0:  # Highlight first suggestion
-                btn.configure(style="SpellDefault.TButton")
-        
-        self.master.after(3000, self.close_spelling_popup)
-
-    def apply_suggestion(self, old_word, new_word):
-        """Replace misspelled word with suggestion."""
-        current_text = self.input_var.get()
-        new_text = current_text.rsplit(old_word, 1)[0] + new_word
-        self.input_var.set(new_text)
-        self.close_spelling_popup()
-
-    def close_spelling_popup(self):
-        """Close the spelling suggestion popup."""
-        if self.spell_popup:
-            self.spell_popup.destroy()
-            self.spell_popup = None
-
-    def play_chat_sound(self):
-        """Play sound for general chat messages."""
-        if os.path.exists(self.chat_sound_file):
-            try:
-                # Stop any currently playing sound
-                if self.current_sound:
-                    winsound.PlaySound(None, winsound.SND_PURGE)
-                
-                # Play new sound
-                self.current_sound = "chat"
-                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
-            except Exception as e:
-                print(f"Error playing chat sound: {e}")
-                self.current_sound = None
-        else:
-            print(f"Chat sound file not found: {self.chat_sound_file}")
-
-    def play_directed_sound(self):
-        """Play sound for directed messages."""
-        if os.path.exists(self.directed_sound_file):
             try:
                 # Stop any currently playing sound
                 if self.current_sound:
@@ -3406,50 +3328,34 @@ class BBSTerminalApp:
     def process_pbx_line(self, clean_line):
         """Process a line in PBX mode including chat logging."""
         try:
-            # PBX message patterns for different message types
-            pbx_patterns = [
-                # Third party to third party with domain mix - Public message
-                (r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)', 'public'),
-                # Directed messages to you - Private message
-                (r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)', 'direct'),
-                # Whispered messages - Most private
-                (r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered\):\]\s*(.+)', 'whisper')
-            ]
+            patterns = {
+                'public': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
+                'direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
+                'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered\):\]\s*(.+)'
+            }
             
-            for pattern, msg_type in pbx_patterns:
+            timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+            
+            for msg_type, pattern in patterns.items():
                 match = re.match(pattern, clean_line)
                 if match:
-                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
-                    
                     if msg_type == 'public':
-                        # Public message between others
                         sender, recipient, message = match.groups()
-                        formatted_message = f"{timestamp} {sender} to {recipient}: {message}"
-                        base_sender = sender.split('@')[0]
-                        
-                        # Save to chatlog and play chat sound
-                        self.save_chatlog_message(base_sender, formatted_message)
-                        self.play_chat_sound()
-                        
-                    else:  # direct or whisper
+                        formatted = f"{timestamp} {sender} to {recipient}: {message}"
+                        self.save_chatlog_message(sender.split('@')[0], formatted)
+                        self.append_terminal_text(formatted + "\n", "normal")
+                    else:
                         sender, message = match.groups()
-                        base_sender = sender.split('@')[0]
-                        formatted_message = f"{timestamp} From {sender}: {message}"
-                        
+                        formatted = f"{timestamp} From {sender}: {message}"
                         if msg_type == 'whisper':
-                            # Whispers only go to Messages to You frame
-                            self.append_directed_message(formatted_message)
-                            self.play_directed_sound()
-                        else:  # direct
-                            # Direct messages go to both Messages to You and chatlog
-                            self.append_directed_message(formatted_message)
-                            self.save_chatlog_message(base_sender, formatted_message)
-                            self.play_directed_sound()
+                            self.append_directed_message(formatted)
+                        else:
+                            self.append_directed_message(formatted)
+                            self.save_chatlog_message(sender.split('@')[0], formatted)
+                        self.append_terminal_text(formatted + "\n", "normal")
                     
-                    # Always parse URLs regardless of message type
-                    self.parse_and_store_hyperlinks(message, base_sender)
+                    self.parse_and_store_hyperlinks(message, sender.split('@')[0])
                     return True
-
             return False
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
@@ -3480,13 +3386,14 @@ class BBSTerminalApp:
         for line in lines[:-1]:
             clean_line = ansi_regex.sub('', line).strip()
             
-            # Check for banner start with more flexible matching
+            # Handle banner detection and user list collection
             if any(x in clean_line for x in ["Topic:", "You are in"]):
-                print("[DEBUG] Banner start detected:", clean_line)
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                continue
-                
+                # Skip display if both PBX and Majorlink modes are enabled
+                if self.pbx_mode.get() and self.majorlink_mode.get():
+                    continue
+            
             elif self.collecting_users:
                 self.user_list_buffer.append(line)
                 # More flexible end-of-banner detection
@@ -3496,13 +3403,18 @@ class BBSTerminalApp:
                     self.collecting_users = False
                     self.user_list_buffer = []
                     
-                    # Trigger actions request after banner
-                    current_time = time.time()
-                    if current_time - self.last_banner_time > 5:
-                        print("[DEBUG] Banner processed, requesting actions")
-                        self.last_banner_time = current_time
-                        self.has_requested_actions = True
-                        self.master.after(500, self.request_actions_list)
+                    # Skip display in PBX mode
+                    if self.pbx_mode.get():
+                        continue
+                    
+                    # Trigger actions request after banner if not done this session
+                    if not self.actions_requested_this_session:
+                        current_time = time.time()
+                        if current_time - self.last_banner_time > 5:
+                            print("[DEBUG] First banner this session, requesting actions")
+                            self.last_banner_time = current_time
+                            self.actions_requested_this_session = True
+                            self.master.after(500, self.request_actions_list)
 
             # First check for actions list
             if "Action listing for:" in clean_line:
