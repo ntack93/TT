@@ -3338,72 +3338,65 @@ class BBSTerminalApp:
     def process_pbx_line(self, clean_line):
         """Process a line in PBX mode including chat logging."""
         try:
-            # First check if this is a system message (topic/user list)
-            system_patterns = [
-                r'Topic:.*$',
-                r'.*(?:are here with you|with you)\.$'
-            ]
-            
-            # Skip processing if this is a system message
+            # Skip system messages check
+            system_patterns = [r'Topic:.*$', r'.*(?:are here with you|with you)\.$']
             if any(re.match(pattern, clean_line) for pattern in system_patterns):
                 return False
 
-            # Define message patterns with named groups
+            # Define message patterns
             patterns = {
                 'public_direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
                 'to_you': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
                 'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered(?:\s+to\s+you)?\):\]\s*(.+)',
-                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'  # Non-directed public messages
+                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'
             }
             
             timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
             
             for msg_type, pattern in patterns.items():
                 match = re.match(pattern, clean_line)
-                if match:
-                    # Extract the clean username (without domain) for consistent storage
-                    if msg_type == 'public_direct':
-                        sender, recipient, message = match.groups()
-                        sender_clean = sender.split('@')[0]
-                        recipient_clean = recipient.split('@')[0]
-                        formatted = f"{timestamp} From {sender} (to {recipient}): {message}"
-                        # Store in both sender's and recipient's chatlogs
-                        self.save_chatlog_message(sender_clean, formatted)
-                        self.save_chatlog_message(recipient_clean, formatted)
-                    
-                    elif msg_type == 'to_you':
-                        sender, message = match.groups()
-                        sender_clean = sender.split('@')[0]
-                        formatted = f"{timestamp} From {sender} (to you): {message}"
-                        # Store in chatlog and show in directed messages
-                        self.save_chatlog_message(sender_clean, formatted)
-                        self.append_directed_message(formatted)
-                        self.play_directed_sound()
-                    
-                    elif msg_type == 'whisper':
-                        sender, message = match.groups()
-                        sender_clean = sender.split('@')[0]
-                        formatted = f"{timestamp} From {sender} (whispered): {message}"
-                        # Store in chatlog and show in directed messages
-                        self.save_chatlog_message(sender_clean, formatted)
-                        self.append_directed_message(formatted)
-                        self.play_directed_sound()
-                    
-                    else:  # public
-                        sender, message = match.groups()
-                        sender_clean = sender.split('@')[0]
-                        formatted = f"{timestamp} From {sender}: {message}"
-                        # Store in chatlog
-                        self.save_chatlog_message(sender_clean, formatted)
-                        self.play_chat_sound()
+                if not match:
+                    continue
 
-                    # Parse any URLs in the message
-                    self.parse_and_store_hyperlinks(message, sender_clean)
-                    
-                    # Display in terminal
-                    self.append_terminal_text(formatted + "\n", "normal")
-                    return True
-                    
+                # Handle different message types
+                if msg_type == 'public_direct':
+                    sender, recipient, message = match.groups()
+                    sender_clean = sender.split('@')[0]
+                    recipient_clean = recipient.split('@')[0]
+                    formatted = f"{timestamp} From {sender} (to {recipient}): {message}"
+                    self.save_chatlog_message(sender_clean, formatted)
+                    if recipient_clean != sender_clean:  # Avoid double logging
+                        self.save_chatlog_message(recipient_clean, formatted)
+                    self.play_directed_sound()
+                
+                elif msg_type == 'to_you':
+                    sender, message = match.groups()
+                    sender_clean = sender.split('@')[0]
+                    formatted = f"{timestamp} From {sender} (to you): {message}"
+                    self.save_chatlog_message(sender_clean, formatted)
+                    self.append_directed_message(formatted)
+                    self.play_directed_sound()
+                
+                elif msg_type == 'whisper':
+                    sender, message = match.groups()
+                    sender_clean = sender.split('@')[0]
+                    formatted = f"{timestamp} From {sender} (whispered): {message}"
+                    self.save_chatlog_message(sender_clean, formatted)
+                    self.append_directed_message(formatted)
+                    self.play_directed_sound()
+                
+                else:  # public message
+                    sender, message = match.groups()
+                    sender_clean = sender.split('@')[0]
+                    formatted = f"{timestamp} From {sender}: {message}"
+                    self.save_chatlog_message(sender_clean, formatted)
+                    self.play_chat_sound()
+
+                # Handle URLs and display for all message types
+                self.parse_and_store_hyperlinks(message, sender_clean)
+                self.append_terminal_text(formatted + "\n", "normal")
+                return True
+
             return False
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
