@@ -3261,11 +3261,9 @@ class BBSTerminalApp:
     def toggle_messages_frame(self):
         """Toggle visibility of the Messages to You frame."""
         if self.show_messages_to_you.get():
-            # Show messages frame
             self.paned.add(self.messages_frame, minsize=100)
             self.paned.update()
         else:
-            # Hide messages frame
             self.paned.remove(self.messages_frame)
             self.paned.update()
 
@@ -3343,10 +3341,12 @@ class BBSTerminalApp:
             if any(re.match(pattern, clean_line) for pattern in system_patterns):
                 return False
 
+            # Define message patterns with named groups
             patterns = {
-                'public': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
-                'direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
-                'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered\):\]\s*(.+)'
+                'public_direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
+                'to_you': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
+                'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered(?:\s+to\s+you)?\):\]\s*(.+)',
+                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'  # Non-directed public messages
             }
             
             timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
@@ -3354,23 +3354,49 @@ class BBSTerminalApp:
             for msg_type, pattern in patterns.items():
                 match = re.match(pattern, clean_line)
                 if match:
-                    if msg_type == 'public':
+                    # Extract the clean username (without domain) for consistent storage
+                    if msg_type == 'public_direct':
                         sender, recipient, message = match.groups()
-                        formatted = f"{timestamp} {sender} to {recipient}: {message}"
-                        self.save_chatlog_message(sender.split('@')[0], formatted)
-                        self.append_terminal_text(formatted + "\n", "normal")
-                    else:
-                        sender, message = match.groups()
-                        formatted = f"{timestamp} From {sender}: {message}"
-                        if msg_type == 'whisper':
-                            self.append_directed_message(formatted)
-                        else:
-                            self.append_directed_message(formatted)
-                            self.save_chatlog_message(sender.split('@')[0], formatted)
-                        self.append_terminal_text(formatted + "\n", "normal")
+                        sender_clean = sender.split('@')[0]
+                        recipient_clean = recipient.split('@')[0]
+                        formatted = f"{timestamp} From {sender} (to {recipient}): {message}"
+                        # Store in both sender's and recipient's chatlogs
+                        self.save_chatlog_message(sender_clean, formatted)
+                        self.save_chatlog_message(recipient_clean, formatted)
                     
-                    self.parse_and_store_hyperlinks(message, sender.split('@')[0])
+                    elif msg_type == 'to_you':
+                        sender, message = match.groups()
+                        sender_clean = sender.split('@')[0]
+                        formatted = f"{timestamp} From {sender} (to you): {message}"
+                        # Store in chatlog and show in directed messages
+                        self.save_chatlog_message(sender_clean, formatted)
+                        self.append_directed_message(formatted)
+                        self.play_directed_sound()
+                    
+                    elif msg_type == 'whisper':
+                        sender, message = match.groups()
+                        sender_clean = sender.split('@')[0]
+                        formatted = f"{timestamp} From {sender} (whispered): {message}"
+                        # Store in chatlog and show in directed messages
+                        self.save_chatlog_message(sender_clean, formatted)
+                        self.append_directed_message(formatted)
+                        self.play_directed_sound()
+                    
+                    else:  # public
+                        sender, message = match.groups()
+                        sender_clean = sender.split('@')[0]
+                        formatted = f"{timestamp} From {sender}: {message}"
+                        # Store in chatlog
+                        self.save_chatlog_message(sender_clean, formatted)
+                        self.play_chat_sound()
+
+                    # Parse any URLs in the message
+                    self.parse_and_store_hyperlinks(message, sender_clean)
+                    
+                    # Display in terminal
+                    self.append_terminal_text(formatted + "\n", "normal")
                     return True
+                    
             return False
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
