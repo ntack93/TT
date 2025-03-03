@@ -29,7 +29,9 @@ DEFAULT_CONFIG_FILES = {
         "fg": "white",
         "bg": "black"
     },
-    "triggers.json": []
+    "triggers.json": [],
+    "messages_to_you.json": [],
+    "command_history.json": []  # Add this line for command history
 }
 
 def init_config_files():

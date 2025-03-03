@@ -17,6 +17,7 @@ from tkinter import simpledialog  # Import simpledialog for input dialogs
 import random
 from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
 from init_config import init_config_files, verify_sound_files  # Add this line
+import traceback
 
 try:
     import enchant
@@ -32,6 +33,16 @@ except ImportError:
 
 class BBSTerminalApp:
     def __init__(self, master):
+        # Initialize sound-related attributes first
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.chat_sound_file = os.path.join(script_dir, "chat.wav")
+        self.directed_sound_file = os.path.join(script_dir, "directed.wav")
+        self.current_sound = None
+        self.last_sound_time = 0
+        
+        print(f"[DEBUG] Chat sound path: {self.chat_sound_file}")
+        print(f"[DEBUG] Directed sound path: {self.directed_sound_file}")
+        
         # Add at the start of __init__
         self.show_messages_to_you = tk.BooleanVar(value=True)
         self.actions_request_lock = asyncio.Lock()
@@ -207,6 +218,11 @@ class BBSTerminalApp:
         self.actions_requested_this_session = False
         self.current_topic = ""
 
+        # Add command history support
+        self.command_history = self.load_command_history()
+        self.command_index = -1
+        self.current_command = ""
+
         # 1.BUILD UI
         self.build_ui()
 
@@ -227,16 +243,19 @@ class BBSTerminalApp:
         container = ttk.PanedWindow(self.master, orient=tk.HORIZONTAL)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Create the main UI frame on the LEFT
+        # Create the main UI frame on the LEFT with weight 3
         main_frame = ttk.Frame(container, name='main_frame')
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(0, weight=0)
         main_frame.rowconfigure(1, weight=3)
         main_frame.rowconfigure(2, weight=0)
-        container.add(main_frame, weight=3)  # Give main frame more weight
+        container.add(main_frame, weight=3)
 
-        # Create the Chatroom Members panel in the MIDDLE with bubble icons
-        members_frame = ttk.LabelFrame(container, text="Chatroom Members", width=160)
+        # Define default width for side panels (1.5 inches * 96 DPI)
+        default_panel_width = 130
+
+        # Create the Chatroom Members panel in the MIDDLE with fixed width
+        members_frame = ttk.LabelFrame(container, text="Chatroom Members", width=default_panel_width)
         members_frame.pack_propagate(False)  # Prevent frame from shrinking
         self.members_canvas = tk.Canvas(members_frame, highlightthickness=0)
         self.members_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -255,10 +274,10 @@ class BBSTerminalApp:
             self.members_canvas.configure(scrollregion=self.members_canvas.bbox("all"))
         
         self.members_frame.bind('<Configure>', on_configure)
-        container.add(members_frame, weight=1)
+        container.add(members_frame, weight=0)  # Set weight to 0 to maintain fixed width
 
-        # Create the Actions listbox on the RIGHT with bubble icons
-        actions_frame = ttk.LabelFrame(container, text="Actions", width=160)
+        # Create the Actions listbox on the RIGHT with fixed width
+        actions_frame = ttk.LabelFrame(container, text="Actions", width=default_panel_width)
         actions_frame.pack_propagate(False)  # Prevent frame from shrinking
         self.actions_canvas = tk.Canvas(actions_frame, highlightthickness=0)
         self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -277,7 +296,17 @@ class BBSTerminalApp:
             self.actions_canvas.configure(scrollregion=self.actions_canvas.bbox("all"))
         
         self.actions_frame.bind('<Configure>', on_actions_configure)
-        container.add(actions_frame, weight=1)
+        container.add(actions_frame, weight=0)  # Set weight to 0 to maintain fixed width
+
+        # Set initial pane sizes after window is drawn
+        def set_initial_sizes():
+            container.update()
+            total_width = container.winfo_width()
+            main_width = total_width - (2 * default_panel_width)
+            container.sashpos(0, main_width)  # Position between main and members
+            container.sashpos(1, main_width + default_panel_width)  # Position between members and actions
+
+        self.master.after(100, set_initial_sizes)
 
         # --- Row 0: Top frame (connection settings, username, password) ---
         top_frame = ttk.Frame(main_frame)
@@ -1038,7 +1067,8 @@ class BBSTerminalApp:
             start, end = match.span()
             if start > last_end:
                 segment = text_data[last_end:start]
-                self.insert_with_hyperlinks(segment, tuple(current_tags))
+                # Insert without hyperlink processing for Terminal display
+                self.terminal_display.insert(tk.END, segment, tuple(current_tags))
             
             code_string = match.group(1)
             codes = code_string.split(';')
@@ -1061,16 +1091,10 @@ class BBSTerminalApp:
                 else:
                     # Handle color codes
                     mapped_tag = self.map_code_to_tag(code)
-                    if mapped_tag:
-                        # Remove any existing color tags before adding new one
-                        current_tags = [tag for tag in current_tags 
-                                      if tag not in self.get_all_color_tags()]
+                    if mapped_tag and mapped_tag not in current_tags:
+                        # Remove any existing color tags
+                        current_tags = [tag for tag in current_tags if tag not in self.get_all_color_tags()]
                         current_tags.append(mapped_tag)
-                        if blink_tag and blink_tag in current_tags:
-                            # Ensure blink tag stays at end of list
-                            current_tags.remove(blink_tag)
-                            current_tags.append(blink_tag)
-                        
                         # Update color stack
                         color_stack.append(mapped_tag)
 
@@ -1079,7 +1103,7 @@ class BBSTerminalApp:
         # Insert any remaining text
         if last_end < len(text_data):
             segment = text_data[last_end:]
-            self.insert_with_hyperlinks(segment, tuple(current_tags))
+            self.terminal_display.insert(tk.END, segment, tuple(current_tags))
 
     # 1.5️⃣ CONNECT / DISCONNECT
     def toggle_connection(self):
@@ -1100,7 +1124,6 @@ class BBSTerminalApp:
         # Reset flags
         self.first_banner_seen = False
         self.actions_requested = False
-        self.has_requested_actions = False
 
         # Reset session state
         self.actions_requested_this_session = False
@@ -1278,7 +1301,7 @@ class BBSTerminalApp:
         return result
 
     def process_data_chunk(self, data):
-        """Process incoming data chunks with improved banner handling."""
+        """Process incoming data with improved action list handling."""
         # Decode CP437 data
         if isinstance(data, bytes):
             data = self.decode_cp437(data)
@@ -1293,56 +1316,91 @@ class BBSTerminalApp:
         # Precompile an ANSI escape code regex
         ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
         
-        # Track banner lines for replacement
-        in_banner = False
-        banner_lines = []
+        skip_display = False  # Flag to track if we're in a banner section
+        
+        # Add message tracking
+        self.last_message = None
         
         for line in lines[:-1]:
             clean_line = ansi_regex.sub('', line).strip()
             
-            # Check for banner start
+            # Handle banner detection and user list collection
             if any(x in clean_line for x in ["Topic:", "You are in"]):
-                print("[DEBUG] Banner start detected:", clean_line)
                 self.user_list_buffer = [line]
                 self.collecting_users = True
-                in_banner = True
-                banner_lines = [line]
-                continue
-                
-            # Collect banner lines
-            if in_banner:
+                # Skip display if both PBX and Majorlink modes are enabled
+                if self.pbx_mode.get() and self.majorlink_mode.get():
+                    continue
+            
+            elif self.collecting_users:
                 self.user_list_buffer.append(line)
-                banner_lines.append(line)
+                # More flexible end-of-banner detection
                 if "you." in clean_line or "with you." in clean_line:
-                    # Process banner in background
+                    print("[DEBUG] Banner end detected, processing users")
                     self.update_chat_members(self.user_list_buffer)
                     self.collecting_users = False
                     self.user_list_buffer = []
-                    in_banner = False
                     
-                    # Display replacement character if both modes enabled
-                    if self.pbx_mode.get() and self.majorlink_mode.get():
-                        self.append_terminal_text(self.cp437_map[16] + "\n", "normal")  # Index 16 is the right-facing triangle
-                    else:
-                        # Display original banner if modes not both enabled
-                        for banner_line in banner_lines:
-                            self.append_terminal_text(banner_line + "\n", "normal")
-                            
-                    # Request actions if needed
+                    # Skip display in PBX mode
+                    if self.pbx_mode.get():
+                        continue
+                    
+                    # Trigger actions request after banner if not done this session
                     if not self.actions_requested_this_session:
                         current_time = time.time()
                         if current_time - self.last_banner_time > 5:
+                            print("[DEBUG] First banner this session, requesting actions")
                             self.last_banner_time = current_time
                             self.actions_requested_this_session = True
-                            self.master.after(500, self.send_actions_request)
+                            self.master.after(500, self.request_actions_list)
+
+            # First check for actions list
+            if "Action listing for:" in clean_line:
+                print("[DEBUG] Action listing header detected")
+                self.actions = []
+                self.collecting_actions = True
+                continue
+            elif self.collecting_actions:
+                if clean_line == ":" or clean_line == "" or "Just press" in clean_line:
+                    if self.actions:
+                        print(f"[DEBUG] Finished collecting actions: {self.actions}")
+                        self.collecting_actions = False
+                        self.master.after_idle(self.update_actions_listbox)
                     continue
+                    
+                action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
+                valid_actions = [
+                    word for word in action_matches 
+                    if (word.lower() not in {
+                        'action', 'list', 'for', 'the', 'and', 'you', 'are',
+                        'can', 'use', 'these', 'actions', 'available'
+                    } and len(word) >= 2)
+                ]
+                    
+                if valid_actions:
+                    print(f"[DEBUG] Found valid actions: {valid_actions}")
+                    self.actions.extend(valid_actions)
                 continue
 
-            # Handle rest of line processing normally
+            # Check for user list in banner
+            if "You are in" in clean_line and not self.collecting_users:
+                self.user_list_buffer = [line]
+                self.collecting_users = True
+                
+            elif self.collecting_users:
+                self.user_list_buffer.append(line)
+                if "are here with you." in clean_line:
+                    self.update_chat_members(self.user_list_buffer)
+                    self.collecting_users = False
+                    self.user_list_buffer = []
+
+            # Handle PBX mode
             display_line = True
             if self.pbx_mode.get():
-                if self.process_pbx_line(clean_line):
-                    display_line = False
+                if self.process_pbx_line(clean_line, line):  # Pass original line
+                    display_line = False  # Skip display if PBX line was processed
+            
+            # Handle MajorLink mode filtering
             elif self.majorlink_mode.get():
                 if any(pattern in clean_line for pattern in [
                     "Topic:",
@@ -1351,11 +1409,23 @@ class BBSTerminalApp:
                 ]):
                     display_line = False
 
-            # Display the line if it hasn't been filtered
+            # Display the line if it hasn't been filtered out
             if display_line and clean_line:
                 self.append_terminal_text(line + "\n", "normal")
                 self.check_triggers(line)
-                self.parse_and_save_chatlog_message(line)
+                # Save the cleaned message to the chatlog
+                self.parse_and_save_chatlog_message(clean_line, line)
+
+            # Check for entry messages and request actions if needed
+            if (not self.has_requested_actions and 
+                "You are in" in clean_line and 
+                "are here with you" in clean_line):
+                current_time = time.time()
+                if current_time - self.last_banner_time > 5:
+                    print("[DEBUG] Detected room entry, requesting actions list")
+                    self.last_banner_time = current_time
+                    self.has_requested_actions = True
+                    self.master.after(500, self.request_actions_list)
 
         self.partial_line = lines[-1]
 
@@ -1368,11 +1438,8 @@ class BBSTerminalApp:
         elif "type it in and press enter" in lower_line or 'otherwise type "new":' in lower_line:
             self.master.after(500, self.send_username)
 
-    def parse_and_save_chatlog_message(self, line):
+    def parse_and_save_chatlog_message(self, clean_line, original_line):
         """Parse and save chat messages with timestamps, handling both normal and PBX formats."""
-        # Remove any ANSI escape sequences
-        clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
-        
         # Skip system messages and banner info
         skip_patterns = [
             r"You are in",
@@ -1392,7 +1459,7 @@ class BBSTerminalApp:
         
         if self.pbx_mode.get():
             # Handle PBX format
-            if self.process_pbx_line(clean_line):
+            if self.process_pbx_line(clean_line, original_line):
                 return
         
         # If not in PBX mode or if PBX parsing failed, use normal parsing
@@ -1403,7 +1470,7 @@ class BBSTerminalApp:
             # Directed messages
             r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
             # Normal messages
-            r'^(?:\[[\d-]+\\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
+            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
         ]
 
         for pattern in message_patterns:
@@ -1433,7 +1500,7 @@ class BBSTerminalApp:
                 break
 
     def send_message(self, event=None):
-        """Send the user's typed message to the BBS."""
+        """Send the user's typed message and manage command history."""
         if not self.connected or not self.writer:
             self.append_terminal_text("Not connected to any BBS.\n", "normal")
             return
@@ -1456,17 +1523,26 @@ class BBSTerminalApp:
             self.escape_timer = None
 
         user_input = self.input_var.get().strip()
-        # Clear input before sending to prevent duplicates
+        
+        if user_input:
+            # Add to command history if different from last command
+            if not self.command_history or user_input != self.command_history[-1]:
+                self.command_history.append(user_input)
+                # Keep history to last 100 commands
+                if len(self.command_history) > 100:
+                    self.command_history.pop(0)
+                self.save_command_history()
+
+        # Clear input before sending
         self.input_var.set("")
         
         if not user_input:
-            # If empty/whitespace, just send newline
             message = "\r\n"
         else:
             # Add prefix if mud mode enabled
             prefix = "Gos " if self.mud_mode.get() else ""
             message = prefix + user_input + "\r\n"
-            
+
         # Send message using asyncio.run_coroutine_threadsafe
         if self.connected and self.writer:
             async def send():
@@ -1760,7 +1836,8 @@ class BBSTerminalApp:
             start, end = match.span()
             if start > last_end:
                 segment = text_data[last_end:start]
-                self.insert_with_hyperlinks(segment, tuple(current_tags))
+                # Insert without hyperlink processing for Terminal display
+                self.terminal_display.insert(tk.END, segment, tuple(current_tags))
             
             code_string = match.group(1)
             codes = code_string.split(';')
@@ -1783,16 +1860,10 @@ class BBSTerminalApp:
                 else:
                     # Handle color codes
                     mapped_tag = self.map_code_to_tag(code)
-                    if mapped_tag:
-                        # Remove any existing color tags before adding new one
-                        current_tags = [tag for tag in current_tags 
-                                      if tag not in self.get_all_color_tags()]
+                    if mapped_tag and mapped_tag not in current_tags:
+                        # Remove any existing color tags
+                        current_tags = [tag for tag in current_tags if tag not in self.get_all_color_tags()]
                         current_tags.append(mapped_tag)
-                        if blink_tag and blink_tag in current_tags:
-                            # Ensure blink tag stays at end of list
-                            current_tags.remove(blink_tag)
-                            current_tags.append(blink_tag)
-                        
                         # Update color stack
                         color_stack.append(mapped_tag)
 
@@ -1801,7 +1872,7 @@ class BBSTerminalApp:
         # Insert any remaining text
         if last_end < len(text_data):
             segment = text_data[last_end:]
-            self.insert_with_hyperlinks(segment, tuple(current_tags))
+            self.terminal_display.insert(tk.END, segment, tuple(current_tags))
 
     def insert_with_hyperlinks(self, text, tag):
         """Insert text with hyperlinks detected and tagged."""
@@ -2839,7 +2910,7 @@ class BBSTerminalApp:
             self.display_stored_links()
 
     def display_stored_links(self):
-        """Display stored hyperlinks in the links panel."""
+        """Display stored hyperlinks in the links panel with top scroll positioning."""
         if not hasattr(self, 'links_display'):
             return
 
@@ -2847,6 +2918,9 @@ class BBSTerminalApp:
         self.links_display.delete(1.0, tk.END)
         
         links = self.load_links_history()
+        # Display links in reverse chronological order
+        links.reverse()
+        
         for link in links:
             timestamp = link.get("timestamp", "")
             sender = link.get("sender", "Unknown")
@@ -2856,6 +2930,8 @@ class BBSTerminalApp:
             self.links_display.insert(tk.END, f"{url}\n\n", "hyperlink")
         
         self.links_display.configure(state=tk.DISABLED)
+        # Ensure we start at the top
+        self.links_display.see("1.0")
 
     def open_chatlog_hyperlink(self, event):
         """Handle clicking a hyperlink in the chatlog links panel."""
@@ -3335,201 +3411,56 @@ class BBSTerminalApp:
         mode = "enabled" if self.pbx_mode.get() else "disabled"
         self.append_terminal_text(f"\n--- PBX Mode {mode} ---\n\n", "normal")
 
-    def process_pbx_line(self, clean_line):
-        """Process a line in PBX mode including chat logging."""
+    def process_pbx_line(self, clean_line, original_line):
+        """Process a line in PBX mode with improved sound handling."""
         try:
-            # Skip system messages check
-            system_patterns = [r'Topic:.*$', r'.*(?:are here with you|with you)\.$']
-            if any(re.match(pattern, clean_line) for pattern in system_patterns):
+            # Skip system messages
+            if any(re.match(pattern, clean_line) for pattern in [r'Topic:.*$', r'.*(?:are here with you|with you)\.$']):
                 return False
 
-            # Define message patterns
+            # Define message patterns with named groups
             patterns = {
                 'public_direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
                 'to_you': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
                 'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered(?:\s+to\s+you)?\):\]\s*(.+)',
-                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'
+                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'  # Non-directed public messages
             }
-            
+
             timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
-            
+
             for msg_type, pattern in patterns.items():
                 match = re.match(pattern, clean_line)
                 if not match:
                     continue
 
-                # Handle different message types
-                if msg_type == 'public_direct':
+                if msg_type == 'public_direct' or msg_type == 'to_you' or msg_type == 'whisper':
                     sender, recipient, message = match.groups()
                     sender_clean = sender.split('@')[0]
-                    recipient_clean = recipient.split('@')[0]
-                    formatted = f"{timestamp} From {sender} (to {recipient}): {message}"
-                    self.save_chatlog_message(sender_clean, formatted)
-                    if recipient_clean != sender_clean:  # Avoid double logging
-                        self.save_chatlog_message(recipient_clean, formatted)
-                    self.play_directed_sound()
-                
-                elif msg_type == 'to_you':
-                    sender, message = match.groups()
-                    sender_clean = sender.split('@')[0]
-                    formatted = f"{timestamp} From {sender} (to you): {message}"
+                    formatted = f"{timestamp} From {sender} ({msg_type=='whisper' and 'whispered' or 'to you'}): {message}"
                     self.save_chatlog_message(sender_clean, formatted)
                     self.append_directed_message(formatted)
-                    self.play_directed_sound()
-                
-                elif msg_type == 'whisper':
-                    sender, message = match.groups()
-                    sender_clean = sender.split('@')[0]
-                    formatted = f"{timestamp} From {sender} (whispered): {message}"
-                    self.save_chatlog_message(sender_clean, formatted)
-                    self.append_directed_message(formatted)
-                    self.play_directed_sound()
-                
+                    self.play_directed_sound()  # Keep directed sound for messages to you
+
                 else:  # public message
                     sender, message = match.groups()
                     sender_clean = sender.split('@')[0]
                     formatted = f"{timestamp} From {sender}: {message}"
                     self.save_chatlog_message(sender_clean, formatted)
-                    self.play_chat_sound()
+                    self.play_chat_sound()  # Play chat sound for non-directed public messages
 
-                # Handle URLs and display for all message types
+                # Process URLs and display message
                 self.parse_and_store_hyperlinks(message, sender_clean)
-                self.append_terminal_text(formatted + "\n", "normal")
+                self.append_terminal_text(original_line + "\n", "normal")  # Use original_line to retain ANSI colors
                 return True
 
             return False
+
         except Exception as e:
             print(f"[DEBUG] Error in process_pbx_line: {e}")
             traceback.print_exc()
             return False
 
-    def process_data_chunk(self, data):
-        """Process incoming data with improved action list handling."""
-        # Decode CP437 data
-        if isinstance(data, bytes):
-            data = self.decode_cp437(data)
-        else:
-            data = self.decode_cp437(data.encode('cp437'))
-            
-        # Normalize newlines
-        data = data.replace('\r\n', '\n').replace('\r', '\n')
-        self.partial_line += data
-        lines = self.partial_line.split("\n")
-        
-        # Precompile an ANSI escape code regex
-        ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
-        
-        skip_display = False  # Flag to track if we're in a banner section
-        
-        # Add message tracking
-        self.last_message = None
-        
-        for line in lines[:-1]:
-            clean_line = ansi_regex.sub('', line).strip()
-            
-            # Handle banner detection and user list collection
-            if any(x in clean_line for x in ["Topic:", "You are in"]):
-                self.user_list_buffer = [line]
-                self.collecting_users = True
-                # Skip display if both PBX and Majorlink modes are enabled
-                if self.pbx_mode.get() and self.majorlink_mode.get():
-                    continue
-            
-            elif self.collecting_users:
-                self.user_list_buffer.append(line)
-                # More flexible end-of-banner detection
-                if "you." in clean_line or "with you." in clean_line:
-                    print("[DEBUG] Banner end detected, processing users")
-                    self.update_chat_members(self.user_list_buffer)
-                    self.collecting_users = False
-                    self.user_list_buffer = []
-                    
-                    # Skip display in PBX mode
-                    if self.pbx_mode.get():
-                        continue
-                    
-                    # Trigger actions request after banner if not done this session
-                    if not self.actions_requested_this_session:
-                        current_time = time.time()
-                        if current_time - self.last_banner_time > 5:
-                            print("[DEBUG] First banner this session, requesting actions")
-                            self.last_banner_time = current_time
-                            self.actions_requested_this_session = True
-                            self.master.after(500, self.request_actions_list)
-
-            # First check for actions list
-            if "Action listing for:" in clean_line:
-                print("[DEBUG] Action listing header detected")
-                self.actions = []
-                self.collecting_actions = True
-                continue
-            elif self.collecting_actions:
-                if clean_line == ":" or clean_line == "" or "Just press" in clean_line:
-                    if self.actions:
-                        print(f"[DEBUG] Finished collecting actions: {self.actions}")
-                        self.collecting_actions = False
-                        self.master.after_idle(self.update_actions_listbox)
-                    continue
-                    
-                action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
-                valid_actions = [
-                    word for word in action_matches 
-                    if (word.lower() not in {
-                        'action', 'list', 'for', 'the', 'and', 'you', 'are',
-                        'can', 'use', 'these', 'actions', 'available'
-                    } and len(word) >= 2)
-                ]
-                    
-                if valid_actions:
-                    print(f"[DEBUG] Found valid actions: {valid_actions}")
-                    self.actions.extend(valid_actions)
-                continue
-
-            # Check for user list in banner
-            if "You are in" in clean_line and not self.collecting_users:
-                self.user_list_buffer = [line]
-                self.collecting_users = True
-                
-            elif self.collecting_users:
-                self.user_list_buffer.append(line)
-                if "are here with you." in clean_line:
-                    self.update_chat_members(self.user_list_buffer)
-                    self.collecting_users = False
-                    self.user_list_buffer = []
-
-            # Handle PBX mode
-            display_line = True
-            if self.pbx_mode.get():
-                if self.process_pbx_line(clean_line):
-                    display_line = False  # Skip display if PBX line was processed
-            
-            # Handle MajorLink mode filtering
-            elif self.majorlink_mode.get():
-                if any(pattern in clean_line for pattern in [
-                    "Topic:",
-                    "Just press",
-                    "are here with you"
-                ]):
-                    display_line = False
-
-            # Display the line if it hasn't been filtered out
-            if display_line and clean_line:
-                self.append_terminal_text(line + "\n", "normal")
-                self.check_triggers(line)
-                self.parse_and_save_chatlog_message(line)
-
-            # Check for entry messages and request actions if needed
-            if (not self.has_requested_actions and 
-                "You are in" in clean_line and 
-                "are here with you" in clean_line):
-                current_time = time.time()
-                if current_time - self.last_banner_time > 5:
-                    print("[DEBUG] Detected room entry, requesting actions list")
-                    self.last_banner_time = current_time
-                    self.has_requested_actions = True
-                    self.master.after(500, self.request_actions_list)
-
-        self.partial_line = lines[-1]
+    
 
     def on_closing(self):
         """Extended closing handler to save frame sizes and cleanup."""
@@ -3601,6 +3532,48 @@ class BBSTerminalApp:
         """Restore current input when focus returns."""
         if self.command_index == -1:
             self.input_var.set(self.current_command)
+
+    def play_chat_sound(self):
+        """Play chat sound with immediate interruption of any playing sound."""
+        try:
+            if hasattr(self, 'chat_sound_file') and os.path.exists(self.chat_sound_file):
+                print(f"[DEBUG] Playing chat sound: {self.chat_sound_file}")
+                winsound.PlaySound(None, winsound.SND_PURGE)  # Stop any playing sound
+                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            else:
+                print(f"[DEBUG] Chat sound file not found: {getattr(self, 'chat_sound_file', 'Not set')}")
+        except Exception as e:
+            print(f"Error playing chat sound: {e}")
+
+    def play_directed_sound(self):
+        """Play directed sound with immediate interruption of any playing sound."""
+        try:
+            if hasattr(self, 'directed_sound_file') and os.path.exists(self.directed_sound_file):
+                print(f"[DEBUG] Playing directed sound: {self.directed_sound_file}")
+                winsound.PlaySound(None, winsound.SND_PURGE)  # Stop any playing sound
+                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            else:
+                print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
+        except Exception as e:
+            print(f"Error playing directed sound: {e}")
+
+    def load_command_history(self):
+        """Load command history from file."""
+        try:
+            if os.path.exists("command_history.json"):
+                with open("command_history.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading command history: {e}")
+        return []
+
+    def save_command_history(self):
+        """Save command history to file."""
+        try:
+            with open("command_history.json", "w") as file:
+                json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
+        except Exception as e:
+            print(f"Error saving command history: {e}")
 
 def main():
     # Initialize configuration files
