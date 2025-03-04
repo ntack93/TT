@@ -3412,18 +3412,29 @@ class BBSTerminalApp:
         self.append_terminal_text(f"\n--- PBX Mode {mode} ---\n\n", "normal")
 
     def process_pbx_line(self, clean_line, original_line):
-        """Process a line in PBX mode with improved sound handling."""
+        """Process PBX mode messages with correct whisper/direct patterns."""
         try:
             # Skip system messages
-            if any(re.match(pattern, clean_line) for pattern in [r'Topic:.*$', r'.*(?:are here with you|with you)\.$']):
+            if any(re.match(pattern, clean_line) for pattern in [
+                r'Topic:.*$', 
+                r'.*(?:are here with you|with you)\.$',
+                r'Just type.*assistance\.$'
+            ]):
                 return False
 
-            # Define message patterns with named groups
+            # Define message patterns for all PBX formats
             patterns = {
-                'public_direct': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
-                'to_you': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to you\):\]\s*(.+)',
-                'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered(?:\s+to\s+you)?\):\]\s*(.+)',
-                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'  # Non-directed public messages
+                # Pattern for whispers (with and without domain)
+                'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered(?:\s*(?:to\s+you)?)?\):\]\s*(.+)',
+                
+                # Pattern for direct messages "to you" (with and without domain)
+                'to_you': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+you\):\]\s*(.+)',
+                
+                # Pattern for directed messages to specific users (with and without domain)
+                'public_directed': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
+                
+                # Pattern for regular public messages (with and without domain)
+                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'
             }
 
             timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
@@ -3433,25 +3444,53 @@ class BBSTerminalApp:
                 if not match:
                     continue
 
-                if msg_type == 'public_direct' or msg_type == 'to_you' or msg_type == 'whisper':
-                    sender, recipient, message = match.groups()
+                if msg_type == 'whisper':
+                    sender, message = match.groups()
                     sender_clean = sender.split('@')[0]
-                    formatted = f"{timestamp} From {sender} ({msg_type=='whisper' and 'whispered' or 'to you'}): {message}"
+                    formatted = f"{timestamp} From {sender} (whispered): {message}"
                     self.save_chatlog_message(sender_clean, formatted)
                     self.append_directed_message(formatted)
-                    self.play_directed_sound()  # Keep directed sound for messages to you
+                    self.play_directed_sound()
+                    self.append_terminal_text(original_line + "\n", "normal")
+                    return True
 
-                else:  # public message
+                elif msg_type == 'to_you':
+                    sender, message = match.groups()
+                    sender_clean = sender.split('@')[0]
+                    formatted = f"{timestamp} From {sender} (to you): {message}"
+                    self.save_chatlog_message(sender_clean, formatted)
+                    self.append_directed_message(formatted)
+                    self.play_directed_sound()
+                    self.append_terminal_text(original_line + "\n", "normal")
+                    return True
+
+                elif msg_type == 'public_directed':
+                    sender, recipient, message = match.groups()
+                    sender_clean = sender.split('@')[0]
+                    recipient_clean = recipient.split('@')[0]
+                    
+                    # Only process as directed if it's to current user
+                    if recipient_clean.lower() == self.username.get().lower():
+                        formatted = f"{timestamp} From {sender} (to you): {message}"
+                        self.save_chatlog_message(sender_clean, formatted)
+                        self.append_directed_message(formatted)
+                        self.play_directed_sound()
+                    else:
+                        formatted = f"{timestamp} From {sender} (to {recipient}): {message}"
+                        self.save_chatlog_message(sender_clean, formatted)
+                        self.play_chat_sound()
+                    
+                    self.append_terminal_text(original_line + "\n", "normal")
+                    return True
+
+                elif msg_type == 'public':
                     sender, message = match.groups()
                     sender_clean = sender.split('@')[0]
                     formatted = f"{timestamp} From {sender}: {message}"
                     self.save_chatlog_message(sender_clean, formatted)
-                    self.play_chat_sound()  # Play chat sound for non-directed public messages
-
-                # Process URLs and display message
-                self.parse_and_store_hyperlinks(message, sender_clean)
-                self.append_terminal_text(original_line + "\n", "normal")  # Use original_line to retain ANSI colors
-                return True
+                    self.play_chat_sound()
+                    self.append_terminal_text(original_line + "\n", "normal")
+                    return True
 
             return False
 
