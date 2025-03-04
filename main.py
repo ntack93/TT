@@ -1817,86 +1817,69 @@ class BBSTerminalApp:
         self.triggers_window.destroy()
 
     def append_terminal_text(self, text, default_tag="normal"):
-        """Append text to the terminal display with optional ANSI parsing."""
+        """Append text to the terminal display with ANSI parsing and hyperlink support."""
         self.terminal_display.configure(state=tk.NORMAL)
-        self.parse_ansi_and_insert(text)
+        
+        # Handle ANSI codes first
+        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
+        segments = ansi_escape_regex.split(text)
+        
+        current_tags = [default_tag]
+        for i, segment in enumerate(segments):
+            if i % 2 == 0:  # This is text content
+                self.insert_with_hyperlinks(segment, tuple(current_tags))
+            else:  # This is an ANSI code
+                new_tag = self.map_code_to_tag(segment)
+                if new_tag:
+                    current_tags = [new_tag]
+        
         self.terminal_display.see(tk.END)
-        self.master.update_idletasks()  # Force update to ensure proper display
+        self.master.update_idletasks()
         self.terminal_display.configure(state=tk.DISABLED)
 
-    def parse_ansi_and_insert(self, text_data):
-        """Enhanced parser for ANSI codes including blink and overlapping colors."""
-        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
+    def insert_with_hyperlinks(self, text, tags):
+        """Enhanced hyperlink detection and insertion."""
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
         last_end = 0
-        current_tags = ["normal"]
-        color_stack = []
-        blink_tag = None
-
-        for match in ansi_escape_regex.finditer(text_data):
+        
+        for match in url_pattern.finditer(text):
             start, end = match.span()
+            # Insert non-URL text
             if start > last_end:
-                segment = text_data[last_end:start]
-                # Insert without hyperlink processing for Terminal display
-                self.terminal_display.insert(tk.END, segment, tuple(current_tags))
+                self.terminal_display.insert(tk.END, text[last_end:start], tags)
             
-            code_string = match.group(1)
-            codes = code_string.split(';')
+            # Clean and insert URL
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            self.terminal_display.insert(tk.END, url, ("hyperlink",) + (tags if isinstance(tags, tuple) else (tags,)))
             
-            # Handle reset code
-            if '0' in codes or not codes:
-                current_tags = ["normal"]
-                color_stack = []
-                blink_tag = None
-                codes = [code for code in codes if code not in ['0', '']]
-
-            for code in codes:
-                if code in ['5', '6']:  # Blink codes
-                    if not blink_tag:
-                        blink_tag = f"blink_{len(self.blink_tags)}"
-                        self.terminal_display.tag_configure(blink_tag, background="")
-                        self.blink_tags.add(blink_tag)
-                    if blink_tag not in current_tags:
-                        current_tags.append(blink_tag)
-                else:
-                    # Handle color codes
-                    mapped_tag = self.map_code_to_tag(code)
-                    if mapped_tag and mapped_tag not in current_tags:
-                        # Remove any existing color tags
-                        current_tags = [tag for tag in current_tags if tag not in self.get_all_color_tags()]
-                        current_tags.append(mapped_tag)
-                        # Update color stack
-                        color_stack.append(mapped_tag)
-
             last_end = end
-
-        # Insert any remaining text
-        if last_end < len(text_data):
-            segment = text_data[last_end:]
-            self.terminal_display.insert(tk.END, segment, tuple(current_tags))
-
-    def insert_with_hyperlinks(self, text, tag):
-        """Insert text with hyperlinks detected and tagged."""
-        url_regex = re.compile(r'(https?://\S+)')
-        last_end = 0
-        for match in url_regex.finditer(text):
-            start, end = match.span()
-            if start > last_end:
-                self.terminal_display.insert(tk.END, text[last_end:start], tag)
-            self.terminal_display.insert(tk.END, text[start:end], ("hyperlink", tag))
-            last_end = end
+        
+        # Insert remaining text
         if last_end < len(text):
-            self.terminal_display.insert(tk.END, text[last_end:], tag)
+            self.terminal_display.insert(tk.END, text[last_end:], tags)
 
     def insert_directed_message_with_hyperlinks(self, text, tag):
         """Insert directed message text with hyperlinks detected and tagged."""
-        url_regex = re.compile(r'(https?://\S+)')
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
         last_end = 0
-        for match in url_regex.finditer(text):
+        
+        for match in url_pattern.finditer(text):
             start, end = match.span()
+            # Insert non-URL text
             if start > last_end:
                 self.directed_msg_display.insert(tk.END, text[last_end:start], tag)
-            self.directed_msg_display.insert(tk.END, text[start:end], ("hyperlink", tag))
+            
+            # Clean and insert URL
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            self.directed_msg_display.insert(tk.END, url, ("hyperlink", tag))
+            
             last_end = end
+        
+        # Insert remaining text
         if last_end < len(text):
             self.directed_msg_display.insert(tk.END, text[last_end:], tag)
 
@@ -2488,33 +2471,65 @@ class BBSTerminalApp:
             self.chatlog_listbox.insert(tk.END, username)
 
     def display_chatlog_messages(self, event=None):
-        """Display messages for the selected user or all messages if no user is selected."""
+        """Display messages with clickable hyperlinks in the chatlog panel."""
         chatlog = self.load_chatlog()
         self.chatlog_display.configure(state=tk.NORMAL)
         self.chatlog_display.delete(1.0, tk.END)
         
-        if event is None or not self.chatlog_listbox.curselection():
-            # Show all messages combined chronologically
-            all_messages = []
-            for username, messages in chatlog.items():
-                all_messages.extend((username, msg) for msg in messages)
-            
-            # Sort by timestamp
-            all_messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x[1]).group(1) if re.match(r'\[(.*?)\]', x[1]) else "0")
-            
-            for username, message in all_messages:
-                self.chatlog_display.insert(tk.END, f"> {message}\n\n")
-        else:
-            # Show messages for selected user
-            selected_index = self.chatlog_listbox.curselection()
-            username = self.chatlog_listbox.get(selected_index)
-            messages = chatlog.get(username, [])
-            messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x).group(1) if re.match(r'\[(.*?)\]', x) else "0")
-            for message in messages:
-                self.chatlog_display.insert(tk.END, f"> {message}\n\n")
+        try:
+            if event is None or not self.chatlog_listbox.curselection():
+                # Show all messages combined chronologically
+                all_messages = []
+                for username, messages in chatlog.items():
+                    all_messages.extend((username, msg) for msg in messages)
+                
+                # Sort by timestamp
+                all_messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x[1]).group(1) if re.match(r'\[(.*?)\]', x[1]) else "0")
+                
+                for username, message in all_messages:
+                    self.chatlog_display.insert(tk.END, "> ")
+                    self.insert_message_with_hyperlinks(message, self.chatlog_display)
+                    self.chatlog_display.insert(tk.END, "\n\n")
+            else:
+                # Show messages for selected user
+                selected_index = self.chatlog_listbox.curselection()
+                username = self.chatlog_listbox.get(selected_index)
+                messages = chatlog.get(username, [])
+                messages.sort(key=lambda x: re.match(r'\[(.*?)\]', x).group(1) if re.match(r'\[(.*?)\]', x) else "0")
+                
+                for message in messages:
+                    self.chatlog_display.insert(tk.END, "> ")
+                    self.insert_message_with_hyperlinks(message, self.chatlog_display)
+                    self.chatlog_display.insert(tk.END, "\n\n")
         
-        self.chatlog_display.configure(state=tk.DISABLED)
-        self.chatlog_display.see(tk.END)
+        except Exception as e:
+            print(f"Error displaying chatlog messages: {e}")
+        finally:
+            self.chatlog_display.configure(state=tk.DISABLED)
+            self.chatlog_display.see(tk.END)
+
+    def insert_message_with_hyperlinks(self, text, text_widget):
+        """Insert text with hyperlinks into any text widget."""
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        last_end = 0
+        
+        for match in url_pattern.finditer(text):
+            start, end = match.span()
+            # Insert non-URL text
+            if start > last_end:
+                text_widget.insert(tk.END, text[last_end:start])
+                
+            # Clean and insert URL
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            text_widget.insert(tk.END, url, "hyperlink")
+            
+            last_end = end
+        
+        # Insert remaining text
+        if last_end < len(text):
+            text_widget.insert(tk.END, text[last_end:])
 
     def update_members_display(self):
         """Update the chat members display with bubble icons and adjust panel width."""
@@ -2673,8 +2688,7 @@ class BBSTerminalApp:
         self.master.after(5000, self.refresh_chat_members)
 
     def append_directed_message(self, text):
-        """Append text to the directed messages display."""
-        # Check if message already exists in the display
+        """Append text to the directed messages display with hyperlink support."""
         if not text.endswith('\n'):
             text += '\n'
             
@@ -2685,6 +2699,7 @@ class BBSTerminalApp:
         
         # Only append if the message isn't already present
         if text not in current_content:
+            # Use insert_with_hyperlinks for directed messages
             self.insert_directed_message_with_hyperlinks(text, "normal")
             self.directed_msg_display.see(tk.END)
             
@@ -3183,7 +3198,16 @@ class BBSTerminalApp:
                 # Wait for completion with timeout
                 future.result(timeout=5)
             except Exception as e:
-                print(f"[DEBUG] Future error: {e}")
+                print(f"Error or timeout during cleanup: {e}")
+        try:
+            # Your code here
+            pass
+        finally:
+            # Force quit even if cleanup fails
+            try:
+                root.quit()
+            finally:
+                root.destroy()
 
     def request_actions_list(self):
         """Enhanced action list request with PBX mode support."""
@@ -3412,7 +3436,7 @@ class BBSTerminalApp:
         self.append_terminal_text(f"\n--- PBX Mode {mode} ---\n\n", "normal")
 
     def process_pbx_line(self, clean_line, original_line):
-        """Process PBX mode messages with correct whisper/direct patterns."""
+        """Process PBX mode messages with hyperlink support."""
         try:
             # Skip system messages
             if any(re.match(pattern, clean_line) for pattern in [
@@ -3452,6 +3476,8 @@ class BBSTerminalApp:
                     self.append_directed_message(formatted)
                     self.play_directed_sound()
                     self.append_terminal_text(original_line + "\n", "normal")
+                    # Extract URLs from message
+                    self.parse_and_store_hyperlinks(message, sender_clean)
                     return True
 
                 elif msg_type == 'to_you':
@@ -3462,6 +3488,8 @@ class BBSTerminalApp:
                     self.append_directed_message(formatted)
                     self.play_directed_sound()
                     self.append_terminal_text(original_line + "\n", "normal")
+                    # Extract URLs from message
+                    self.parse_and_store_hyperlinks(message, sender_clean)
                     return True
 
                 elif msg_type == 'public_directed':
@@ -3480,6 +3508,8 @@ class BBSTerminalApp:
                         self.save_chatlog_message(sender_clean, formatted)
                         self.play_chat_sound()
                     
+                    # Extract URLs from message
+                    self.parse_and_store_hyperlinks(message, sender_clean)
                     self.append_terminal_text(original_line + "\n", "normal")
                     return True
 
@@ -3490,6 +3520,8 @@ class BBSTerminalApp:
                     self.save_chatlog_message(sender_clean, formatted)
                     self.play_chat_sound()
                     self.append_terminal_text(original_line + "\n", "normal")
+                    # Extract URLs from message
+                    self.parse_and_store_hyperlinks(message, sender_clean)
                     return True
 
             return False
