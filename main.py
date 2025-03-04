@@ -985,19 +985,22 @@ class BBSTerminalApp:
 
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
-        """Define text tags for ANSI colors and attributes including blink."""
-        self.terminal_display.tag_configure("normal", foreground="white")
+        """Define text tags for ANSI colors and attributes."""
+        # Reset all existing tags first
+        for tag in self.terminal_display.tag_names():
+            self.terminal_display.tag_delete(tag)
 
-        color_map = {
+        # Base colors with specific RGB values for better visibility
+        self.color_map = {
             '30': 'black',
             '31': 'red',
             '32': 'green',
             '33': 'yellow',
-            '34': 'blue',
+            '34': 'bright_blue',  # Use bright blue for usernames
             '35': 'magenta',
             '36': 'cyan',
             '37': 'white',
-            '90': 'bright_black',
+            '90': 'gray',
             '91': 'bright_red',
             '92': 'bright_green',
             '93': 'bright_yellow',
@@ -1008,31 +1011,106 @@ class BBSTerminalApp:
             '38': 'grey'  # Custom tag for grey color
         }
 
-        for code, tag in color_map.items():
-            if tag == 'blue':
-                # Use a lighter blue instead of the default dark blue
-                self.terminal_display.tag_configure(tag, foreground="#3399FF")
-            elif tag == 'grey':
-                # Set grey color to a visible shade
-                self.terminal_display.tag_configure(tag, foreground="#B0B0B0")
-            elif tag.startswith("bright_"):
-                base_color = tag.split("_", 1)[1]
-                self.terminal_display.tag_configure(tag, foreground=base_color)
-            else:
-                self.terminal_display.tag_configure(tag, foreground=tag)
+        # Define all color tags first
+        self.terminal_display.tag_configure("normal", foreground="white")
+        self.terminal_display.tag_configure("black", foreground="#000000")
+        self.terminal_display.tag_configure("red", foreground="#ff5555")
+        self.terminal_display.tag_configure("green", foreground="#55ff55")
+        self.terminal_display.tag_configure("yellow", foreground="#ffff55")
+        self.terminal_display.tag_configure("blue", foreground="#3399FF")
+        self.terminal_display.tag_configure("bright_blue", foreground="#5599ff")
+        self.terminal_display.tag_configure("magenta", foreground="#ff55ff")
+        self.terminal_display.tag_configure("cyan", foreground="#55ffff")
+        self.terminal_display.tag_configure("white", foreground="white")
+        self.terminal_display.tag_configure("gray", foreground="#aaaaaa")
+        self.terminal_display.tag_configure("grey", foreground="#B0B0B0")
+        
+        # Configure bright variants
+        self.terminal_display.tag_configure("bright_red", foreground="#ff8888")
+        self.terminal_display.tag_configure("bright_green", foreground="#88ff88")
+        self.terminal_display.tag_configure("bright_yellow", foreground="#ffff88")
+        self.terminal_display.tag_configure("bright_magenta", foreground="#ff88ff")
+        self.terminal_display.tag_configure("bright_cyan", foreground="#88ffff")
+        self.terminal_display.tag_configure("bright_white", foreground="white")
 
-        # Add blink tags
+        # Add blink tag
         self.terminal_display.tag_configure("blink", background="")
         self.blink_tags = set()
-    
+        
         # Start blink timer
         self.blink_timer()
 
-        # Ensure color tags have priority over other tags
-        for tag in self.get_all_color_tags():
-            if hasattr(self.terminal_display, 'tag_raise'):
-                self.terminal_display.tag_raise(tag)
+        # Create a list of all defined tags for proper raising
+        all_tags = ["normal", "black", "red", "green", "yellow", "blue", "bright_blue", 
+                    "magenta", "cyan", "white", "gray", "grey",
+                    "bright_red", "bright_green", "bright_yellow", "bright_magenta", 
+                    "bright_cyan", "bright_white"]
 
+        # Ensure proper tag ordering
+        for tag in all_tags:
+            if hasattr(self.terminal_display, 'tag_raise'):
+                try:
+                    self.terminal_display.tag_raise(tag)
+                except Exception as e:
+                    print(f"Warning: Could not raise tag {tag}: {e}")
+
+        # Put important tags on top
+        for tag in ["bright_blue", "red", "yellow"]:
+            self.terminal_display.tag_raise(tag)
+
+    def parse_ansi_and_insert(self, text_data):
+        """Parse ANSI escape sequences and apply appropriate colors."""
+        if not text_data:
+            return
+            
+        ansi_regex = re.compile(r'\x1b\[([0-9;]*)m')
+        current_pos = "1.0"
+        current_tags = ["normal"]
+        last_pos = 0
+        current_blink = None
+        
+        # Split text on ANSI codes while preserving them
+        segments = ansi_regex.split(text_data)
+        
+        for i, segment in enumerate(segments):
+            if i % 2 == 0:  # Text content
+                if segment:
+                    tags = tuple(current_tags)
+                    if current_blink:
+                        tags = tags + (current_blink,)
+                    self.terminal_display.insert(tk.END, segment, tags)
+            else:  # ANSI codes
+                if not segment:  # Reset to default
+                    current_tags = ["normal"]
+                    current_blink = None
+                else:
+                    # Handle multiple codes separated by semicolons
+                    for code in segment.split(';'):
+                        if code in ['5', '6']:  # Blink codes
+                            if not current_blink:
+                                current_blink = f"blink_{len(self.blink_tags)}"
+                                self.terminal_display.tag_configure(current_blink, background="")
+                                self.blink_tags.add(current_blink)
+                        elif code in self.color_map:
+                            # Remove any existing color tags
+                            current_tags = [tag for tag in current_tags 
+                                          if tag not in self.color_map.values()]
+                            # Add new color tag
+                            current_tags.append(self.color_map[code])
+                        elif code == '0':  # Reset
+                            current_tags = ["normal"]
+                            current_blink = None
+                        elif code == '1':  # Bold/Bright
+                            # Convert normal colors to bright if applicable
+                            current_tags = ["bright_" + tag if tag in ['blue', 'red', 'green', 'yellow', 'magenta', 'cyan', 'white']
+                                          else tag for tag in current_tags]
+
+        # Ensure proper tag ordering
+        self.terminal_display.tag_raise("bright_blue")
+        self.terminal_display.tag_raise("red")
+        self.terminal_display.tag_raise("yellow")
+
+    # Keep existing blink_timer and get_all_color_tags methods
     def blink_timer(self):
         """Toggle blink state every 500ms."""
         self.blink_state = not self.blink_state
@@ -1054,56 +1132,6 @@ class BBSTerminalApp:
             'bright_black', 'bright_red', 'bright_green', 'bright_yellow',
             'bright_blue', 'bright_magenta', 'bright_cyan', 'bright_white'
         }
-
-    def parse_ansi_and_insert(self, text_data):
-        """Enhanced parser for ANSI codes including blink and overlapping colors."""
-        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
-        last_end = 0
-        current_tags = ["normal"]
-        color_stack = []
-        blink_tag = None
-
-        for match in ansi_escape_regex.finditer(text_data):
-            start, end = match.span()
-            if start > last_end:
-                segment = text_data[last_end:start]
-                # Insert without hyperlink processing for Terminal display
-                self.terminal_display.insert(tk.END, segment, tuple(current_tags))
-            
-            code_string = match.group(1)
-            codes = code_string.split(';')
-            
-            # Handle reset code
-            if '0' in codes or not codes:
-                current_tags = ["normal"]
-                color_stack = []
-                blink_tag = None
-                codes = [code for code in codes if code not in ['0', '']]
-
-            for code in codes:
-                if code in ['5', '6']:  # Blink codes
-                    if not blink_tag:
-                        blink_tag = f"blink_{len(self.blink_tags)}"
-                        self.terminal_display.tag_configure(blink_tag, background="")
-                        self.blink_tags.add(blink_tag)
-                    if blink_tag not in current_tags:
-                        current_tags.append(blink_tag)
-                else:
-                    # Handle color codes
-                    mapped_tag = self.map_code_to_tag(code)
-                    if mapped_tag and mapped_tag not in current_tags:
-                        # Remove any existing color tags
-                        current_tags = [tag for tag in current_tags if tag not in self.get_all_color_tags()]
-                        current_tags.append(mapped_tag)
-                        # Update color stack
-                        color_stack.append(mapped_tag)
-
-            last_end = end
-
-        # Insert any remaining text
-        if last_end < len(text_data):
-            segment = text_data[last_end:]
-            self.terminal_display.insert(tk.END, segment, tuple(current_tags))
 
     # 1.5️⃣ CONNECT / DISCONNECT
     def toggle_connection(self):
@@ -1314,26 +1342,26 @@ class BBSTerminalApp:
         lines = self.partial_line.split("\n")
         
         # Precompile an ANSI escape code regex
-        ansi_regex = re.compile(r'\x1b\[[0-9;]*m')
-        
-        skip_display = False  # Flag to track if we're in a banner section
-        
-        # Add message tracking
-        self.last_message = None
+        ansi_regex = re.compile(r'(\x1b\[[0-9;]*m)')
         
         for line in lines[:-1]:
-            clean_line = ansi_regex.sub('', line).strip()
+            # Split the line into ANSI codes and text while preserving the codes
+            line_parts = ansi_regex.split(line)
+            # Reconstruct without ANSI for pattern matching
+            clean_line = ''.join(p for i, p in enumerate(line_parts) if i % 2 == 0).strip()
+            # Keep original line with ANSI intact
+            original_with_ansi = line
             
             # Handle banner detection and user list collection
             if any(x in clean_line for x in ["Topic:", "You are in"]):
-                self.user_list_buffer = [line]
+                self.user_list_buffer = [original_with_ansi]  # Store with ANSI
                 self.collecting_users = True
                 # Skip display if both PBX and Majorlink modes are enabled
                 if self.pbx_mode.get() and self.majorlink_mode.get():
                     continue
             
             elif self.collecting_users:
-                self.user_list_buffer.append(line)
+                self.user_list_buffer.append(original_with_ansi)  # Store with ANSI
                 # More flexible end-of-banner detection
                 if "you." in clean_line or "with you." in clean_line:
                     print("[DEBUG] Banner end detected, processing users")
@@ -1396,8 +1424,9 @@ class BBSTerminalApp:
 
             # Handle PBX mode
             display_line = True
+            final_line = original_with_ansi  # Default to original line with ANSI
             if self.pbx_mode.get():
-                if self.process_pbx_line(clean_line, line):  # Pass original line
+                if self.process_pbx_line(clean_line, original_with_ansi):  # Pass original line
                     display_line = False  # Skip display if PBX line was processed
             
             # Handle MajorLink mode filtering
@@ -1409,12 +1438,20 @@ class BBSTerminalApp:
                 ]):
                     display_line = False
 
+            # Replace specific string in PBX Mode with Majorlink Mode ON
+            if self.pbx_mode.get() and self.majorlink_mode.get():
+                if 'Just type "?" if you need any assistance.' in clean_line:
+                    # Preserve ANSI codes from start and end
+                    ansi_prefix = ''.join(p for i, p in enumerate(line_parts) if i % 2 == 1 and i < 2)
+                    ansi_suffix = ''.join(p for i, p in enumerate(line_parts) if i % 2 == 1 and i >= len(line_parts) - 2)
+                    final_line = f"{ansi_prefix}>{ansi_suffix}"
+                    display_line = True  # Force display of modified line
+
             # Display the line if it hasn't been filtered out
             if display_line and clean_line:
-                self.append_terminal_text(line + "\n", "normal")
-                self.check_triggers(line)
-                # Save the cleaned message to the chatlog
-                self.parse_and_save_chatlog_message(clean_line, line)
+                self.append_terminal_text(final_line + "\n", "normal")
+                self.check_triggers(clean_line)  # Use clean line for trigger checking
+                self.parse_and_save_chatlog_message(clean_line, final_line)
 
             # Check for entry messages and request actions if needed
             if (not self.has_requested_actions and 
@@ -2137,41 +2174,6 @@ class BBSTerminalApp:
     def trim_chatlog(self, chatlog):
         """Trim the chatlog to fit within the size limit."""
         usernames = list(chatlog.keys())
-        while len(json.dumps(chatlog).encode('utf-8')) > 1 * 1024 * 1024 * 1024:  # 1GB
-            for username in usernames:
-                if chatlog[username]:
-                    chatlog[username].pop(0)  # Remove the oldest message
-                    if len(json.dumps(chatlog).encode('utf-8')) <= 1 * 1024 * 1024 * 1024:
-                        break
-
-    def clear_chatlog_for_user(self, username):
-        """Clear all chatlog messages for the specified username."""
-        chatlog = self.load_chatlog()
-        if username in chatlog:
-            chatlog[username] = []  # Reset the messages list
-            self.save_chatlog(chatlog)
-
-    def clear_active_chatlog(self):
-        """Clear chatlog messages for the currently selected user in the listbox."""
-        selected_index = self.chatlog_listbox.curselection()
-        if selected_index:
-            username = self.chatlog_listbox.get(selected_index)
-            self.clear_chatlog_for_user(username)
-            self.display_chatlog_messages(None)  # Refresh the display
-
-    def load_panel_sizes(self):
-        """Load saved panel sizes from file."""
-        try:
-            if os.path.exists("panel_sizes.json"):
-                with open("panel_sizes.json", "r") as file:
-                    return json.load(file)
-        except Exception as e:
-            print(f"Error loading panel sizes: {e}")
-        return {
-            "users": 150,  # 15 chars * ~10 pixels per char
-            "links": 300,  # 30 chars * ~10 pixels per char
-        }
-
     def save_panel_sizes(self):
         """Save current panel sizes to file."""
         if not hasattr(self, 'chatlog_window') or not self.chatlog_window.winfo_exists():
