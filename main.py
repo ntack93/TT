@@ -74,9 +74,6 @@ class BBSTerminalApp:
         self.remember_username = tk.BooleanVar(value=False)
         self.remember_password = tk.BooleanVar(value=False)
 
-        # MUD mode?
-        self.mud_mode = tk.BooleanVar(value=False)
-
         # Logon automation toggles
         self.logon_automation_enabled = tk.BooleanVar(value=False)
 
@@ -143,10 +140,6 @@ class BBSTerminalApp:
         self.actions = []
         self.collecting_actions = False
 
-        self.majorlink_mode = tk.BooleanVar(value=True)  # True = filtering enabled
-        self.pbx_mode = tk.BooleanVar(value=False)
-
-        # Add frame size tracking
         self.frame_sizes = self.load_frame_sizes()
         
         # Add settings persistence
@@ -395,23 +388,6 @@ class BBSTerminalApp:
         password_check = ttk.Checkbutton(checkbox_frame, text="Show Password", variable=self.show_password, command=self.toggle_password)
         password_check.grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
 
-        # Add MajorLink Mode checkbox
-        majorlink_check = ttk.Checkbutton(
-            checkbox_frame, 
-            text="MajorLink Mode", 
-            variable=self.majorlink_mode,
-            command=self.toggle_majorlink_mode
-        )
-        majorlink_check.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        
-        pbx_check = ttk.Checkbutton(
-            checkbox_frame,
-            text="PBX Mode",
-            variable=self.pbx_mode,
-            command=self.toggle_pbx_mode
-        )
-        pbx_check.grid(row=0, column=4, padx=5, pady=5, sticky=tk.W)
-
         # Add the Keep Alive checkbox
         keep_alive_frame = ttk.Frame(self.conn_frame)
         keep_alive_frame.grid(row=0, column=8, padx=5, pady=5)
@@ -557,15 +533,7 @@ class BBSTerminalApp:
 
         self.update_display_font()
 
-        # In the checkbox_frame section, add back the Messages to You checkbox:
-        # After the PBX Mode checkbox
-        pbx_check = ttk.Checkbutton(
-            checkbox_frame,
-            text="PBX Mode",
-            variable=self.pbx_mode,
-            command=self.toggle_pbx_mode
-        )
-        pbx_check.grid(row=0, column=4, padx=5, pady=5, sticky=tk.W)
+     
 
         # Add Messages to You checkbox
         messages_check = ttk.Checkbutton(
@@ -1067,64 +1035,110 @@ class BBSTerminalApp:
         if not text_data:
             return
             
-        ansi_regex = re.compile(r'\x1b\[([0-9;]*)m')
-        current_pos = "1.0"
+        # Enable terminal for editing
+        self.terminal_display.configure(state=tk.NORMAL)
+        
+        # Process character by character for maximum control
+        i = 0
         current_tags = ["normal"]
-        last_pos = 0
-        current_blink = None
+        buffer = ""
         
-        # Split text on ANSI codes while preserving them
-        segments = ansi_regex.split(text_data)
-        
-        for i, segment in enumerate(segments):
-            if i % 2 == 0:  # Text content
-                if segment:
-                    tags = tuple(current_tags)
-                    if current_blink:
-                        tags = tags + (current_blink,)
-                    self.terminal_display.insert(tk.END, segment, tags)
-            else:  # ANSI codes
-                if not segment:  # Reset to default
-                    current_tags = ["normal"]
-                    current_blink = None
-                else:
-                    # Handle multiple codes separated by semicolons
-                    for code in segment.split(';'):
-                        if code in ['5', '6']:  # Blink codes
-                            if not current_blink:
-                                current_blink = f"blink_{len(self.blink_tags)}"
-                                self.terminal_display.tag_configure(current_blink, background="")
-                                self.blink_tags.add(current_blink)
-                        elif code in self.color_map:
-                            # Remove any existing color tags
-                            current_tags = [tag for tag in current_tags 
-                                          if tag not in self.color_map.values()]
-                            # Add new color tag
-                            current_tags.append(self.color_map[code])
-                        elif code == '0':  # Reset
+        while i < len(text_data):
+            char = text_data[i]
+            
+            # Handle ANSI escape sequence
+            if char == '\x1b' and i + 1 < len(text_data) and text_data[i+1] == '[':
+                # First, insert any pending text with current tags
+                if buffer:
+                    self.terminal_display.insert(tk.END, buffer, tuple(current_tags))
+                    buffer = ""
+                
+                # Find the end of the escape sequence (a letter)
+                seq_start = i
+                i += 2  # Skip past '\x1b['
+                
+                # Collect all parameters until we find a letter
+                params = ""
+                while i < len(text_data) and not text_data[i].isalpha():
+                    params += text_data[i]
+                    i += 1
+                    
+                # Now we should be at the command letter
+                if i < len(text_data):
+                    command = text_data[i]
+                    i += 1  # Move past the command letter
+                    
+                    # Handle SGR (Select Graphic Rendition) commands - colors and formatting
+                    if command == 'm':
+                        # Split parameters by semicolons
+                        codes = params.split(';')
+                        
+                        # Handle empty or '0' param as reset
+                        if not params or '0' in codes:
                             current_tags = ["normal"]
-                            current_blink = None
-                        elif code == '1':  # Bold/Bright
-                            # Convert normal colors to bright if applicable
-                            current_tags = ["bright_" + tag if tag in ['blue', 'red', 'green', 'yellow', 'magenta', 'cyan', 'white']
-                                          else tag for tag in current_tags]
-
+                        
+                        # Process each code
+                        for code in codes:
+                            if not code:
+                                continue
+                                
+                            if code == '1':  # Bold/Bright
+                                current_tags = ["bright_" + tag if tag in self.color_map.values() else tag 
+                                            for tag in current_tags]
+                            elif code == '5':  # Blink
+                                blink_tag = f"blink_{len(self.blink_tags)}"
+                                self.terminal_display.tag_configure(blink_tag, background="")
+                                self.blink_tags.add(blink_tag)
+                                current_tags.append(blink_tag)
+                            # Handle color codes
+                            elif code in self.color_map:
+                                # Remove existing color tags
+                                current_tags = [tag for tag in current_tags if tag not in self.color_map.values()]
+                                # Add the new color
+                                current_tags.append(self.color_map[code])
+                else:
+                    # We reached the end without finding a command letter
+                    # This is an incomplete sequence - ignore it
+                    pass
+            else:
+                # Regular character, add to buffer
+                buffer += char
+                i += 1
+        
+        # Insert any remaining buffered text
+        if buffer:
+            self.terminal_display.insert(tk.END, buffer, tuple(current_tags))
+        
+        # Restore terminal state
+        self.terminal_display.configure(state=tk.DISABLED)
+        
         # Ensure proper tag ordering
         self.terminal_display.tag_raise("bright_blue")
         self.terminal_display.tag_raise("red")
         self.terminal_display.tag_raise("yellow")
 
+    def map_code_to_tag(self, color_code):
+        """Map numeric color code to a defined Tk tag."""
+        # Add mapping for bright versions of colors
+        bright_codes = {
+            '90': 'bright_black',
+            '91': 'bright_red',
+            '92': 'bright_green',
+            '93': 'bright_yellow',
+            '94': 'bright_blue',
+            '95': 'bright_magenta',
+            '96': 'bright_cyan',
+            '97': 'bright_white',
+        }
+        
+        if color_code in bright_codes:
+            return bright_codes[color_code]
+        
+        # Handle basic color codes
+        return self.color_map.get(color_code, None)
+
     # Keep existing blink_timer and get_all_color_tags methods
     def blink_timer(self):
-        """Toggle blink state every 500ms."""
-        self.blink_state = not self.blink_state
-        
-        # Update all blinking text
-        for tag in self.blink_tags:
-            if self.blink_state:
-                self.terminal_display.tag_configure(tag, background="grey20")
-            else:
-                self.terminal_display.tag_configure(tag, background="")
         
         # Schedule next blink
         self.master.after(500, self.blink_timer)
@@ -1333,7 +1347,7 @@ class BBSTerminalApp:
         return result
 
     def process_data_chunk(self, data):
-        """Process incoming data with improved action list handling."""
+        """Process incoming data with simplified message handling."""
         # Decode CP437 data
         if isinstance(data, bytes):
             data = self.decode_cp437(data)
@@ -1367,37 +1381,24 @@ class BBSTerminalApp:
             if any(x in clean_line for x in ["Topic:", "You are in"]):
                 self.user_list_buffer = [(clean_line, original_with_ansi, self.current_ansi_state)]
                 self.collecting_users = True
-                # Skip display if both PBX and Majorlink modes are enabled
-                if self.pbx_mode.get() and self.majorlink_mode.get():
-                    continue
-            
             elif self.collecting_users:
                 self.user_list_buffer.append((clean_line, original_with_ansi, self.current_ansi_state))
-                # More flexible end-of-banner detection
                 if "you." in clean_line or "with you." in clean_line:
                     print("[DEBUG] Banner end detected, processing users")
                     self.update_chat_members([item[1] for item in self.user_list_buffer])
                     self.collecting_users = False
-                    
-                    # For PBX+Majorlink mode, display modified prompt with preserved colors
-                    if self.pbx_mode.get() and self.majorlink_mode.get():
-                        last_ansi_state = self.user_list_buffer[-1][2]
-                        prompt_line = f"{last_ansi_state}>\n"
-                        self.append_terminal_text(prompt_line)
-                    
                     self.user_list_buffer = []
                     
                     # Trigger actions request after banner if not done this session
                     if not self.actions_requested_this_session:
                         current_time = time.time()
                         if current_time - self.last_banner_time > 5:
-                            print("[DEBUG] First banner this session, requesting actions")
+                            self.master.after(1000, self.request_actions_list)
                             self.last_banner_time = current_time
                             self.actions_requested_this_session = True
-                            self.master.after(500, self.request_actions_list)
 
-            # First check for actions list
-            if "Action listing for:" in clean_line:
+            # Check for action list
+            elif "Action listing for:" in clean_line:
                 print("[DEBUG] Action listing header detected")
                 self.actions = []
                 self.collecting_actions = True
@@ -1424,57 +1425,11 @@ class BBSTerminalApp:
                     self.actions.extend(valid_actions)
                 continue
 
-            # Check for user list in banner
-            if "You are in" in clean_line and not self.collecting_users:
-                self.user_list_buffer = [line]
-                self.collecting_users = True
-                
-            elif self.collecting_users:
-                self.user_list_buffer.append(line)
-                if "are here with you." in clean_line:
-                    self.update_chat_members(self.user_list_buffer)
-                    self.collecting_users = False
-                    self.user_list_buffer = []
-
-            # Handle PBX mode
-            display_line = True
-            final_line = original_with_ansi  # Default to original line with ANSI
-            if self.pbx_mode.get():
-                if self.process_pbx_line(clean_line, original_with_ansi):  # Pass original line
-                    display_line = False  # Skip display if PBX line was processed
-            
-            # Handle MajorLink mode filtering
-            elif self.majorlink_mode.get():
-                if any(pattern in clean_line for pattern in [
-                    "Topic:",
-                    "Just press",
-                    "are here with you"
-                ]):
-                    display_line = False
-
-            # Replace specific string in PBX Mode with Majorlink Mode ON
-            if self.pbx_mode.get() and self.majorlink_mode.get():
-                if 'Just type "?" if you need any assistance.' in clean_line:
-                    # Use stored ANSI state to preserve colors
-                    final_line = f"{self.current_ansi_state}>"
-                    display_line = True  # Force display of modified line
-
             # Display the line if it hasn't been filtered out
-            if display_line and clean_line:
-                self.append_terminal_text(final_line + "\n", "normal")
+            if clean_line:
+                self.append_terminal_text(original_with_ansi + "\n", "normal")
                 self.check_triggers(clean_line)  # Use clean line for trigger checking
-                self.parse_and_save_chatlog_message(clean_line, final_line)
-
-            # Check for entry messages and request actions if needed
-            if (not self.has_requested_actions and 
-                "You are in" in clean_line and 
-                "are here with you" in clean_line):
-                current_time = time.time()
-                if current_time - self.last_banner_time > 5:
-                    print("[DEBUG] Detected room entry, requesting actions list")
-                    self.last_banner_time = current_time
-                    self.has_requested_actions = True
-                    self.master.after(500, self.request_actions_list)
+                self.parse_and_save_chatlog_message(clean_line, original_with_ansi)
 
         self.partial_line = lines[-1]
 
@@ -1488,8 +1443,8 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, clean_line, original_line):
-        """Parse and save chat messages with timestamps, handling both normal and PBX formats."""
-        # Skip system messages and banner info
+        """Parse and save chat messages with timestamps."""
+        # Skip system messages, banner info, and login prompts
         skip_patterns = [
             r"You are in",
             r"Topic:",
@@ -1497,7 +1452,11 @@ class BBSTerminalApp:
             r"are here with you",
             r"^\s*$",  # Empty lines
             r"^\s*:.*$",  # Lines starting with colon (commands)
-            r"^\s*\(.*\)\s*$"  # Lines containing only parenthetical content
+            r"^\s*\(.*\)\s*$",  # Lines containing only parenthetical content
+            r"\[Type your (?:User-ID|Password)[^]]*:]",  # Login prompts
+            r"Type your (?:User-ID|Password)[^]]*:",  # Login prompts without brackets
+            r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:]\s*$",  # Password prompts
+            r"^\[?(?:Enter|Type)(?: your)? username[^]]*:]\s*$",  # Username prompts
         ]
         
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
@@ -1505,48 +1464,60 @@ class BBSTerminalApp:
 
         # Check if message already has a timestamp
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
+        timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ") if not has_timestamp else ""
         
-        if self.pbx_mode.get():
-            # Handle PBX format
-            if self.process_pbx_line(clean_line, original_line):
-                return
-        
-        # If not in PBX mode or if PBX parsing failed, use normal parsing
-        # Enhanced patterns to match different message types
-        message_patterns = [
-            # Whispered messages - check these first
-            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)$',
-            # Directed messages
-            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:@[\w.-]+)?\s*\(to\s+you\):\s*(.+)$',
-            # Normal messages
-            r'^(?:\[[\d-]+\s+[\d:]+\]\s+)?From\s+(\S+?)(?:\s+\([^)]+\))?\s*:\s*(.+)$'
-        ]
+        # Message type patterns - order matters!
+        patterns = {
+            'whisper': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(whispered(?:\s+to\s+you)?\):\]\s*(.+)$',
+            'direct_to_you': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+you\):\]\s*(.+)$',
+            'public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
+            'regular': r'^\[([^@\]]+(?:@[^\]]+)?):]\s*(.+)$'
+        }
 
-        for pattern in message_patterns:
-            message_match = re.match(pattern, clean_line, re.IGNORECASE)
-            if message_match:
-                sender = message_match.group(1)
-                message = message_match.group(2)
+        # Try to match each pattern type
+        for msg_type, pattern in patterns.items():
+            match = re.match(pattern, clean_line)
+            if not match:
+                continue
+
+            sender = match.group(1)
+            
+            if msg_type in ('whisper', 'direct_to_you'):
+                # Whispers and directs to you go to Messages to You
+                message = match.group(2)
+                formatted_message = f"{timestamp}From {sender} ({msg_type}): {message}"
+                self.append_directed_message(formatted_message)
+                self.play_directed_sound()
                 
-                # Only add timestamp if not already present
-                if not has_timestamp:
-                    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ")
-                    message_with_timestamp = f"{timestamp}From {sender}: {message}"
-                else:
-                    message_with_timestamp = clean_line
-
-                # Check for directed message or whisper
-                if "(whispered" in clean_line or "(to you)" in clean_line:
-                    self.append_directed_message(message_with_timestamp)
+            elif msg_type == 'public_direct':
+                recipient = match.group(2)
+                message = match.group(3)
+                formatted_message = f"{timestamp}From {sender} (to {recipient}): {message}"
+                
+                # Check if recipient is you (your username)
+                if (self.username.get() in recipient or 
+                    recipient.split('@')[0].strip() == self.username.get()):
+                    # Direct message to you - add to Messages to You
+                    self.append_directed_message(formatted_message)
                     self.play_directed_sound()
                 else:
+                    # Public direct between others - add to chatlog
+                    self.save_chatlog_message(sender, formatted_message)
                     self.play_chat_sound()
+                
+            else:  # regular message
+                message = match.group(2)
+                formatted_message = f"{timestamp}From {sender}: {message}"
+                self.save_chatlog_message(sender, formatted_message)
+                self.play_chat_sound()
 
-                # Save to chatlog
-                self.save_chatlog_message(sender, message_with_timestamp)
-                # Extract any URLs (pass sender for attribution)
-                self.parse_and_store_hyperlinks(message_with_timestamp, sender)
-                break
+            # Extract URLs from the actual message content
+            message_content = match.group(2) if msg_type in ('whisper', 'direct_to_you', 'regular') else match.group(3)
+            self.parse_and_store_hyperlinks(message_content, sender)
+            break
+
+        # Save the ANSI-colored version
+        self.last_message_ansi = original_line
 
     def send_message(self, event=None):
         """Send the user's typed message and manage command history."""
@@ -1585,12 +1556,8 @@ class BBSTerminalApp:
         # Clear input before sending
         self.input_var.set("")
         
-        if not user_input:
-            message = "\r\n"
-        else:
-            # Add prefix if mud mode enabled
-            prefix = "Gos " if self.mud_mode.get() else ""
-            message = prefix + user_input + "\r\n"
+        # Send message directly without MUD mode prefix
+        message = user_input + "\r\n" if user_input else "\r\n"
 
         # Send message using asyncio.run_coroutine_threadsafe
         if self.connected and self.writer:
@@ -1603,18 +1570,9 @@ class BBSTerminalApp:
                     
             asyncio.run_coroutine_threadsafe(send(), self.loop)
 
-        # Only process non-empty messages
-        if user_input:
-            # Add to command history if different from last command
-            if not self.command_history or user_input != self.command_history[-1]:
-                self.command_history.append(user_input)
-                # Keep history to last 100 commands
-                if len(self.command_history) > 100:
-                    self.command_history.pop(0)
-            
-            # Reset history browsing
-            self.command_index = -1
-            self.current_command = ""
+        # Reset history browsing
+        self.command_index = -1
+        self.current_command = ""
 
     def send_username(self):
         """Send the username to the BBS."""
@@ -1652,7 +1610,10 @@ class BBSTerminalApp:
     def send_custom_message(self, message):
         """Send a custom message (for trigger responses)."""
         if self.connected and self.writer:
-            message = message + "\r\n"
+            # Clean up the message
+            if not message.endswith('\r\n'):
+                message = message + '\r\n'
+                
             async def send():
                 try:
                     self.writer.write(message)
@@ -1660,17 +1621,24 @@ class BBSTerminalApp:
                 except Exception as e:
                     print(f"Error sending custom message: {e}")
                     
+            # Run the async send function
             asyncio.run_coroutine_threadsafe(send(), self.loop)
+
+    def send_action(self, action):
+        """Send an action command to the BBS."""
+        if not self.connected or not self.writer:
+            return
             
+        # Format the action command
         if hasattr(self, 'selected_member') and self.selected_member:
-            action = f"{action} {self.selected_member}"
+            message = f"{action} {self.selected_member}\r\n"
+        else:
+            message = f"{action}\r\n"
             
-        message = action + "\r\n"
         async def send():
             try:
                 self.writer.write(message)
                 await self.writer.drain()
-                # Deselect the member after sending
                 self.deselect_all_members()
             except Exception as e:
                 print(f"Error sending action: {e}")
@@ -1861,43 +1829,10 @@ class BBSTerminalApp:
         self.triggers_window.destroy()
 
     def append_terminal_text(self, text, default_tag="normal"):
-        """Append text to the terminal display with improved ANSI parsing and stacking."""
-        self.terminal_display.configure(state=tk.NORMAL)
-        
-        # Handle ANSI codes with improved stacking
-        ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
-        segments = ansi_escape_regex.split(text)
-        
-        active_tags = [default_tag]
-        active_ansi_state = getattr(self, 'current_ansi_state', '')
-        
-        # If we have a stored ANSI state and this is new text, prepend it
-        if active_ansi_state and not text.startswith('\x1b'):
-            text = active_ansi_state + text
-            segments = ansi_escape_regex.split(text)
-        
-        for i, segment in enumerate(segments):
-            if i % 2 == 0:  # Text content
-                if segment:
-                    self.insert_with_hyperlinks(segment, tuple(active_tags))
-            else:  # ANSI code segment
-                codes = segment.split(';')
-                for code in codes:
-                    if not code:
-                        continue
-                        
-                    code = code.strip('m[]')
-                    # Reset clears all active tags
-                    if code == '0':
-                        active_tags = [default_tag]
-                    else:
-                        new_tag = self.map_code_to_tag(code)
-                        if new_tag and new_tag not in active_tags:
-                            active_tags.append(new_tag)
-        
+        """Append text to the terminal display with improved ANSI parsing."""
+        # Simply pass the text to our new robust ANSI parser
+        self.parse_ansi_and_insert(text)
         self.terminal_display.see(tk.END)
-        self.master.update_idletasks()
-        self.terminal_display.configure(state=tk.DISABLED)
 
     def insert_with_hyperlinks(self, text, tags):
         """Enhanced hyperlink detection and insertion."""
@@ -2150,15 +2085,8 @@ class BBSTerminalApp:
 
     def map_code_to_tag(self, color_code):
         """Map numeric color code to a defined Tk tag."""
-        valid_codes = {
-            '30': 'black',
-            '31': 'red',
-            '32': 'green',
-            '33': 'yellow',
-            '34': 'blue',
-            '35': 'magenta',
-            '36': 'cyan',
-            '37': 'white',
+        # Add mapping for bright versions of colors
+        bright_codes = {
             '90': 'bright_black',
             '91': 'bright_red',
             '92': 'bright_green',
@@ -2168,7 +2096,12 @@ class BBSTerminalApp:
             '96': 'bright_cyan',
             '97': 'bright_white',
         }
-        return valid_codes.get(color_code, None)
+        
+        if color_code in bright_codes:
+            return bright_codes[color_code]
+        
+        # Handle basic color codes
+        return self.color_map.get(color_code, None)
 
     def save_chatlog_message(self, username, message):
         """Save a message to the chatlog."""
@@ -3074,15 +3007,6 @@ class BBSTerminalApp:
             self.master.update_idletasks()
             self.terminal_display.see(tk.END)
 
-    def toggle_majorlink_mode(self):
-        """Handle toggling MajorLink mode on/off."""
-        self.terminal_display.configure(state=tk.NORMAL)
-        self.terminal_display.delete(1.0, tk.END)
-        self.terminal_display.configure(state=tk.DISABLED)
-        
-        mode = "enabled" if self.majorlink_mode.get() else "disabled"
-        self.append_terminal_text(f"\n--- MajorLink Mode {mode} ---\n\n", "normal")
-
     def limit_input_length(self, *args):
         """Limit input field to 255 characters"""
         value = self.input_var.get()
@@ -3104,7 +3028,7 @@ class BBSTerminalApp:
         try:
             # Get standard frame sizes
             sizes = {
-                'paned_pos': self.paned.sash_coord(0)[0] if hasattr(self.paned, 'sash_coord') else 200,
+                'paned_pos': self.paned.sash_coord(0)[1] if hasattr(self.paned, 'sash_coord') else 200,
                 'window_geometry': self.master.geometry()
             }
             
@@ -3112,12 +3036,16 @@ class BBSTerminalApp:
             if hasattr(self, 'chatlog_window') and self.chatlog_window.winfo_exists():
                 try:
                     paned = self.chatlog_window.nametowidget("main_paned")
-                    sizes.update({
-                        "users": paned.sashpos(0),
-                        "links": paned.winfo_width() - paned.sashpos(1)
-                    })
+                    if paned:
+                        try:
+                            sizes.update({
+                                "users": paned.sashpos(0),
+                                "links": paned.winfo_width() - paned.sashpos(1)
+                            })
+                        except tk.TclError:
+                            print("Warning: Could not get sash positions")
                 except Exception as e:
-                    print(f"Error saving panel positions: {e}")
+                    print(f"Warning: Error getting panel positions: {e}")
                     
             with open("frame_sizes.json", "w") as f:
                 json.dump(sizes, f)
@@ -3130,13 +3058,12 @@ class BBSTerminalApp:
             if os.path.exists("settings.json"):
                 with open("settings.json", "r") as f:
                     settings = json.load(f)
-                    # Apply loaded settings - removed auto_login
+                    # Apply loaded settings - removed PBX and Majorlink modes
                     self.font_name.set(settings.get('font_name', "Courier New"))
                     self.font_size.set(settings.get('font_size', 10))
                     self.logon_automation_enabled.set(settings.get('logon_automation', False))
                     self.keep_alive_enabled.set(settings.get('keep_alive', False))
                     self.show_messages_to_you.set(settings.get('show_messages', True))
-                    self.majorlink_mode.set(settings.get('majorlink_mode', True))
                     return settings
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -3229,40 +3156,7 @@ class BBSTerminalApp:
                 # Wait for completion with timeout
                 future.result(timeout=5)
             except Exception as e:
-                print(f"Error or timeout during cleanup: {e}")
-        try:
-            # Your code here
-            pass
-        finally:
-            # Force quit even if cleanup fails
-            try:
-                root.quit()
-            finally:
-                root.destroy()
-
-    def request_actions_list(self):
-        """Enhanced action list request with PBX mode support."""
-        if not self.connected or not self.writer:
-            return
-            
-        print("[DEBUG] Requesting actions list")
-        
-        async def send_commands():
-            try:
-                # Send action list request
-                self.writer.write("/a list\r\n")
-                await self.drain()
-                
-                # Wait briefly then send Enter
-                await asyncio.sleep(0.5)
-                self.writer.write("\r\n")
-                await self.drain()
-                
-                print("[DEBUG] Sent action list request")
-            except Exception as e:
-                print(f"[DEBUG] Error requesting actions list: {e}")
-                
-        asyncio.run_coroutine_threadsafe(send_commands(), self.loop)
+                print(f"Error during actions request: {e}")
 
     def setup_autocorrect(self):
         """Initialize autocorrect functionality."""
@@ -3457,115 +3351,6 @@ class BBSTerminalApp:
         """Return the currently selected member."""
         return getattr(self, 'selected_member', None)
 
-    def toggle_pbx_mode(self):
-        """Handle toggling PBX mode on/off."""
-        self.terminal_display.configure(state=tk.NORMAL)
-        self.terminal_display.delete(1.0, tk.END)
-        self.terminal_display.configure(state=tk.DISABLED)
-        
-        mode = "enabled" if self.pbx_mode.get() else "disabled"
-        self.append_terminal_text(f"\n--- PBX Mode {mode} ---\n\n", "normal")
-
-    def process_pbx_line(self, clean_line, original_line):
-        """Process PBX mode messages with proper ANSI color state preservation."""
-        try:
-            # If both PBX and Majorlink modes are enabled, handle specially
-            if self.pbx_mode.get() and self.majorlink_mode.get():
-                # Only show prompt character
-                if '>' in clean_line:
-                    # Find the last occurrence of '>' and collect all ANSI codes before it
-                    prompt_index = original_line.rfind('>')
-                    if prompt_index != -1:
-                        # Extract all ANSI codes before the prompt
-                        ansi_before_prompt = ''
-                        matches = list(re.finditer(r'\x1b\[[0-9;]*m', original_line[:prompt_index]))
-                        if matches:
-                            ansi_before_prompt = ''.join(match.group(0) for match in matches)
-                        # Get any ANSI codes after the prompt to maintain state
-                        ansi_after_prompt = ''
-                        matches_after = list(re.finditer(r'\x1b\[[0-9;]*m', original_line[prompt_index:]))
-                        if matches_after:
-                            ansi_after_prompt = matches_after[-1].group(0)
-                        # Construct prompt with preserved colors
-                        prompt = f"{ansi_before_prompt}>{ansi_after_prompt}\n"
-                        self.append_terminal_text(prompt)
-                    return True
-                
-                # Filter banner lines but preserve color state for next line
-                elif any(pattern in clean_line for pattern in [
-                    'Topic:', 'General Chat', 'are here with you', 'with you.',
-                    'Just type "?" if you need any assistance',
-                    'You are in', 'mmm', ', and ', 'Chatbot,', '@'
-                ]):
-                    # Extract final ANSI state to preserve
-                    matches = list(re.finditer(r'\x1b\[[0-9;]*m', original_line))
-                    if matches:
-                        self.current_ansi_state = matches[-1].group(0)
-                    return True
-
-            # Define message patterns for all PBX formats
-            patterns = {
-                # ... existing patterns ...
-            }
-
-            timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
-            
-            # Extract and preserve ANSI codes from the original line
-            ansi_codes = []
-            ansi_regex = re.compile(r'(\x1b\[[0-9;]*m)')
-            for match in ansi_regex.finditer(original_line):
-                ansi_codes.append(match.group(1))
-            ansi_state = ''.join(ansi_codes[:1]) if ansi_codes else ''
-
-            for msg_type, pattern in patterns.items():
-                match = re.match(pattern, clean_line)
-                if not match:
-                    continue
-
-                if msg_type in ['whisper', 'to_you', 'public_directed', 'public']:
-                    # Add ANSI state to the beginning of the line if it exists
-                    display_line = f"{ansi_state}{original_line}\n" if ansi_state else f"{original_line}\n"
-                    self.append_terminal_text(display_line, "normal")
-                    
-                    # Process message specific actions
-                    if msg_type == 'whisper' or (msg_type == 'to_you'):
-                        sender = match.group(1)
-                        message = match.group(-1)  # Last group is always the message
-                        sender_clean = sender.split('@')[0]
-                        formatted = f"{timestamp} From {sender} ({msg_type}): {message}"
-                        self.save_chatlog_message(sender_clean, formatted)
-                        self.append_directed_message(formatted)
-                        self.play_directed_sound()
-                    else:
-                        formatted = f"{timestamp} From {sender} (to {recipient}): {message}"
-                        self.save_chatlog_message(sender_clean, formatted)
-                        self.play_chat_sound()
-                    
-                    # Extract URLs from message
-                    self.parse_and_store_hyperlinks(message, sender_clean)
-                    self.append_terminal_text(original_line + "\n", "normal")
-                    return True
-
-                elif msg_type == 'public':
-                    sender, message = match.groups()
-                    sender_clean = sender.split('@')[0]
-                    formatted = f"{timestamp} From {sender}: {message}"
-                    self.save_chatlog_message(sender_clean, formatted)
-                    self.play_chat_sound()
-                    self.append_terminal_text(original_line + "\n", "normal")
-                    # Extract URLs from message
-                    self.parse_and_store_hyperlinks(message, sender_clean)
-                    return True
-
-            return False
-
-        except Exception as e:
-            print(f"[DEBUG] Error in process_pbx_line: {e}")
-            traceback.print_exc()
-            return False
-
-    
-
     def on_closing(self):
         """Extended closing handler to save frame sizes and cleanup."""
         self.save_frame_sizes()
@@ -3719,3 +3504,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
