@@ -837,8 +837,12 @@ class BBSTerminalApp:
             'bg': saved_font_settings.get('bg', 'black')
         }
 
-        # Load saved panel sizes or use defaults
-        panel_sizes = self.load_panel_sizes()
+        # Load saved frame sizes or use defaults for panels
+        frame_sizes = self.load_frame_sizes()
+        panel_sizes = {
+            "users": frame_sizes.get("users", 200),  # Default width of 200 pixels
+            "links": frame_sizes.get("links", 200)   # Default width of 200 pixels
+        }
 
         self.chatlog_window = tk.Toplevel(self.master)
         self.chatlog_window.title("Chatlog")
@@ -1335,7 +1339,10 @@ class BBSTerminalApp:
             data = self.decode_cp437(data)
         else:
             data = self.decode_cp437(data.encode('cp437'))
-            
+        
+        # Log the raw incoming data for debugging
+        print(f"[DEBUG] Raw incoming data: {repr(data)}")
+        
         # Normalize newlines
         data = data.replace('\r\n', '\n').replace('\r', '\n')
         self.partial_line += data
@@ -1347,31 +1354,38 @@ class BBSTerminalApp:
         for line in lines[:-1]:
             # Split the line into ANSI codes and text while preserving the codes
             line_parts = ansi_regex.split(line)
-            # Reconstruct without ANSI for pattern matching
+            
+            # Store ANSI state information
+            ansi_codes = [p for i, p in enumerate(line_parts) if i % 2 == 1]
             clean_line = ''.join(p for i, p in enumerate(line_parts) if i % 2 == 0).strip()
-            # Keep original line with ANSI intact
             original_with_ansi = line
+
+            # Store initial ANSI state
+            self.current_ansi_state = ''.join([f"\x1b[{code}m" for code in ansi_codes]) if ansi_codes else ''
             
             # Handle banner detection and user list collection
             if any(x in clean_line for x in ["Topic:", "You are in"]):
-                self.user_list_buffer = [original_with_ansi]  # Store with ANSI
+                self.user_list_buffer = [(clean_line, original_with_ansi, self.current_ansi_state)]
                 self.collecting_users = True
                 # Skip display if both PBX and Majorlink modes are enabled
                 if self.pbx_mode.get() and self.majorlink_mode.get():
                     continue
             
             elif self.collecting_users:
-                self.user_list_buffer.append(original_with_ansi)  # Store with ANSI
+                self.user_list_buffer.append((clean_line, original_with_ansi, self.current_ansi_state))
                 # More flexible end-of-banner detection
                 if "you." in clean_line or "with you." in clean_line:
                     print("[DEBUG] Banner end detected, processing users")
-                    self.update_chat_members(self.user_list_buffer)
+                    self.update_chat_members([item[1] for item in self.user_list_buffer])
                     self.collecting_users = False
-                    self.user_list_buffer = []
                     
-                    # Skip display in PBX mode
-                    if self.pbx_mode.get():
-                        continue
+                    # For PBX+Majorlink mode, display modified prompt with preserved colors
+                    if self.pbx_mode.get() and self.majorlink_mode.get():
+                        last_ansi_state = self.user_list_buffer[-1][2]
+                        prompt_line = f"{last_ansi_state}>\n"
+                        self.append_terminal_text(prompt_line)
+                    
+                    self.user_list_buffer = []
                     
                     # Trigger actions request after banner if not done this session
                     if not self.actions_requested_this_session:
@@ -1441,10 +1455,8 @@ class BBSTerminalApp:
             # Replace specific string in PBX Mode with Majorlink Mode ON
             if self.pbx_mode.get() and self.majorlink_mode.get():
                 if 'Just type "?" if you need any assistance.' in clean_line:
-                    # Preserve ANSI codes from start and end
-                    ansi_prefix = ''.join(p for i, p in enumerate(line_parts) if i % 2 == 1 and i < 2)
-                    ansi_suffix = ''.join(p for i, p in enumerate(line_parts) if i % 2 == 1 and i >= len(line_parts) - 2)
-                    final_line = f"{ansi_prefix}>{ansi_suffix}"
+                    # Use stored ANSI state to preserve colors
+                    final_line = f"{self.current_ansi_state}>"
                     display_line = True  # Force display of modified line
 
             # Display the line if it hasn't been filtered out
@@ -1649,11 +1661,6 @@ class BBSTerminalApp:
                     print(f"Error sending custom message: {e}")
                     
             asyncio.run_coroutine_threadsafe(send(), self.loop)
-
-    def send_action(self, action):
-        """Send an action to the BBS, optionally appending the highlighted username."""
-        if not self.connected or not self.writer:
-            return
             
         if hasattr(self, 'selected_member') and self.selected_member:
             action = f"{action} {self.selected_member}"
@@ -1854,21 +1861,39 @@ class BBSTerminalApp:
         self.triggers_window.destroy()
 
     def append_terminal_text(self, text, default_tag="normal"):
-        """Append text to the terminal display with ANSI parsing and hyperlink support."""
+        """Append text to the terminal display with improved ANSI parsing and stacking."""
         self.terminal_display.configure(state=tk.NORMAL)
         
-        # Handle ANSI codes first
+        # Handle ANSI codes with improved stacking
         ansi_escape_regex = re.compile(r'\x1b\[(.*?)m')
         segments = ansi_escape_regex.split(text)
         
-        current_tags = [default_tag]
+        active_tags = [default_tag]
+        active_ansi_state = getattr(self, 'current_ansi_state', '')
+        
+        # If we have a stored ANSI state and this is new text, prepend it
+        if active_ansi_state and not text.startswith('\x1b'):
+            text = active_ansi_state + text
+            segments = ansi_escape_regex.split(text)
+        
         for i, segment in enumerate(segments):
-            if i % 2 == 0:  # This is text content
-                self.insert_with_hyperlinks(segment, tuple(current_tags))
-            else:  # This is an ANSI code
-                new_tag = self.map_code_to_tag(segment)
-                if new_tag:
-                    current_tags = [new_tag]
+            if i % 2 == 0:  # Text content
+                if segment:
+                    self.insert_with_hyperlinks(segment, tuple(active_tags))
+            else:  # ANSI code segment
+                codes = segment.split(';')
+                for code in codes:
+                    if not code:
+                        continue
+                        
+                    code = code.strip('m[]')
+                    # Reset clears all active tags
+                    if code == '0':
+                        active_tags = [default_tag]
+                    else:
+                        new_tag = self.map_code_to_tag(code)
+                        if new_tag and new_tag not in active_tags:
+                            active_tags.append(new_tag)
         
         self.terminal_display.see(tk.END)
         self.master.update_idletasks()
@@ -3075,21 +3100,25 @@ class BBSTerminalApp:
         return {}
 
     def save_frame_sizes(self):
-        """Save current frame sizes to file"""
+        """Save current frame sizes and panel positions to file"""
         try:
-            # Get sash position based on paned window type
-            if isinstance(self.paned, ttk.PanedWindow):
-                sash_pos = self.paned.paneconfig(self.output_frame, 'weight')[4]
-            else:
-                try:
-                    sash_pos = self.paned.sash_coord(0)[0]
-                except:
-                    sash_pos = 200  # Default value if we can't get position
-
+            # Get standard frame sizes
             sizes = {
-                'paned_pos': sash_pos,
+                'paned_pos': self.paned.sash_coord(0)[0] if hasattr(self.paned, 'sash_coord') else 200,
                 'window_geometry': self.master.geometry()
             }
+            
+            # Add panel sizes if chatlog window exists
+            if hasattr(self, 'chatlog_window') and self.chatlog_window.winfo_exists():
+                try:
+                    paned = self.chatlog_window.nametowidget("main_paned")
+                    sizes.update({
+                        "users": paned.sashpos(0),
+                        "links": paned.winfo_width() - paned.sashpos(1)
+                    })
+                except Exception as e:
+                    print(f"Error saving panel positions: {e}")
+                    
             with open("frame_sizes.json", "w") as f:
                 json.dump(sizes, f)
         except Exception as e:
@@ -3438,70 +3467,72 @@ class BBSTerminalApp:
         self.append_terminal_text(f"\n--- PBX Mode {mode} ---\n\n", "normal")
 
     def process_pbx_line(self, clean_line, original_line):
-        """Process PBX mode messages with hyperlink support."""
+        """Process PBX mode messages with proper ANSI color state preservation."""
         try:
-            # Skip system messages
-            if any(re.match(pattern, clean_line) for pattern in [
-                r'Topic:.*$', 
-                r'.*(?:are here with you|with you)\.$',
-                r'Just type.*assistance\.$'
-            ]):
-                return False
+            # If both PBX and Majorlink modes are enabled, handle specially
+            if self.pbx_mode.get() and self.majorlink_mode.get():
+                # Only show prompt character
+                if '>' in clean_line:
+                    # Find the last occurrence of '>' and collect all ANSI codes before it
+                    prompt_index = original_line.rfind('>')
+                    if prompt_index != -1:
+                        # Extract all ANSI codes before the prompt
+                        ansi_before_prompt = ''
+                        matches = list(re.finditer(r'\x1b\[[0-9;]*m', original_line[:prompt_index]))
+                        if matches:
+                            ansi_before_prompt = ''.join(match.group(0) for match in matches)
+                        # Get any ANSI codes after the prompt to maintain state
+                        ansi_after_prompt = ''
+                        matches_after = list(re.finditer(r'\x1b\[[0-9;]*m', original_line[prompt_index:]))
+                        if matches_after:
+                            ansi_after_prompt = matches_after[-1].group(0)
+                        # Construct prompt with preserved colors
+                        prompt = f"{ansi_before_prompt}>{ansi_after_prompt}\n"
+                        self.append_terminal_text(prompt)
+                    return True
+                
+                # Filter banner lines but preserve color state for next line
+                elif any(pattern in clean_line for pattern in [
+                    'Topic:', 'General Chat', 'are here with you', 'with you.',
+                    'Just type "?" if you need any assistance',
+                    'You are in', 'mmm', ', and ', 'Chatbot,', '@'
+                ]):
+                    # Extract final ANSI state to preserve
+                    matches = list(re.finditer(r'\x1b\[[0-9;]*m', original_line))
+                    if matches:
+                        self.current_ansi_state = matches[-1].group(0)
+                    return True
 
             # Define message patterns for all PBX formats
             patterns = {
-                # Pattern for whispers (with and without domain)
-                'whisper': r'\[(\S+?)(?:@[\w.-]+)?\s+\(whispered(?:\s*(?:to\s+you)?)?\):\]\s*(.+)',
-                
-                # Pattern for direct messages "to you" (with and without domain)
-                'to_you': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+you\):\]\s*(.+)',
-                
-                # Pattern for directed messages to specific users (with and without domain)
-                'public_directed': r'\[(\S+?)(?:@[\w.-]+)?\s+\(to\s+(\S+?)(?:@[\w.-]+)?\):\]\s*(.+)',
-                
-                # Pattern for regular public messages (with and without domain)
-                'public': r'\[(\S+?)(?:@[\w.-]+)?:\]\s*(.+)'
+                # ... existing patterns ...
             }
 
             timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
+            
+            # Extract and preserve ANSI codes from the original line
+            ansi_codes = []
+            ansi_regex = re.compile(r'(\x1b\[[0-9;]*m)')
+            for match in ansi_regex.finditer(original_line):
+                ansi_codes.append(match.group(1))
+            ansi_state = ''.join(ansi_codes[:1]) if ansi_codes else ''
 
             for msg_type, pattern in patterns.items():
                 match = re.match(pattern, clean_line)
                 if not match:
                     continue
 
-                if msg_type == 'whisper':
-                    sender, message = match.groups()
-                    sender_clean = sender.split('@')[0]
-                    formatted = f"{timestamp} From {sender} (whispered): {message}"
-                    self.save_chatlog_message(sender_clean, formatted)
-                    self.append_directed_message(formatted)
-                    self.play_directed_sound()
-                    self.append_terminal_text(original_line + "\n", "normal")
-                    # Extract URLs from message
-                    self.parse_and_store_hyperlinks(message, sender_clean)
-                    return True
-
-                elif msg_type == 'to_you':
-                    sender, message = match.groups()
-                    sender_clean = sender.split('@')[0]
-                    formatted = f"{timestamp} From {sender} (to you): {message}"
-                    self.save_chatlog_message(sender_clean, formatted)
-                    self.append_directed_message(formatted)
-                    self.play_directed_sound()
-                    self.append_terminal_text(original_line + "\n", "normal")
-                    # Extract URLs from message
-                    self.parse_and_store_hyperlinks(message, sender_clean)
-                    return True
-
-                elif msg_type == 'public_directed':
-                    sender, recipient, message = match.groups()
-                    sender_clean = sender.split('@')[0]
-                    recipient_clean = recipient.split('@')[0]
+                if msg_type in ['whisper', 'to_you', 'public_directed', 'public']:
+                    # Add ANSI state to the beginning of the line if it exists
+                    display_line = f"{ansi_state}{original_line}\n" if ansi_state else f"{original_line}\n"
+                    self.append_terminal_text(display_line, "normal")
                     
-                    # Only process as directed if it's to current user
-                    if recipient_clean.lower() == self.username.get().lower():
-                        formatted = f"{timestamp} From {sender} (to you): {message}"
+                    # Process message specific actions
+                    if msg_type == 'whisper' or (msg_type == 'to_you'):
+                        sender = match.group(1)
+                        message = match.group(-1)  # Last group is always the message
+                        sender_clean = sender.split('@')[0]
+                        formatted = f"{timestamp} From {sender} ({msg_type}): {message}"
                         self.save_chatlog_message(sender_clean, formatted)
                         self.append_directed_message(formatted)
                         self.play_directed_sound()
