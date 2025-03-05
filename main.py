@@ -216,6 +216,9 @@ class BBSTerminalApp:
         self.command_index = -1
         self.current_command = ""
 
+        # Add new variable for Bannerless Mode visibility
+        self.bannerless_mode = tk.BooleanVar(value=False)
+
         # 1.BUILD UI
         self.build_ui()
 
@@ -543,6 +546,14 @@ class BBSTerminalApp:
             command=self.toggle_messages_frame
         )
         messages_check.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
+
+        # Add Bannerless Mode checkbox
+        bannerless_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Bannerless Mode",
+            variable=self.bannerless_mode
+        )
+        bannerless_check.grid(row=0, column=6, padx=5, pady=5, sticky=tk.W)
 
         # At the end of build_ui, apply saved settings
         self.master.after(100, self.apply_saved_settings)
@@ -1365,6 +1376,13 @@ class BBSTerminalApp:
         # Precompile an ANSI escape code regex
         ansi_regex = re.compile(r'(\x1b\[[0-9;]*m)')
         
+        # Banner detection variables
+        in_banner = False
+        banner_lines = []
+        banner_complete = False
+        banner_end_detected = False
+        assistance_line_detected = False
+        
         for line in lines[:-1]:
             # Split the line into ANSI codes and text while preserving the codes
             line_parts = ansi_regex.split(line)
@@ -1377,17 +1395,33 @@ class BBSTerminalApp:
             # Store initial ANSI state
             self.current_ansi_state = ''.join([f"\x1b[{code}m" for code in ansi_codes]) if ansi_codes else ''
             
-            # Handle banner detection and user list collection
-            if any(x in clean_line for x in ["Topic:", "You are in"]):
-                self.user_list_buffer = [(clean_line, original_with_ansi, self.current_ansi_state)]
+            # Banner detection - start of banner
+            if "You are in" in clean_line or "Topic:" in clean_line:
+                in_banner = True
+                banner_lines = [(clean_line, original_with_ansi, self.current_ansi_state)]
                 self.collecting_users = True
-            elif self.collecting_users:
-                self.user_list_buffer.append((clean_line, original_with_ansi, self.current_ansi_state))
-                if "you." in clean_line or "with you." in clean_line:
-                    print("[DEBUG] Banner end detected, processing users")
-                    self.update_chat_members([item[1] for item in self.user_list_buffer])
+                self.user_list_buffer = banner_lines
+                continue
+            
+            # Continue collecting banner lines
+            if in_banner or self.collecting_users:
+                banner_lines.append((clean_line, original_with_ansi, self.current_ansi_state))
+                self.user_list_buffer = banner_lines
+                
+                # Check for end of user list banner
+                if "are here with you" in clean_line or "with you." in clean_line:
+                    banner_end_detected = True
+                    # Don't set banner_complete yet - we want to include the assistance line
+                    
+                # Check for the "Just type '?'" assistance line that follows the user list
+                elif banner_end_detected and "Just type" in clean_line and "assistance" in clean_line:
+                    assistance_line_detected = True
+                    banner_complete = True
+                    in_banner = False
                     self.collecting_users = False
-                    self.user_list_buffer = []
+                    
+                    print("[DEBUG] Banner complete with assistance line, processing users")
+                    self.update_chat_members([item[1] for item in banner_lines])
                     
                     # Trigger actions request after banner if not done this session
                     if not self.actions_requested_this_session:
@@ -1396,13 +1430,61 @@ class BBSTerminalApp:
                             self.master.after(1000, self.request_actions_list)
                             self.last_banner_time = current_time
                             self.actions_requested_this_session = True
-
-            # Check for action list
-            elif "Action listing for:" in clean_line:
+                    
+                    # In Bannerless Mode, we replace the entire banner with just a '>' line
+                    if self.bannerless_mode.get():
+                        self.append_terminal_text("> \n", "normal")
+                        continue
+                    else:
+                        # If not in bannerless mode, display all banner lines at once
+                        for _, original_line, _ in banner_lines:
+                            self.append_terminal_text(original_line + "\n", "normal")
+                        banner_lines = []
+                        continue
+                
+                # If the banner end was detected but the assistance line doesn't immediately follow,
+                # we still need to finish the banner processing
+                elif banner_end_detected and not assistance_line_detected:
+                    # Allow one line to pass after banner_end_detected before checking for completion
+                    # This ensures we catch any assistance lines that might be delayed
+                    banner_complete = True
+                    in_banner = False
+                    self.collecting_users = False
+                    
+                    print("[DEBUG] Banner complete without assistance line, processing users")
+                    self.update_chat_members([item[1] for item in banner_lines])
+                    
+                    # Trigger actions request after banner if not done this session
+                    if not self.actions_requested_this_session:
+                        current_time = time.time()
+                        if current_time - self.last_banner_time > 5:
+                            self.master.after(1000, self.request_actions_list)
+                            self.last_banner_time = current_time
+                            self.actions_requested_this_session = True
+                    
+                    # In Bannerless Mode, we replace the entire banner with just a '>' line
+                    if self.bannerless_mode.get():
+                        self.append_terminal_text("> \n", "normal")
+                        continue
+                    else:
+                        # If not in bannerless mode, display all banner lines at once
+                        for _, original_line, _ in banner_lines:
+                            self.append_terminal_text(original_line + "\n", "normal")
+                        banner_lines = []
+                        continue
+                
+                # If still collecting banner but not at the end, skip displaying this line
+                if in_banner or self.collecting_users:
+                    continue
+            
+            # Check for action list header
+            if "Action listing for:" in clean_line:
                 print("[DEBUG] Action listing header detected")
                 self.actions = []
                 self.collecting_actions = True
                 continue
+            
+            # Continue action list collection if active
             elif self.collecting_actions:
                 if clean_line == ":" or clean_line == "" or "Just press" in clean_line:
                     if self.actions:
@@ -1425,7 +1507,7 @@ class BBSTerminalApp:
                     self.actions.extend(valid_actions)
                 continue
 
-            # Display the line if it hasn't been filtered out
+            # If we reach here, it's a regular line (not part of banner or action list)
             if clean_line:
                 self.append_terminal_text(original_with_ansi + "\n", "normal")
                 self.check_triggers(clean_line)  # Use clean line for trigger checking
@@ -2518,7 +2600,7 @@ class BBSTerminalApp:
 
         # Create member buttons
         style = ttk.Style()
-        for i, member in enumerate(sorted(self.chat_members)):
+        for i, member in sorted(enumerate(self.chat_members)):
             bg_color = self.random_color()
             style_name = f"Member{i}.TButton"
             style.configure(style_name,
@@ -3064,6 +3146,7 @@ class BBSTerminalApp:
                     self.logon_automation_enabled.set(settings.get('logon_automation', False))
                     self.keep_alive_enabled.set(settings.get('keep_alive', False))
                     self.show_messages_to_you.set(settings.get('show_messages', True))
+                    self.bannerless_mode.set(settings.get('bannerless_mode', False))
                     return settings
         except Exception as e:
             print(f"Error loading settings: {e}")
