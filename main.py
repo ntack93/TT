@@ -1548,11 +1548,18 @@ class BBSTerminalApp:
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ") if not has_timestamp else ""
         
-        # Message type patterns - order matters!
+        # Enhanced message type patterns to catch all variants - order matters!
         patterns = {
+            # Whisper messages (both with and without domain)
             'whisper': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(whispered(?:\s+to\s+you)?\):\]\s*(.+)$',
+            
+            # Direct messages to you (both with and without domain)
             'direct_to_you': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+you\):\]\s*(.+)$',
+            
+            # Public direct messages between parties (all domain combinations)
             'public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
+            
+            # Regular public messages (both with and without domain)
             'regular': r'^\[([^@\]]+(?:@[^\]]+)?):]\s*(.+)$'
         }
 
@@ -1564,34 +1571,53 @@ class BBSTerminalApp:
 
             sender = match.group(1)
             
+            # Whispered messages or direct messages to you
             if msg_type in ('whisper', 'direct_to_you'):
-                # Whispers and directs to you go to Messages to You
+                # Process whispered/directed messages
                 message = match.group(2)
                 formatted_message = f"{timestamp}From {sender} ({msg_type}): {message}"
                 self.append_directed_message(formatted_message)
+                
+                # Play directed sound effect regardless of Bannerless Mode
                 self.play_directed_sound()
+                print(f"[DEBUG] Playing directed sound for {msg_type} message from {sender}")
                 
             elif msg_type == 'public_direct':
+                # Process public direct messages between users
                 recipient = match.group(2)
                 message = match.group(3)
                 formatted_message = f"{timestamp}From {sender} (to {recipient}): {message}"
                 
                 # Check if recipient is you (your username)
-                if (self.username.get() in recipient or 
-                    recipient.split('@')[0].strip() == self.username.get()):
+                your_username = self.username.get()
+                is_to_you = False
+                
+                # Match username with or without domain
+                if your_username:
+                    recipient_base = recipient.split('@')[0].strip()
+                    your_username_base = your_username.split('@')[0].strip()
+                    is_to_you = (recipient_base.lower() == your_username_base.lower())
+                
+                if is_to_you:
                     # Direct message to you - add to Messages to You
                     self.append_directed_message(formatted_message)
                     self.play_directed_sound()
+                    print(f"[DEBUG] Playing directed sound for public direct message to you from {sender}")
                 else:
                     # Public direct between others - add to chatlog
                     self.save_chatlog_message(sender, formatted_message)
                     self.play_chat_sound()
+                    print(f"[DEBUG] Playing chat sound for public direct message between others: {sender} to {recipient}")
                 
             else:  # regular message
+                # Process regular public messages
                 message = match.group(2)
                 formatted_message = f"{timestamp}From {sender}: {message}"
                 self.save_chatlog_message(sender, formatted_message)
+                
+                # Play chat sound for regular messages regardless of Bannerless Mode
                 self.play_chat_sound()
+                print(f"[DEBUG] Playing chat sound for regular message from {sender}")
 
             # Extract URLs from the actual message content
             message_content = match.group(2) if msg_type in ('whisper', 'direct_to_you', 'regular') else match.group(3)
@@ -3508,10 +3534,20 @@ class BBSTerminalApp:
     def play_chat_sound(self):
         """Play chat sound with immediate interruption of any playing sound."""
         try:
+            # Avoid playing sounds too frequently (debounce)
+            current_time = time.time()
+            if current_time - self.last_sound_time < 1.0:
+                print("[DEBUG] Skipping sound - too soon after previous sound")
+                return
+                
             if hasattr(self, 'chat_sound_file') and os.path.exists(self.chat_sound_file):
                 print(f"[DEBUG] Playing chat sound: {self.chat_sound_file}")
-                winsound.PlaySound(None, winsound.SND_PURGE)  # Stop any playing sound
-                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                # Stop any playing sound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                # Play the sound asynchronously
+                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                self.current_sound = "chat"
+                self.last_sound_time = current_time
             else:
                 print(f"[DEBUG] Chat sound file not found: {getattr(self, 'chat_sound_file', 'Not set')}")
         except Exception as e:
@@ -3520,10 +3556,20 @@ class BBSTerminalApp:
     def play_directed_sound(self):
         """Play directed sound with immediate interruption of any playing sound."""
         try:
+            # Avoid playing sounds too frequently (debounce)
+            current_time = time.time()
+            if current_time - self.last_sound_time < 1.0:
+                print("[DEBUG] Skipping sound - too soon after previous sound")
+                return
+                
             if hasattr(self, 'directed_sound_file') and os.path.exists(self.directed_sound_file):
                 print(f"[DEBUG] Playing directed sound: {self.directed_sound_file}")
-                winsound.PlaySound(None, winsound.SND_PURGE)  # Stop any playing sound
-                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                # Stop any playing sound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                # Play the sound asynchronously with priority
+                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                self.current_sound = "directed"
+                self.last_sound_time = current_time
             else:
                 print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
         except Exception as e:
