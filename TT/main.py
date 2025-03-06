@@ -16,9 +16,8 @@ import winsound  # Import winsound for playing sound effects on Windows
 from tkinter import simpledialog  # Import simpledialog for input dialogs
 import random
 from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
-from init_config import init_config_files, verify_sound_files  # Adjust the import path
+from init_config import init_config_files, verify_sound_files  # Add this line
 import traceback
-import sys
 
 try:
     import enchant
@@ -34,11 +33,10 @@ except ImportError:
 
 class BBSTerminalApp:
     def __init__(self, master):
-        self.master = master
-
         # Initialize sound-related attributes first
-        self.chat_sound_file = self.resource_path('chat.wav')
-        self.directed_sound_file = self.resource_path('directed.wav')
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.chat_sound_file = os.path.join(script_dir, "chat.wav")
+        self.directed_sound_file = os.path.join(script_dir, "directed.wav")
         self.current_sound = None
         self.last_sound_time = 0
         
@@ -52,16 +50,6 @@ class BBSTerminalApp:
         self.master = master
         self.master.title("Retro BBS Terminal")
         
-        # Load saved font settings or use defaults
-        saved_font_settings = self.load_font_settings()
-        self.font_name = tk.StringVar(value=saved_font_settings.get('font_name', "Courier New"))
-        self.font_size = tk.IntVar(value=saved_font_settings.get('font_size', 10))
-        self.current_font_settings = {
-            'font': (self.font_name.get(), self.font_size.get()),
-            'fg': saved_font_settings.get('fg', 'white'),
-            'bg': saved_font_settings.get('bg', 'black')
-        }
-
         # Add sound file paths
         self.chat_sound_file = os.path.join(os.path.dirname(__file__), "chat.wav")
         self.directed_sound_file = os.path.join(os.path.dirname(__file__), "directed.wav")
@@ -3604,16 +3592,6 @@ class BBSTerminalApp:
                 json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
         except Exception as e:
             print(f"Error saving command history: {e}")
-
-    def resource_path(self, relative_path):
-        """ Get absolute path to resource, works for dev and for PyInstaller """
-        try:
-            # PyInstaller creates a temp folder and stores path in _MEIPASS
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = os.path.abspath(".")
-
-        return os.path.join(base_path, relative_path)
 
 def main():
     # Initialize configuration files
