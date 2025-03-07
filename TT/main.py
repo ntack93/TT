@@ -52,7 +52,7 @@ class BBSTerminalApp:
 
         # Look for the file in the main directory
         file_path = os.path.join(base_path, relative_path)
-        if os.path.exists(file_path):
+        if (os.path.exists(file_path)):
             return file_path
             
         # If not found, look in the TT subdirectory
@@ -1345,6 +1345,15 @@ class BBSTerminalApp:
             # Clear the members list before disconnecting
             self.clear_chat_members()
 
+            # Explicitly clear the chat members UI even if the connection is lost suddenly
+            def update_ui():
+                self.chat_members = set()
+                self.save_chat_members_file()
+                self.update_members_display()
+            
+            # Schedule UI update on main thread
+            self.master.after_idle(update_ui)
+
             if self.writer:
                 try:
                     # Send disconnect command if still connected
@@ -1391,9 +1400,10 @@ class BBSTerminalApp:
 
     def clear_chat_members(self):
         """Clear the active chat members list but preserve last seen timestamps."""
-        self.chat_members = set()
+        self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
         self.save_chat_members_file()
         self.update_members_display()
+        print("[DEBUG] Chat members cleared")
 
     # 1.6️⃣ MESSAGES
     def process_incoming_messages(self):
@@ -2769,12 +2779,15 @@ class BBSTerminalApp:
         font = ("Arial VGA 437", 9, "bold")
         test_label = ttk.Label(self.members_frame, font=font)
         
-        # Calculate max width using character-based estimation
+        # Calculate max width using character-based estimation - use only usernames without domains
         max_width = 0
         for member in sorted(self.chat_members):
+            # Strip domain for display purposes
+            display_name = member.split('@')[0] if '@' in member else member
+            
             # Estimate width: each character is roughly 7 pixels wide in this font
             # Add extra padding (40 pixels) for button margins and safety
-            text_width = (len(member) * 7) + 40
+            text_width = (len(display_name) * 7) + 40
             max_width = max(max_width, text_width)
         
         test_label.destroy()
@@ -2787,6 +2800,9 @@ class BBSTerminalApp:
         # Create member buttons
         style = ttk.Style()
         for i, member in sorted(enumerate(self.chat_members)):
+            # Strip domain for display purposes
+            display_name = member.split('@')[0] if '@' in member else member
+            
             bg_color = self.random_color()
             style_name = f"Member{i}.TButton"
             style.configure(style_name,
@@ -2796,12 +2812,14 @@ class BBSTerminalApp:
                 borderwidth=2,
                 font=font)
 
+            # Use display_name for UI but store full member value for functionality
             button = ttk.Button(self.members_frame, 
-                              text=member,
+                              text=display_name,
                               style=style_name,
                               )
             button.pack(pady=2, padx=5, fill=tk.X, expand=False, ipadx=10)
             
+            # Keep full name with domain in the lambda for proper functionality
             button.bind('<Button-1>', lambda e, m=member: self.select_member(m))
             button.bind('<Enter>', lambda e, b=button, s=style_name: self.on_button_hover(b, True, s))
             button.bind('<Leave>', lambda e, b=button, s=style_name: self.on_button_hover(b, False, s))
@@ -2831,14 +2849,21 @@ class BBSTerminalApp:
         if "General Chat" in combined_clean:
             parts = combined_clean.split("General Chat", 1)
             if len(parts) > 1:
-                user_section = parts[1]
+                # Remove the period that appears after "General Chat)."
+                user_section = parts[1].replace(").", ")").strip()
         # Pattern 2: MajorLink format
         elif "channel" in combined_clean and "Topic:" in combined_clean:
-            # Extract everything after "Topic:" line
+            # Split at "Topic:" and extract everything after it
             parts = combined_clean.split("Topic:", 1)
             if len(parts) > 1:
-                # Find the next section that contains user names
-                user_section = parts[1]
+                # Remove the period after the topic parentheses
+                topic_part = parts[1].replace(").", ")")
+                # Get the part after the topic definition
+                topic_end_idx = topic_part.find(")")
+                if topic_end_idx > -1:
+                    user_section = topic_part[topic_end_idx+1:].strip()
+                else:
+                    user_section = topic_part
         # Fallback: Scan for user listing patterns
         else:
             # Check for sections that contain "are here with you"
@@ -2866,6 +2891,10 @@ class BBSTerminalApp:
                 # Skip empty or invalid usernames
                 if not username or username.lower() in ["topic:", "just press"]:
                     continue
+                
+                # Fix: Remove any leading dot, period or special characters that might have been accidentally captured
+                if username.startswith('.') or username.startswith(')'):
+                    username = username[1:].strip()
                     
                 # Extract domain if present
                 domain = ""
@@ -2877,8 +2906,12 @@ class BBSTerminalApp:
                 # Clean username but preserve dots and other valid characters
                 username = re.sub(r'[^A-Za-z0-9._-]', '', username)
                 
-                # Add domain back for displaying in the UI
+                # Add domain back for displaying in the UI and for proper functionality
                 display_name = username + domain
+                
+                # Skip bad usernames
+                if any(bad_word in username.lower() for bad_word in ["herewithyou", "assistance", "press", "just"]):
+                    continue
                 
                 # Validate username
                 if len(username) >= 2 and not re.search(r'^\.(net|com|org|bbs)$', username.lower()):
