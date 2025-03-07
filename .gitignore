@@ -4741,3 +4741,7 @@ TT/build/main/localpycs/pyimod02_importers.pyc
 TT/build/main/localpycs/pyimod03_ctypes.pyc
 TT/build/main/localpycs/pyimod04_pywin32.pyc
 TT/build/main/localpycs/struct.pyc
+tt_installer.spec
+TT/tt_installer.spec
+TT/__pycache__/image_patch.cpython-312.pyc
+tt_installer.spec

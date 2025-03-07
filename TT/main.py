@@ -10,14 +10,6 @@ import json
 import os
 import webbrowser
 import sys
-
-# Apply patches for PyInstaller compatibility
-try:
-    from image_patch import apply_patches
-    apply_patches()
-except Exception as e:
-    print(f"Error applying patches: {e}")
-
 import PIL
 import PIL.Image
 import PIL.ImageTk
@@ -29,7 +21,15 @@ import random
 from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
 from init_config import init_config_files, verify_sound_files  # Add this line
 import traceback
-
+# Apply patches for PyInstaller compatibility
+try:
+    from image_patch import apply_patches, Image, ImageTk
+    apply_patches()
+except Exception as e:
+    print(f"Error applying patches: {e}")
+    traceback.print_exc()
+    # Fallback imports
+    from PIL import Image, ImageTk
 try:
     import enchant
 except ImportError:
@@ -71,6 +71,7 @@ class BBSTerminalApp:
         print(f"[DEBUG] Directed sound path: {self.directed_sound_file}")
         
         # Add at the start of __init__
+        self.bannerless_mode = tk.BooleanVar(value=False)
         self.show_messages_to_you = tk.BooleanVar(value=True)
         self.actions_request_lock = asyncio.Lock()
         # 1.0️⃣ 🎉 SETUP
@@ -1467,8 +1468,9 @@ class BBSTerminalApp:
                 self.collecting_users = True
                 self.user_list_buffer = banner_lines
                 
-                # Always display the line even as we collect it
-                self.append_terminal_text(original_with_ansi + "\n", "normal")
+                # Only display the line if NOT in bannerless mode
+                if not self.bannerless_mode.get():
+                    self.append_terminal_text(original_with_ansi + "\n", "normal")
                 continue
             
             # Continue collecting banner lines
@@ -1476,7 +1478,7 @@ class BBSTerminalApp:
                 banner_lines.append((clean_line, original_with_ansi, self.current_ansi_state))
                 self.user_list_buffer = banner_lines
                 
-                # Always display the line unless in bannerless mode
+                # Only display the line if NOT in bannerless mode
                 if not self.bannerless_mode.get():
                     self.append_terminal_text(original_with_ansi + "\n", "normal")
                 
@@ -2122,7 +2124,7 @@ class BBSTerminalApp:
                 from image_patch import Image, ImageTk
             except ImportError:
                 from PIL import Image, ImageTk
-                
+
             headers = {'User-Agent': 'Mozilla/5.0'}
             # Check if URL is directly an image
             if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
@@ -2133,7 +2135,7 @@ class BBSTerminalApp:
                 # Try to get webpage first to check for proper image content type
                 response = requests.get(url, headers=headers, timeout=5)
                 content_type = response.headers.get("Content-Type", "").lower()
-                
+
                 if "image" in content_type:
                     self._handle_image_preview(response.content, label, is_gif='gif' in content_type)
                 else:
@@ -2148,49 +2150,110 @@ class BBSTerminalApp:
             self.master.after(0, update_label_error)
 
     def _handle_image_preview(self, image_data, label, is_gif=False):
-        """Handle preview for image content, including GIFs."""
+        """Process and display image thumbnail."""
         try:
-            image = Image.open(BytesIO(image_data))
+            # Import proper modules
+            from PIL import Image, ImageTk
+            import PIL.ImageSequence as ImageSequence
             
-            if is_gif and getattr(image, "is_animated", False):
-                # Handle animated GIF
+            # Create a persistent BytesIO object to prevent it from closing
+            self._active_img_data = BytesIO(image_data)  # Store reference as instance attribute
+            img = Image.open(self._active_img_data)
+            
+            # Check if it's an animated GIF
+            is_animated_gif = is_gif or (hasattr(img, 'is_animated') and img.is_animated)
+            
+            # Resize the image if it's too large
+            max_size = (200, 200)
+            
+            # Create the first frame's PhotoImage for initial display
+            first_frame = img.copy()
+            first_frame.thumbnail(max_size)
+            photo = ImageTk.PhotoImage(first_frame)
+            
+            if is_animated_gif:
+                print(f"[DEBUG] Processing animated GIF with {getattr(img, 'n_frames', '?')} frames")
+                
+                # Extract all frames using PIL.ImageSequence
                 frames = []
-                try:
-                    while True:
-                        frame = image.copy()
-                        frame.thumbnail((200, 150))
-                        frames.append(ImageTk.PhotoImage(frame))
-                        image.seek(len(frames))
-                except EOFError:
-                    pass
-                
-                if frames:
-                    def animate(frame_index=0):
-                        if self.preview_window and label.winfo_exists():
-                            label.config(image=frames[frame_index])
-                            label.image = frames[frame_index]  # Keep reference
-                            next_frame = (frame_index + 1) % len(frames)
-                            self.master.after(100, lambda: animate(next_frame))
+                duration = img.info.get('duration', 100)
+                if duration < 20:  # Some GIFs have very short durations
+                    duration = 100
                     
-                    self.master.after(0, animate)
-                    return
+                try:
+                    # Use ImageSequence iterator for more reliable frame extraction
+                    for frame in ImageSequence.Iterator(img):
+                        # Make a copy of each frame to avoid reference issues
+                        frame_copy = frame.copy()
+                        frame_copy.thumbnail(max_size)
+                        frames.append(ImageTk.PhotoImage(frame_copy))
+                    
+                    print(f"[DEBUG] Successfully extracted {len(frames)} frames from GIF using ImageSequence")
+                    
+                    # Update the label and start animation
+                    def update_label():
+                        if self.preview_window and label.winfo_exists():
+                            if frames:  # Make sure we have frames
+                                label.config(image=frames[0], text="")
+                                label.image = frames[0]  # Keep a reference
+                                
+                                if len(frames) > 1:  # Only animate if multiple frames
+                                    # Start animation using the extracted frames
+                                    self.master.after(duration, 
+                                        lambda: self.animate_gif(label, frames, 0, duration))
+                            else:
+                                # Fallback if no frames extracted
+                                label.config(image=photo, text="")
+                                label.image = photo
+                    
+                    self.master.after(0, update_label)
+                    
+                except Exception as e:
+                    print(f"[DEBUG] Error extracting frames: {e}")
+                    traceback.print_exc()
+                    # Fallback to static image if frame extraction fails
+                    def update_label():
+                        if self.preview_window and label.winfo_exists():
+                            label.config(image=photo, text="")
+                            label.image = photo
+                    self.master.after(0, update_label)
             else:
-                # Handle static image
-                image.thumbnail((200, 150))
-                photo = ImageTk.PhotoImage(image)
-                
+                # For static images, just display the image
                 def update_label():
                     if self.preview_window and label.winfo_exists():
                         label.config(image=photo, text="")
                         label.image = photo
                 self.master.after(0, update_label)
+
         except Exception as e:
-            print(f"Image preview error: {e}")
-            # If image preview fails, try to handle as website preview
-            if hasattr(self, '_handle_website_preview'):
-                parsed_url = urlparse(url) if 'url' in locals() else None
-                if parsed_url:
-                    self._handle_website_preview(url, label)
+            print(f"Error handling image preview: {e}")
+            traceback.print_exc()
+            def update_label_error():
+                if self.preview_window and label.winfo_exists():
+                    label.config(text="Error displaying image")
+            self.master.after(0, update_label_error)
+
+    def animate_gif(self, label, frames, frame_num, duration):
+        """Animate a GIF by cycling through prepared frames."""
+        # Stop if window closed or label destroyed
+        if not hasattr(self, 'preview_window') or not self.preview_window or not label.winfo_exists():
+            return
+            
+        # Safety check for empty frames list
+        if not frames:
+            return
+            
+        # Update to next frame
+        next_frame_num = (frame_num + 1) % len(frames)
+        next_photo = frames[next_frame_num]  # Already a PhotoImage object
+        
+        # Update label with new frame
+        label.config(image=next_photo)
+        label.image = next_photo  # Keep reference to prevent garbage collection
+        
+        # Schedule next frame update
+        self.master.after(duration, 
+                         lambda: self.animate_gif(label, frames, next_frame_num, duration))
 
     def _handle_website_preview(self, url, label):
         """Handle preview for website content by showing favicon."""
@@ -3422,6 +3485,13 @@ class BBSTerminalApp:
                 self.current_sound = None
         else:
             print(f"Directed sound file not found: {self.directed_sound_file}")
+
+
+    # Add this method to your BBSTerminalApp class
+    def close_spelling_popup(self):
+        """Close the spelling popup if it exists"""
+        if hasattr(self, 'spell_popup') and self.spell_popup and self.spell_popup.winfo_exists():
+            self.spell_popup.destroy()
 
     def update_display_font(self):
         """Update font settings for terminal displays only."""

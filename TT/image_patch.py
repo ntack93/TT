@@ -42,7 +42,9 @@ def setup_temp_dir():
         except Exception as e:
             print(f"Error setting up temp directory: {e}")
             traceback.print_exc()
-    return False
+            return False
+    # Return True even when not frozen - this isn't a failure
+    return True
 
 def patch_requests_session():
     """
@@ -77,6 +79,9 @@ def patch_requests_session():
 
 def apply_patches():
     """Apply all patches"""
+    # Module-level variables don't need global declaration here
+    # since they're already defined at the module level
+    
     success = []
     success.append(setup_temp_dir())
     success.append(patch_requests_session())
@@ -84,16 +89,9 @@ def apply_patches():
     print(f"Applied patches: {sum(success)}/{len(success)} successful")
     print(f"PIL modules available: Image={Image is not None}, ImageTk={ImageTk is not None}")
     
-    # Ensure PIL modules are available in the global namespace
-    # This helps with "name 'Image' is not defined" errors
-    try:
-        # Add to global namespace
-        sys.modules['Image'] = PIL.Image
-        sys.modules['ImageTk'] = PIL.ImageTk
-        
-        # Make globals accessible
-        globals()['Image'] = PIL.Image
-        globals()['ImageTk'] = PIL.ImageTk
-    except Exception as e:
-        print(f"Error setting PIL globals: {e}")
-        traceback.print_exc()
+    # Make PIL modules accessible through sys.modules
+    sys.modules['Image'] = PIL.Image
+    sys.modules['ImageTk'] = PIL.ImageTk
+    
+    # REMOVED: global Image, ImageTk - this was causing the error
+    # because it appeared after using these variables
