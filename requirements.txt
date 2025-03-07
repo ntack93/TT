@@ -1,7 +1,4 @@
 requests
 Pillow
 telnetlib3
-winsound; platform_system=="Windows"
 pyspellchecker
-tkinter
-asyncio
