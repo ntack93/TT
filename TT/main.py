@@ -1212,6 +1212,9 @@ class BBSTerminalApp:
         
         # Handle basic color codes
         # Note: '30' now maps to 'darkgray' instead of 'black'
+        if color_code == "47":
+            # Use a lighter gray instead of bright white
+            return "bg_light_grey"
         return self.color_map.get(color_code, None)
 
     # Keep existing blink_timer and get_all_color_tags methods
@@ -1434,7 +1437,7 @@ class BBSTerminalApp:
         return result
 
     def process_data_chunk(self, data):
-        """Process incoming data with enhanced message and banner handling."""
+        """Process incoming data with enhanced banner detection for multiple formats."""
         # Decode CP437 data
         if isinstance(data, bytes):
             data = self.decode_cp437(data)
@@ -1456,7 +1459,6 @@ class BBSTerminalApp:
         in_banner = False
         banner_lines = []
         banner_complete = False
-        banner_end_detected = False
         assistance_line_detected = False
         
         for line in lines[:-1]:
@@ -1471,9 +1473,13 @@ class BBSTerminalApp:
             # Store initial ANSI state
             self.current_ansi_state = ''.join([f"\x1b[{code}m" for code in ansi_codes]) if ansi_codes else ''
             
-            # Enhanced banner detection - start of banner
-            # Support both classic "You are in" and alternative MajorLink format
-            if any(pattern in clean_line for pattern in ["You are in", "Topic:"]):
+            # ENHANCED BANNER START DETECTION
+            # ===============================
+            # Match any of the common banner start patterns
+            if (not in_banner and (
+                    "You are in" in clean_line or 
+                    clean_line.startswith("Topic:") or
+                    "channel" in clean_line)):
                 in_banner = True
                 banner_lines = [(clean_line, original_with_ansi, self.current_ansi_state)]
                 self.collecting_users = True
@@ -1493,79 +1499,59 @@ class BBSTerminalApp:
                 if not self.bannerless_mode.get():
                     self.append_terminal_text(original_with_ansi + "\n", "normal")
                 
-                # Enhanced banner end detection with multiple patterns
-                if any(pattern in clean_line for pattern in ["are here with you", "with you.", "is here with you"]):
-                    banner_end_detected = True
+                # ENHANCED BANNER END DETECTION
+                # ============================
+                # 1. Check for user list ending indicators
+                user_list_end_detected = any(pattern in clean_line for pattern in [
+                    "are here with you", 
+                    "is here with you",
+                    "with you.",
+                    "with\nyou"  # Handle line breaks in PBX style
+                ])
+                
+                # 2. Check for standalone colon as MajorLink delimiter
+                if clean_line == ":":
+                    banner_complete = True
+                    in_banner = False
+                    self.collecting_users = False
                     
-                # Check for the assistance line that follows the user list
-                elif banner_end_detected and ("Just" in clean_line and "assistance" in clean_line):
+                    print("[DEBUG] Banner complete with colon delimiter")
+                    self.update_chat_members([item[1] for item in banner_lines])
+                    
+                    # In Bannerless Mode, replace banner with just the colon
+                    if self.bannerless_mode.get():
+                        self.append_terminal_text(":\n", "normal")
+                    
+                    # Request actions after banner processing
+                    if not self.actions_requested_this_session:
+                        self.request_actions_after_banner()
+                    continue
+                
+                # 3. Check for assistance line (occurs after user list)
+                if any(assist_pattern in clean_line for assist_pattern in [
+                    "Just press", "Just type", "assistance", "help", "need any"
+                ]):
                     assistance_line_detected = True
                     banner_complete = True
                     in_banner = False
                     self.collecting_users = False
                     
-                    print("[DEBUG] Banner complete with assistance line, processing users")
+                    print("[DEBUG] Banner complete with assistance line")
                     self.update_chat_members([item[1] for item in banner_lines])
-                    
-                    # Trigger actions request after banner if not done this session
-                    if not self.actions_requested_this_session:
-                        current_time = time.time()
-                        if current_time - self.last_banner_time > 5:
-                            self.master.after(1000, self.request_actions_list)
-                            self.last_banner_time = current_time
-                            self.actions_requested_this_session = True
-                    
-                    # In Bannerless Mode, we replace the entire banner with just a '>' line
-                    if self.bannerless_mode.get():
-                        self.append_terminal_text("> \n", "normal")
-                        continue
-                    continue
-                
-                # Check for ":" as banner end signal (alternative banner format)
-                elif clean_line == ":":
-                    banner_complete = True
-                    in_banner = False
-                    self.collecting_users = False
-                    
-                    print("[DEBUG] Banner complete with colon delimiter, processing users")
-                    self.update_chat_members([item[1] for item in banner_lines])
-                    
-                    # Trigger actions request after banner
-                    if not self.actions_requested_this_session:
-                        current_time = time.time()
-                        if current_time - self.last_banner_time > 5:
-                            self.master.after(1000, self.request_actions_list)
-                            self.last_banner_time = current_time
-                            self.actions_requested_this_session = True
-                    
-                    # In Bannerless Mode, replace banner with just the colon
-                    if self.bannerless_mode.get():
-                        self.append_terminal_text(":\n", "normal")
-                        continue
-                    continue
-                
-                # If banner end was detected but no assistance line follows,
-                # we still need to finish processing
-                elif banner_end_detected and not assistance_line_detected:
-                    banner_complete = True
-                    in_banner = False
-                    self.collecting_users = False
-                    
-                    print("[DEBUG] Banner complete without assistance line, processing users")
-                    self.update_chat_members([item[1] for item in banner_lines])
-                    
-                    # Trigger actions request
-                    if not self.actions_requested_this_session:
-                        current_time = time.time()
-                        if current_time - self.last_banner_time > 5:
-                            self.master.after(1000, self.request_actions_list)
-                            self.last_banner_time = current_time
-                            self.actions_requested_this_session = True
                     
                     # In Bannerless Mode, replace banner with minimal output
                     if self.bannerless_mode.get():
                         self.append_terminal_text("> \n", "normal")
-                        continue
+                    
+                    # Request actions after banner processing
+                    if not self.actions_requested_this_session:
+                        self.request_actions_after_banner()
+                    continue
+                
+                # 4. If we've detected the user list ending but no assistance line yet,
+                # wait for one more line before completing
+                if user_list_end_detected and not banner_complete:
+                    # Don't finish the banner yet, wait for assistance line
                     continue
                 
                 # Continue if still collecting banner
@@ -1579,15 +1565,19 @@ class BBSTerminalApp:
                 self.collecting_actions = True
                 continue
             
-            # Continue action list collection if active
+            # Handle action list collection
             elif self.collecting_actions:
-                if clean_line == ":" or clean_line == "" or "Just press" in clean_line:
+                # Check for end of action list
+                if clean_line == ":" or clean_line == "" or any(pattern in clean_line for pattern in [
+                    "Just press", "Just type", "assistance"
+                ]):
                     if self.actions:
                         print(f"[DEBUG] Finished collecting actions: {self.actions}")
                         self.collecting_actions = False
                         self.master.after_idle(self.update_actions_listbox)
                     continue
-                    
+                
+                # Extract action words
                 action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
                 valid_actions = [
                     word for word in action_matches 
@@ -1596,7 +1586,7 @@ class BBSTerminalApp:
                         'can', 'use', 'these', 'actions', 'available'
                     } and len(word) >= 2)
                 ]
-                    
+                
                 if valid_actions:
                     print(f"[DEBUG] Found valid actions: {valid_actions}")
                     self.actions.extend(valid_actions)
@@ -1610,6 +1600,14 @@ class BBSTerminalApp:
 
         self.partial_line = lines[-1]
 
+    def request_actions_after_banner(self):
+        """Request actions list after banner is processed with delay."""
+        current_time = time.time()
+        if current_time - self.last_banner_time > 5:
+            self.master.after(1000, self.send_actions_request)
+            self.last_banner_time = current_time
+            self.actions_requested_this_session = True
+
     def detect_logon_prompt(self, line):
         """Simple triggers to automate login if toggles are on."""
         lower_line = line.lower()
@@ -1620,46 +1618,48 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, clean_line, original_line):
-        """Parse and save chat messages with enhanced support for multiple formats."""
-        # Skip system messages, banner info, and login prompts
+        """Parse chat messages with enhanced support for multiple message formats."""
+        # Skip system messages and banner info
         skip_patterns = [
             r"You are in",
             r"Topic:",
             r"Just press",
+            r"Just type",
+            r"assistance",
             r"are here with you",
             r"is here with you",
             r"^\s*$",  # Empty lines
-            r"^\s*:.*$",  # Lines starting with colon (commands)
-            r"^\s*\(.*\)\s*$",  # Lines containing only parenthetical content
+            r"^\s*:.*$",  # Commands
+            r"^\s*\(.*\)\s*$",  # Parenthetical content
             r"\[Type your (?:User-ID|Password)[^]]*:]",  # Login prompts
-            r"Type your (?:User-ID|Password)[^]]*:",  # Login prompts without brackets
-            r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:]\s*$",  # Password prompts
-            r"^\[?(?:Enter|Type)(?: your)? username[^]]*:]\s*$",  # Username prompts
+            r"Type your (?:User-ID|Password)[^]]*:",
+            r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:]\s*$",
+            r"^\[?(?:Enter|Type)(?: your)? username[^]]*:]\s*$",
         ]
         
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
             return
 
-        # Check if message already has a timestamp
+        # Add timestamp if not present
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ") if not has_timestamp else ""
         
-        # Enhanced message type patterns for both formats
+        # Enhanced message patterns for multiple formats
         patterns = {
-            # Classic square bracket format
+            # Classic/PBX format with square brackets
             'classic_whisper': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(whispered(?:\s+to\s+you)?\):\]\s*(.+)$',
             'classic_direct_to_you': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+you\):\]\s*(.+)$',
             'classic_public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
             'classic_regular': r'^\[([^@\]]+(?:@[^\]]+)?):\]\s*(.+)$',
             
-            # Alternative "From" format
+            # MajorLink/Alternative "From" format
             'alt_whisper': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(whispered\):\s*(.+)$',
             'alt_direct_to_you': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+you\):\s*(.+)$',
             'alt_public_direct': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+([^@\)]+(?:@[^\)]+)?)\):\s*(.+)$',
             'alt_regular': r'^From\s+([^@:]+(?:@[^:]+)?):(?:\s*)(.+)$'
         }
 
-        # Try to match each pattern type
+        # Try to match each pattern
         for msg_type, pattern in patterns.items():
             match = re.match(pattern, clean_line)
             if not match:
@@ -1667,61 +1667,52 @@ class BBSTerminalApp:
 
             sender = match.group(1).strip()
             
-            # Handle whispered messages or direct messages to you
+            # Handle whispered or direct messages to you
             if 'whisper' in msg_type or 'direct_to_you' in msg_type:
                 message = match.group(2)
                 msg_category = "whisper" if "whisper" in msg_type else "direct"
                 formatted_message = f"{timestamp}From {sender} ({msg_category}): {message}"
                 self.append_directed_message(formatted_message)
-                
-                # Play directed sound effect regardless of Bannerless Mode
                 self.play_directed_sound()
-                print(f"[DEBUG] Playing directed sound for {msg_type} message from {sender}")
                 
             elif 'public_direct' in msg_type:
-                # Process public direct messages between users
                 recipient = match.group(2).strip()
                 message = match.group(3)
                 formatted_message = f"{timestamp}From {sender} (to {recipient}): {message}"
                 
-                # Check if recipient is you (your username)
+                # Check if recipient is you
                 your_username = self.username.get()
                 is_to_you = False
                 
-                # Match username with or without domain
                 if your_username:
                     recipient_base = recipient.split('@')[0].strip()
                     your_username_base = your_username.split('@')[0].strip()
                     is_to_you = (recipient_base.lower() == your_username_base.lower())
                 
                 if is_to_you:
-                    # Direct message to you - add to Messages to You
                     self.append_directed_message(formatted_message)
                     self.play_directed_sound()
-                    print(f"[DEBUG] Playing directed sound for public direct message to you from {sender}")
                 else:
-                    # Public direct between others - add to chatlog
                     self.save_chatlog_message(sender, formatted_message)
                     self.play_chat_sound()
-                    print(f"[DEBUG] Playing chat sound for public direct message between others: {sender} to {recipient}")
                 
             else:  # regular message
-                # Process regular public messages
                 message = match.group(2)
                 formatted_message = f"{timestamp}From {sender}: {message}"
                 self.save_chatlog_message(sender, formatted_message)
-                
-                # Play chat sound for regular messages regardless of Bannerless Mode
                 self.play_chat_sound()
-                print(f"[DEBUG] Playing chat sound for regular message from {sender}")
 
-            # Extract URLs from the actual message content
+            # Extract URLs from the message
             message_content = match.group(2) if 'whisper' in msg_type or 'direct_to_you' in msg_type or 'regular' in msg_type else match.group(3)
             self.parse_and_store_hyperlinks(message_content, sender)
-            break
+            return  # Exit after matching a pattern
 
-        # Save the ANSI-colored version
-        self.last_message_ansi = original_line
+        # If no match was found but line seems relevant, save it as raw content
+        if len(clean_line) > 10 and not any(pattern in clean_line.lower() for pattern in [
+            "you are in", "topic:", "just press", "just type", "are here with you"
+        ]):
+            print(f"[DEBUG] Unmatched message format: {clean_line}")
+            self.save_chatlog_message("System", f"{timestamp}{clean_line}")
 
     def send_message(self, event=None):
         """Send the user's typed message and manage command history."""
@@ -2827,100 +2818,107 @@ class BBSTerminalApp:
         self.members_frame.update_idletasks()
 
     def update_chat_members(self, lines_with_users):
-        """Update the chat members based on the provided lines with enhanced domain support."""
+        """Update chat members list with enhanced support for multiple banner formats."""
         # Combine lines and clean ANSI codes
         combined = " ".join(lines_with_users)
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
         
-        # Extract users from a variety of banner formats
+        # Extract users from multiple banner formats
         final_usernames = set()
         
-        # Extract channel topic if present
-        topic_match = re.search(r'Topic:\s*\((.*?)\)', combined_clean)
-        if topic_match:
-            self.current_topic = topic_match.group(1)
-            print(f"[DEBUG] Topic found: {self.current_topic}")
+        # Better topic extraction that doesn't grab user data
+        topic_patterns = [
+            r'Topic:\s*\((.*?)\)',  # MajorLink format with parentheses: Topic: (General Chat)
+            r'Topic:\s*(.*?)(?=\s*\w+\@|\s*\w+,|\s*\w+\s+and|\s+\w+\s+are|\s+\w+\s+is)',  # Enhanced pattern
+        ]
         
-        # Check for users section using multiple possible patterns
+        for pattern in topic_patterns:
+            topic_match = re.search(pattern, combined_clean)
+            if topic_match:
+                self.current_topic = topic_match.group(1).strip()
+                print(f"[DEBUG] Topic found: {self.current_topic}")
+                break
+        
+        # Extract the user list more accurately
         user_section = ""
         
-        # Pattern 1: Classic format
-        if "General Chat" in combined_clean:
-            parts = combined_clean.split("General Chat", 1)
-            if len(parts) > 1:
-                # Remove the period that appears after "General Chat)."
-                user_section = parts[1].replace(").", ")").strip()
-        # Pattern 2: MajorLink format
-        elif "channel" in combined_clean and "Topic:" in combined_clean:
-            # Split at "Topic:" and extract everything after it
-            parts = combined_clean.split("Topic:", 1)
-            if len(parts) > 1:
-                # Remove the period after the topic parentheses
-                topic_part = parts[1].replace(").", ")")
-                # Get the part after the topic definition
-                topic_end_idx = topic_part.find(")")
-                if topic_end_idx > -1:
-                    user_section = topic_part[topic_end_idx+1:].strip()
-                else:
-                    user_section = topic_part
-        # Fallback: Scan for user listing patterns
-        else:
-            # Check for sections that contain "are here with you"
-            user_matches = re.search(r'(.+?)(?:are here with you|is here with you)', combined_clean)
-            if user_matches:
-                user_section = user_matches.group(1)
+        # Try different methods to identify the user section
+        user_list_patterns = [
+            # Look after "General Chat" until end marker
+            r'Chat(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
+            # Look after topic until end marker
+            r'Topic:.*?(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
+            # Generic pattern
+            r'(.+?)(?:are here with you|is here with you|with you\.|with\s*you)'
+        ]
+        
+        for pattern in user_list_patterns:
+            user_match = re.search(pattern, combined_clean, re.DOTALL)
+            if user_match:
+                user_section = user_match.group(1).strip()
+                if user_section:  # Only break if we found something
+                    print(f"[DEBUG] Found user section: {user_section}")
+                    break
         
         # Process user section if found
         if user_section:
-            # Clean up user strings
-            user_section = re.sub(r'are here with you\.?$', '', user_section)
-            user_section = re.sub(r'is here with you\.?$', '', user_section)
-            user_section = re.sub(r'with you\.?$', '', user_section)
+            # Clean up the section
+            user_section = user_section.strip('.,)(')
             
-            # Replace "and" with commas for consistent splitting
-            user_section = user_section.replace(' and ', ', ')
+            # Special handling for the "and" pattern at the end
+            users = []
             
-            # Split into individual users and clean them
-            users = [u.strip() for u in user_section.split(',') if u.strip()]
+            # Split by "and" first to handle the last user properly
+            and_parts = re.split(r'\s+and\s+', user_section)
+            
+            if len(and_parts) > 1:
+                # Process the last part separately (after "and")
+                last_user = and_parts[-1].strip()
+                if last_user:
+                    users.append(last_user)
+                
+                # Process all parts before "and" by splitting on commas
+                comma_parts = and_parts[0].split(',')
+                for part in comma_parts:
+                    if part.strip():
+                        users.append(part.strip())
+            else:
+                # No "and" found, just split by commas
+                users = [u.strip() for u in user_section.split(',') if u.strip()]
+            
+            print(f"[DEBUG] Parsed users: {users}")
             
             for user in users:
-                # Handle multiple formats
                 username = user.strip()
                 
-                # Skip empty or invalid usernames
-                if not username or username.lower() in ["topic:", "just press"]:
+                # Skip empty or special strings
+                if (not username or 
+                    username.lower() in ["topic:", "just press", "just type"] or
+                    "assistance" in username.lower() or
+                    len(username) < 2):
                     continue
                 
-                # Fix: Remove any leading dot, period or special characters that might have been accidentally captured
-                if username.startswith('.') or username.startswith(')'):
-                    username = username[1:].strip()
-                    
-                # Extract domain if present
-                domain = ""
+                # Preserve domain information
                 if "@" in username:
-                    username_parts = username.split("@", 1)
-                    username = username_parts[0].strip()
-                    domain = "@" + username_parts[1].strip()
-                
-                # Clean username but preserve dots and other valid characters
-                username = re.sub(r'[^A-Za-z0-9._-]', '', username)
-                
-                # Add domain back for displaying in the UI and for proper functionality
-                display_name = username + domain
-                
-                # Skip bad usernames
-                if any(bad_word in username.lower() for bad_word in ["herewithyou", "assistance", "press", "just"]):
-                    continue
+                    name_parts = username.split('@', 1)
+                    base_name = name_parts[0].strip()
+                    domain = "@" + name_parts[1].strip()
+                    
+                    # Clean base name but preserve dots
+                    clean_base = re.sub(r'[^A-Za-z0-9._-]', '', base_name)
+                    display_name = clean_base + domain
+                else:
+                    # Clean username but preserve dots
+                    clean_name = re.sub(r'[^A-Za-z0-9._-]', '', username)
+                    display_name = clean_name
                 
                 # Validate username
-                if len(username) >= 2 and not re.search(r'^\.(net|com|org|bbs)$', username.lower()):
-                    print(f"[DEBUG] Adding valid username: {display_name}")
+                if len(display_name) >= 2:
+                    print(f"[DEBUG] Adding user: {display_name}")
                     final_usernames.add(display_name)
-                else:
-                    print(f"[DEBUG] Skipping invalid username: {display_name}")
         
-        # Ensure 'Chatbot' is always included
+        # Always include Chatbot
         final_usernames.add('Chatbot')
         
         if final_usernames:
@@ -2929,11 +2927,9 @@ class BBSTerminalApp:
             self.save_chat_members_file()
             self.update_members_display()
             
-            # Only request actions if not already requested this session
-            if not getattr(self, 'actions_requested_this_session', False):
-                print("[DEBUG] First banner this session, requesting actions")
-                self.actions_requested_this_session = True
-                self.master.after(1000, self.send_actions_request)
+            # Request actions if not already done
+            if not self.actions_requested_this_session:
+                self.request_actions_after_banner()
 
     def load_chat_members_file(self):
         """Load chat members from chat_members.json, or return an empty set if not found."""
