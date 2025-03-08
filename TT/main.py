@@ -1069,96 +1069,75 @@ class BBSTerminalApp:
             self.terminal_display.tag_raise(tag)
 
     def parse_ansi_and_insert(self, text_data):
-        """Parse ANSI escape sequences and apply appropriate colors."""
+        """Parse ANSI escape sequences with improved error handling."""
         if not text_data:
             return
-            
-        # Enable terminal for editing
-        self.terminal_display.configure(state=tk.NORMAL)
-
-        # URL pattern for hyperlink detection - improved to catch more valid URLs
-        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
-        
-        # Process character by character for maximum control
-        i = 0
-        current_tags = ["normal"]
-        buffer = ""
-        
-        while i < len(text_data):
-            char = text_data[i]
-            
-            # Handle ANSI escape sequence
-            if char == '\x1b' and i + 1 < len(text_data) and text_data[i+1] == '[':
-                # First, insert any pending text with current tags, checking for hyperlinks
-                if buffer:
-                    self.insert_buffer_with_hyperlinks(buffer, tuple(current_tags))
-                    buffer = ""
-                
-                # Find the end of the escape sequence (a letter)
-                seq_start = i
-                i += 2  # Skip past '\x1b['
-                
-                # Collect all parameters until we find a letter
-                params = ""
-                while i < len(text_data) and not text_data[i].isalpha():
-                    params += text_data[i]
+        try:
+            self.terminal_display.configure(state=tk.NORMAL)
+            i = 0
+            current_tags = ["normal"]
+            buffer = ""
+            while i < len(text_data):
+                try:
+                    char = text_data[i]
+                    if char == '\x1b' and i+1 < len(text_data) and text_data[i+1] == '[':
+                        if buffer:
+                            self.insert_with_hyperlinks(buffer, tuple(current_tags))
+                            buffer = ""
+                        seq_start = i
+                        i += 2
+                        params = ""
+                        while i < len(text_data) and not text_data[i].isalpha():
+                            params += text_data[i]
+                            i += 1
+                        if i < len(text_data):
+                            command = text_data[i]
+                            i += 1
+                            if command == 'm':
+                                codes = params.split(';')
+                                if not params or '0' in codes:
+                                    current_tags = ["normal"]
+                                for code in codes:
+                                    if not code:
+                                        continue
+                                    if code == '1':
+                                        current_tags = ["bright_" + tag if tag in self.color_map.values() else tag
+                                                        for tag in current_tags]
+                                    elif code == '5':
+                                        blink_tag = f"blink_{len(self.blink_tags)}"
+                                        self.terminal_display.tag_configure(blink_tag, background="")
+                                        self.blink_tags.add(blink_tag)
+                                        current_tags.append(blink_tag)
+                                    elif code in self.color_map:
+                                        current_tags = [t for t in current_tags if t not in self.color_map.values()]
+                                        current_tags.append(self.color_map[code])
+                    else:
+                        buffer += char
+                        i += 1
+                except Exception as inner_e:
+                    print(f"[ERROR] Error processing char at {i}: {inner_e}")
                     i += 1
-                    
-                # Now we should be at the command letter
-                if i < len(text_data):
-                    command = text_data[i]
-                    i += 1  # Move past the command letter
-                    
-                    # Handle SGR (Select Graphic Rendition) commands - colors and formatting
-                    if command == 'm':
-                        # Split parameters by semicolons
-                        codes = params.split(';')
-                        
-                        # Handle empty or '0' param as reset
-                        if not params or '0' in codes:
-                            current_tags = ["normal"]
-                        
-                        # Process each code
-                        for code in codes:
-                            if not code:
-                                continue
-                                
-                            if code == '1':  # Bold/Bright
-                                current_tags = ["bright_" + tag if tag in self.color_map.values() else tag 
-                                            for tag in current_tags]
-                            elif code == '5':  # Blink
-                                blink_tag = f"blink_{len(self.blink_tags)}"
-                                self.terminal_display.tag_configure(blink_tag, background="")
-                                self.blink_tags.add(blink_tag)
-                                current_tags.append(blink_tag)
-                            # Handle color codes
-                            elif code in self.color_map:
-                                # Remove existing color tags
-                                current_tags = [tag for tag in current_tags if tag not in self.color_map.values()]
-                                # Add the new color
-                                current_tags.append(self.color_map[code])
-                else:
-                    # We reached the end without finding a command letter
-                    # This is an incomplete sequence - ignore it
-                    pass
-            else:
-                # Regular character, add to buffer
-                buffer += char
-                i += 1
-        
-        # Insert any remaining buffered text with hyperlink support
-        if buffer:
-            self.insert_buffer_with_hyperlinks(buffer, tuple(current_tags))
-        
-        # Restore terminal state
-        self.terminal_display.configure(state=tk.DISABLED)
-        
-        # Ensure hyperlink tag is always on top of other tags so it remains clickable
-        self.terminal_display.tag_raise("hyperlink")
+            if buffer:
+                self.insert_with_hyperlinks(buffer, tuple(current_tags))
+        except Exception as e:
+            print(f"[ERROR] Error in ANSI parsing: {e}")
+            traceback.print_exc()
+            try:
+                self.terminal_display.insert(tk.END, text_data)
+            except:
+                pass
+        finally:
+            try:
+                self.terminal_display.configure(state=tk.DISABLED)
+            except:
+                pass
+            try:
+                self.terminal_display.tag_raise("hyperlink")
+            except:
+                pass
 
     def insert_buffer_with_hyperlinks(self, buffer, tags):
         """Insert a text buffer with hyperlink detection."""
-        # Improved URL pattern to catch more valid URLs
         url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
         last_end = 0
         
@@ -1618,8 +1597,7 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, clean_line, original_line):
-        """Parse chat messages with enhanced support for multiple message formats."""
-        # Skip system messages and banner info
+        """Parse chat messages with improved filtering to prevent system messages in chatlog."""
         skip_patterns = [
             r"You are in",
             r"Topic:",
@@ -1628,91 +1606,75 @@ class BBSTerminalApp:
             r"assistance",
             r"are here with you",
             r"is here with you",
-            r"^\s*$",  # Empty lines
-            r"^\s*:.*$",  # Commands
-            r"^\s*\(.*\)\s*$",  # Parenthetical content
-            r"\[Type your (?:User-ID|Password)[^]]*:]",  # Login prompts
+            r"^\s*$",
+            r"^\s*:.*$",
+            r"^\s*\(.*\)\s*$",
+            r"\[Type your (?:User-ID|Password)[^]]*:\]",
             r"Type your (?:User-ID|Password)[^]]*:",
-            r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:]\s*$",
-            r"^\[?(?:Enter|Type)(?: your)? username[^]]*:]\s*$",
+            r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:\]\s*$",
+            r"^\[?(?:Enter|Type)(?: your)? username[^]]*:\]\s*$",
+            r"Action listing for:",
+            r"^>",
+            r"^\*",
+            r"Welcome to",
+            r"Connected to",
+            r"^The "
         ]
-        
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
             return
 
-        # Add timestamp if not present
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ") if not has_timestamp else ""
-        
-        # Enhanced message patterns for multiple formats
+
         patterns = {
-            # Classic/PBX format with square brackets
             'classic_whisper': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(whispered(?:\s+to\s+you)?\):\]\s*(.+)$',
             'classic_direct_to_you': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+you\):\]\s*(.+)$',
             'classic_public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
             'classic_regular': r'^\[([^@\]]+(?:@[^\]]+)?):\]\s*(.+)$',
-            
-            # MajorLink/Alternative "From" format
             'alt_whisper': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(whispered\):\s*(.+)$',
             'alt_direct_to_you': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+you\):\s*(.+)$',
             'alt_public_direct': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+([^@\)]+(?:@[^\)]+)?)\):\s*(.+)$',
             'alt_regular': r'^From\s+([^@:]+(?:@[^:]+)?):(?:\s*)(.+)$'
         }
 
-        # Try to match each pattern
         for msg_type, pattern in patterns.items():
             match = re.match(pattern, clean_line)
             if not match:
                 continue
-
             sender = match.group(1).strip()
-            
-            # Handle whispered or direct messages to you
             if 'whisper' in msg_type or 'direct_to_you' in msg_type:
                 message = match.group(2)
                 msg_category = "whisper" if "whisper" in msg_type else "direct"
-                formatted_message = f"{timestamp}From {sender} ({msg_category}): {message}"
-                self.append_directed_message(formatted_message)
+                formatted = f"{timestamp}From {sender} ({msg_category}): {message}"
+                self.append_directed_message(formatted)
                 self.play_directed_sound()
-                
             elif 'public_direct' in msg_type:
                 recipient = match.group(2).strip()
                 message = match.group(3)
-                formatted_message = f"{timestamp}From {sender} (to {recipient}): {message}"
-                
-                # Check if recipient is you
+                formatted = f"{timestamp}From {sender} (to {recipient}): {message}"
                 your_username = self.username.get()
                 is_to_you = False
-                
                 if your_username:
-                    recipient_base = recipient.split('@')[0].strip()
-                    your_username_base = your_username.split('@')[0].strip()
-                    is_to_you = (recipient_base.lower() == your_username_base.lower())
-                
+                    r_base = recipient.split('@')[0].strip()
+                    y_base = your_username.split('@')[0].strip()
+                    is_to_you = (r_base.lower() == y_base.lower())
                 if is_to_you:
-                    self.append_directed_message(formatted_message)
+                    self.append_directed_message(formatted)
                     self.play_directed_sound()
                 else:
-                    self.save_chatlog_message(sender, formatted_message)
+                    self.save_chatlog_message(sender, formatted)
                     self.play_chat_sound()
-                
-            else:  # regular message
+                message_content = match.group(3)
+            else:
                 message = match.group(2)
-                formatted_message = f"{timestamp}From {sender}: {message}"
-                self.save_chatlog_message(sender, formatted_message)
+                formatted = f"{timestamp}From {sender}: {message}"
+                self.save_chatlog_message(sender, formatted)
                 self.play_chat_sound()
+                message_content = match.group(2)
 
-            # Extract URLs from the message
-            message_content = match.group(2) if 'whisper' in msg_type or 'direct_to_you' in msg_type or 'regular' in msg_type else match.group(3)
             self.parse_and_store_hyperlinks(message_content, sender)
-            return  # Exit after matching a pattern
-
-        # If no match was found but line seems relevant, save it as raw content
-        if len(clean_line) > 10 and not any(pattern in clean_line.lower() for pattern in [
-            "you are in", "topic:", "just press", "just type", "are here with you"
-        ]):
-            print(f"[DEBUG] Unmatched message format: {clean_line}")
-            self.save_chatlog_message("System", f"{timestamp}{clean_line}")
+            return
+        # No fallback here to avoid logging system lines
 
     def send_message(self, event=None):
         """Send the user's typed message and manage command history."""
@@ -2024,10 +1986,23 @@ class BBSTerminalApp:
         self.triggers_window.destroy()
 
     def append_terminal_text(self, text, default_tag="normal"):
-        """Append text to the terminal display with improved ANSI parsing."""
-        # Simply pass the text to our new robust ANSI parser
-        self.parse_ansi_and_insert(text)
-        self.terminal_display.see(tk.END)
+        """Append text to the terminal display with improved error handling."""
+        try:
+            print(f"[DEBUG] Appending to terminal: {repr(text[:20])}...")
+            self.terminal_display.configure(state=tk.NORMAL)
+            self.parse_ansi_and_insert(text)
+            self.terminal_display.see(tk.END)
+            self.terminal_display.configure(state=tk.DISABLED)
+        except Exception as e:
+            print(f"[ERROR] Failed to update terminal display: {e}")
+            traceback.print_exc()
+            try:
+                self.terminal_display.configure(state=tk.NORMAL)
+                self.terminal_display.insert(tk.END, text)
+                self.terminal_display.see(tk.END)
+                self.terminal_display.configure(state=tk.DISABLED)
+            except Exception as e2:
+                print(f"[ERROR] Even simple terminal update failed: {e2}")
 
     def insert_with_hyperlinks(self, text, tags):
         """Enhanced hyperlink detection and insertion."""
