@@ -21,6 +21,8 @@ import random
 from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
 from init_config import init_config_files, verify_sound_files  # Add this line
 import traceback
+import vlc  # Add VLC for audio stream playback
+
 # Apply patches for PyInstaller compatibility
 try:
     from image_patch import apply_patches, Image, ImageTk
@@ -74,6 +76,13 @@ class BBSTerminalApp:
         self.bannerless_mode = tk.BooleanVar(value=False)
         self.show_messages_to_you = tk.BooleanVar(value=True)
         self.actions_request_lock = asyncio.Lock()
+        
+        # Initialize audio player
+        self.vlc_instance = None
+        self.player = None
+        self.current_stream = None
+        self.is_playing = False
+        
         # 1.0️⃣ 🎉 SETUP
         self.master = master
         self.master.title("Retro BBS Terminal")
@@ -536,6 +545,42 @@ class BBSTerminalApp:
             variable=self.autocorrect_enabled
         ).pack(side=tk.LEFT, padx=5)
 
+        # Add audio player frame below the input frame
+        self.player_frame = ttk.LabelFrame(main_frame, text="Audio Player")
+        self.player_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        self.player_frame.grid_remove()  # Initially hidden
+        
+        # Create audio player controls
+        audio_controls = ttk.Frame(self.player_frame)
+        audio_controls.pack(fill=tk.X, expand=True)
+        
+        self.play_button = ttk.Button(audio_controls, text="▶️", width=3, 
+                                     command=self.toggle_playback, style="Audio.TButton")
+        self.play_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        self.volume_var = tk.IntVar(value=70)
+        self.volume_scale = ttk.Scale(audio_controls, from_=0, to=100, orient=tk.HORIZONTAL, 
+                                    variable=self.volume_var, command=self.set_volume,
+                                    style="Volume.Horizontal.TScale")
+        self.volume_scale.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
+        
+        self.volume_label = ttk.Label(audio_controls, text="70%")
+        self.volume_label.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_button = ttk.Button(audio_controls, text="⏹️", width=3, 
+                                     command=self.stop_playback, style="Audio.TButton")
+        self.stop_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Current stream info
+        info_frame = ttk.Frame(self.player_frame)
+        info_frame.pack(fill=tk.X, expand=True)
+        
+        self.track_info = ttk.Label(info_frame, text="No stream playing")
+        self.track_info.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Initialize VLC instance
+        self.init_audio_player()
+        
         # Add escape key binding to input box
         self.input_box.bind("<Escape>", self.handle_escape)
 
@@ -681,6 +726,16 @@ class BBSTerminalApp:
             background="#d0d0d0",
             borderwidth=2,
             font=("Arial VGA 437", 9))
+
+        # Add audio player styles
+        style.configure("Audio.TButton",
+            font=("Arial", 14),
+            padding=2)
+        
+        style.configure("Volume.Horizontal.TScale",
+            sliderlength=20,
+            troughcolor="#c0c0c0",
+            background="#f0f0f0")
 
     def toggle_all_sections(self):
         """Toggle visibility of all sections based on the master checkbox."""
@@ -1597,84 +1652,141 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, clean_line, original_line):
-        message_content = ""  # Ensure it's always defined
-        """Parse chat messages with improved filtering to prevent system messages in chatlog."""
+        """Parse chat messages with robust format detection and proper routing."""
+        # Skip system messages and noise
         skip_patterns = [
-            r"You are in",
-            r"Topic:",
-            r"Just press",
-            r"Just type",
-            r"assistance",
-            r"are here with you",
-            r"is here with you",
-            r"^\s*$",
-            r"^\s*:.*$",
-            r"^\s*\(.*\)\s*$",
-            r"\[Type your (?:User-ID|Password)[^]]*:\]",
-            r"Type your (?:User-ID|Password)[^]]*:",
+            r"You are in", r"Topic:", r"Just press", r"Just type", r"assistance",
+            r"are here with you", r"is here with you", r"^\s*$", r"^\s*:.*$",
+            r"^\s*\(.*\)\s*$", r"\[Type your (?:User-ID|Password)[^]]*:\]",
+            r"Type your (?:User-ID|Password)[^]]*:", 
             r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:\]\s*$",
             r"^\[?(?:Enter|Type)(?: your)? username[^]]*:\]\s*$",
-            r"Action listing for:",
-            r"^>",
-            r"^\*",
-            r"Welcome to",
-            r"Connected to",
-            r"^The "
+            r"Action listing for:", r"^>", r"^\*", r"Welcome to", r"Connected to", r"^The "
         ]
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
             return
 
+        # Add timestamp if not present
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ") if not has_timestamp else ""
-
+        
+        # Enhanced message patterns for more robust detection
         patterns = {
+            # Classic format patterns
             'classic_whisper': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(whispered(?:\s+to\s+you)?\):\]\s*(.+)$',
             'classic_direct_to_you': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+you\):\]\s*(.+)$',
             'classic_public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
             'classic_regular': r'^\[([^@\]]+(?:@[^\]]+)?):\]\s*(.+)$',
+            
+            # Alternative format patterns
             'alt_whisper': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(whispered\):\s*(.+)$',
             'alt_direct_to_you': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+you\):\s*(.+)$',
-            'alt_public_direct': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+([^@\)]+(?:@[^\)]+)?)\):\s*(.+)$',
-            'alt_regular': r'^From\s+([^@:]+(?:@[^:]+)?):(?:\s*)(.+)$'
+            'alt_public_direct': r'^From\s+([^@\(]+(?:@[^\\(]+)?)\s*\(to\s+([^@\)]+(?:@[^\)]+)?)\):\s*(.+)$',
+            'alt_regular': r'^From\s+([^@:]+(?:@[^:]+)?):(?:\s*)(.+)$',
+            
+            # PBX-style formats
+            'pbx_whisper': r'^([^@\s]+(?:@[^\s]+)?)\s+whispers:(?:\s*)(.+)$',
+            'pbx_direct': r'^([^@\s]+(?:@[^\s]+)?)\s+says(?:\s+to\s+([^@\s:]+(?:@[^\s:]+)?)):(?:\s*)(.+)$',
+            'pbx_regular': r'^([^@\s]+(?:@[^\s]+)?)\s+says:(?:\s*)(.+)$',
+            
+            # Handle page notifications
+            'page_notification': r'([^@\s]+(?:@[^\s]+)?)\s+is\s+paging\s+you\s+from\s+([^:]+):(?:\s*)(.+)$'
         }
 
+        # Try each pattern
         for msg_type, pattern in patterns.items():
             match = re.match(pattern, clean_line)
             if not match:
                 continue
+                
+            # Message successfully matched, extract parts
             sender = match.group(1).strip()
+            
+            # Handle different message formats
             if 'whisper' in msg_type or 'direct_to_you' in msg_type:
+                # Direct message to the user
                 message = match.group(2)
                 msg_category = "whisper" if "whisper" in msg_type else "direct"
                 formatted = f"{timestamp}From {sender} ({msg_category}): {message}"
+                
+                # Add to directed messages and play sound
                 self.append_directed_message(formatted)
                 self.play_directed_sound()
-            elif 'public_direct' in msg_type:
-                recipient = match.group(2).strip()
+                
+                # Always log whispers/directs in chatlog
+                self.save_chatlog_message(sender, formatted)
+                
+                # Store any hyperlinks in the message
+                self.parse_and_store_hyperlinks(message, sender)
+                
+            elif 'page_notification' in msg_type:
+                # Handle page notifications specially
+                location = match.group(2).strip()
                 message = match.group(3)
+                formatted = f"{timestamp}Page from {sender} ({location}): {message}"
+                
+                # Show in directed messages and play sound
+                self.append_directed_message(formatted)
+                self.play_directed_sound()
+                
+                # Also log in chatlog
+                self.save_chatlog_message(sender, formatted)
+                
+                # Store any hyperlinks
+                self.parse_and_store_hyperlinks(message, sender)
+                
+            elif 'public_direct' in msg_type or ('pbx_direct' in msg_type and len(match.groups()) >= 3):
+                # Message between others or to you
+                recipient_index = 2 if 'public_direct' in msg_type else 1
+                message_index = 3 if 'public_direct' in msg_type else 2
+                
+                recipient = match.group(recipient_index).strip()
+                message = match.group(message_index)
+                
                 formatted = f"{timestamp}From {sender} (to {recipient}): {message}"
+                
+                # Check if the message is to the current user
                 your_username = self.username.get()
                 is_to_you = False
+                
                 if your_username:
-                    r_base = recipient.split('@')[0].strip()
-                    y_base = your_username.split('@')[0].strip()
-                    is_to_you = (r_base.lower() == y_base.lower())
+                    # Compare base usernames (without domain)
+                    r_base = recipient.split('@')[0].strip().lower()
+                    y_base = your_username.split('@')[0].strip().lower()
+                    is_to_you = (r_base == y_base)
+                    
                 if is_to_you:
+                    # Message is to you - show in directed messages
                     self.append_directed_message(formatted)
                     self.play_directed_sound()
                 else:
-                    self.save_chatlog_message(sender, formatted)
+                    # Regular message between others - only play chat sound
                     self.play_chat_sound()
-                message_content = match.group(3)
+                    
+                # Always save to chatlog
+                self.save_chatlog_message(sender, formatted)
+                
+                # Store any hyperlinks
+                self.parse_and_store_hyperlinks(message, sender)
+                
             else:
+                # Regular public message
                 message = match.group(2)
                 formatted = f"{timestamp}From {sender}: {message}"
+                
+                # Regular messages go to chatlog and play chat sound
                 self.save_chatlog_message(sender, formatted)
                 self.play_chat_sound()
-                message_content = match.group(2)
-
-            self.parse_and_store_hyperlinks(message_content, sender)
+                
+                # Store any hyperlinks
+                self.parse_and_store_hyperlinks(message, sender)
+            
+            # We've matched and processed a message, so return
             return
+
+        # If we get here, we didn't match any known pattern
+        # Consider logging unmatched messages for debugging
+        print(f"[DEBUG] Unmatched message format: {clean_line}")
         # No fallback here to avoid logging system lines
 
     def send_message(self, event=None):
@@ -2035,24 +2147,31 @@ class BBSTerminalApp:
         
         for match in url_pattern.finditer(text):
             start, end = match.span()
-            # Insert non-URL text
+            
+            # Insert non-URL text before the hyperlink
             if start > last_end:
                 self.directed_msg_display.insert(tk.END, text[last_end:start], tag)
             
-            # Clean and insert URL
+            # Clean the URL to remove trailing punctuation
             url = text[start:end].rstrip('.,;:)]}\'"')
             if url.startswith('www.'):
                 url = 'http://' + url
-            self.directed_msg_display.insert(tk.END, url, ("hyperlink", tag))
+            
+            # Insert URL with hyperlink tag
+            self.directed_msg_display.insert(tk.END, url, ("hyperlink",))
+            
+            # Store URL for history/debugging
+            print(f"[DEBUG] Directed message hyperlink found: {url}")
+            self.store_hyperlink(url, "directed_message")
             
             last_end = end
         
-        # Insert remaining text
+        # Insert any remaining text after the last URL
         if last_end < len(text):
             self.directed_msg_display.insert(tk.END, text[last_end:], tag)
 
     def open_hyperlink(self, event):
-        """Open the hyperlink in a web browser."""
+        """Open the hyperlink in a web browser or audio player if it's an audio stream."""
         index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
         start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
         if not start_index:
@@ -2061,10 +2180,19 @@ class BBSTerminalApp:
         if not end_index:
             end_index = self.terminal_display.index("end")
         url = self.terminal_display.get(start_index, end_index).strip()
-        webbrowser.open(url)
+        
+        # Check if this is an audio stream - enhanced detection
+        if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
+            'redirect.mp3' in url.lower() or
+            'podcast' in url.lower() or
+            'pod' in url.lower() and '.mp3' in url.lower() or
+            any(x in url.lower() for x in ['podtrac.com', 'podderapp.com', 'audioboom.com'])):
+            self.play_audio_stream(url)
+        else:
+            webbrowser.open(url)
 
     def open_directed_message_hyperlink(self, event):
-        """Open the hyperlink in a web browser from directed messages."""
+        """Open the hyperlink from directed messages in browser or audio player if it's an audio stream."""
         index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
         start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
         if not start_index:
@@ -2073,27 +2201,74 @@ class BBSTerminalApp:
         if not end_index:
             end_index = self.directed_msg_display.index("end")
         url = self.directed_msg_display.get(start_index, end_index).strip()
-        webbrowser.open(url)
+        
+        # Check if this is an audio stream
+        if url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')):
+            self.play_audio_stream(url)
+        else:
+            webbrowser.open(url)
 
     def show_thumbnail_preview(self, event):
-        """Show a thumbnail preview of the hyperlink."""
-        index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
-        start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-        end_index = self.terminal_display.search(r"\s", index, stopindex="end", regexp=True)
-        if not end_index:
-            end_index = self.terminal_display.index("end")
-        url = self.terminal_display.get(start_index, end_index).strip()
-        self.show_thumbnail(url, event)
+        """Show a thumbnail preview of the hyperlink with improved error handling."""
+        try:
+            index = self.terminal_display.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
+            start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.terminal_display.index("end")
+                
+            # Now safely get the URL
+            url = self.terminal_display.get(start_index, end_index).strip()
+            if url:
+                self.show_thumbnail(url, event)
+        except Exception as e:
+            print(f"Error in thumbnail preview: {e}")
 
     def show_directed_message_thumbnail_preview(self, event):
-        """Show a thumbnail preview of the hyperlink from directed messages."""
-        index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
-        start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
-        end_index = self.directed_msg_display.search(r"\s", index, stopindex="end", regexp=True)
-        if not end_index:
-            end_index = self.directed_msg_display.index("end")
-        url = self.directed_msg_display.get(start_index, end_index).strip()
-        self.show_thumbnail(url, event)
+        """Show a thumbnail preview of the hyperlink from directed messages with improved error handling."""
+        try:
+            index = self.directed_msg_display.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
+            start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.directed_msg_display.index("end")
+                
+            # Now safely get the URL
+            url = self.directed_msg_display.get(start_index, end_index).strip()
+            if url:
+                self.show_thumbnail(url, event)
+        except Exception as e:
+            print(f"Error in directed message thumbnail preview: {e}")
 
     def show_thumbnail(self, url, event):
         """Display a thumbnail preview near the mouse pointer."""
@@ -2377,26 +2552,40 @@ class BBSTerminalApp:
     def trim_chatlog(self, chatlog):
         """Trim the chatlog to fit within the size limit."""
         usernames = list(chatlog.keys())
+
+
+
     def save_panel_sizes(self):
-        """Save current panel sizes to file."""
-        if not hasattr(self, 'chatlog_window') or not self.chatlog_window.winfo_exists():
-            return
-            
+        """Save current panel sizes to file with improved error handling."""
         try:
-            # Get current sizes from the paned window
-            paned = self.chatlog_window.nametowidget("main_paned")
-            sash_pos1 = paned.sashpos(0)  # Position of first sash
-            sash_pos2 = paned.sashpos(1)  # Position of second sash
-            
+            # Get standard frame sizes
             sizes = {
-                "users": sash_pos1,
-                "links": paned.winfo_width() - sash_pos2
+                'paned_pos': self.paned.sash_coord(0)[1] if hasattr(self.paned, 'sash_coord') else 200,
+                'window_geometry': self.master.geometry()
             }
             
-            with open("panel_sizes.json", "w") as file:
-                json.dump(sizes, file)
+            # Add panel sizes if chatlog window exists
+            if hasattr(self, 'chatlog_window') and self.chatlog_window.winfo_exists():
+                try:
+                    # Fix: Use safer way to find paned window
+                    for widget in self.chatlog_window.winfo_children():
+                        if isinstance(widget, ttk.PanedWindow):
+                            paned = widget
+                            try:
+                                sizes.update({
+                                    "users": paned.sashpos(0),
+                                    "links": paned.winfo_width() - paned.sashpos(1)
+                                })
+                            except tk.TclError as e:
+                                print(f"Warning: Could not get sash positions: {e}")
+                            break
+                except Exception as e:
+                    print(f"Warning: Error getting panel positions: {e}")
+                    
+            with open("frame_sizes.json", "w") as f:
+                json.dump(sizes, f)
         except Exception as e:
-            print(f"Error saving panel sizes: {e}")
+            print(f"Error saving frame sizes: {e}")
 
     def show_change_font_window(self):
         """Open a Toplevel window to change font, font size, font color, and background color."""
@@ -3219,7 +3408,12 @@ class BBSTerminalApp:
                 line_start = self.links_display.index(f"{index} linestart")
                 line_end = self.links_display.index(f"{index} lineend")
                 url = self.links_display.get(line_start, line_end).strip()
-                webbrowser.open(url)
+                
+                # Check if this is an audio stream
+                if url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')):
+                    self.play_audio_stream(url)
+                else:
+                    webbrowser.open(url)
                 break
 
     def show_chatlog_thumbnail_preview(self, event):
@@ -3675,6 +3869,9 @@ class BBSTerminalApp:
             for task in asyncio.all_tasks(app.loop):
                 task.cancel()
 
+            # Clean up audio player
+            app.cleanup_audio()
+
             # Clear only the active members list
             app.clear_chat_members()
 
@@ -3794,6 +3991,276 @@ class BBSTerminalApp:
                 json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
         except Exception as e:
             print(f"Error saving command history: {e}")
+
+    def init_audio_player(self):
+        """Initialize the audio player components with improved redirect handling."""
+        try:
+            # Set environment variable to minimize VLC verbosity
+            os.environ["VLC_VERBOSE"] = "-1"
+            
+            # Different VLC versions support different flags
+            instance_params = []
+            
+            try:
+                # Always try these basic parameters
+                instance_params = ['--quiet', '--no-xlib']
+                
+                # Add log verbosity parameters and improved network handling
+                instance_params.extend([
+                    '--verbose=-1', 
+                    '--no-plugins-cache',
+                    '--network-caching=3000',  # Increase cache for redirects
+                    '--http-reconnect',        # Enable HTTP reconnection
+                    '--live-caching=3000'      # Increase live stream caching
+                ])
+                
+                # Create VLC instance with combined parameters
+                self.vlc_instance = vlc.Instance(*instance_params)
+                
+            except Exception:
+                # Fallback with minimal parameters if the above fails
+                print("Using fallback VLC initialization")
+                self.vlc_instance = vlc.Instance('--quiet')
+            
+            # Create and configure the media player
+            self.player = self.vlc_instance.media_player_new()
+            self.current_stream = None
+            self.is_playing = False
+            
+            print("VLC audio player initialized successfully")
+            
+        except Exception as e:
+            print(f"Error initializing audio player: {e}")
+            self.vlc_instance = None
+            self.player = None
+
+    def play_audio_stream(self, url):
+        """Play an audio stream with enhanced support for complex podcast URLs with redirects."""
+        try:
+            print(f"[DEBUG] Attempting to play: {url}")
+            
+            # Special handling for podderapp and other complex podcast URLs
+            if ('podderapp.com' in url or 'podtrac.com' in url or 
+                'redirect.mp3' in url or any(x in url for x in ['rss', 'feed', 'podcast'])):
+                
+                # Start a background thread to resolve redirects
+                threading.Thread(target=self._resolve_and_play_podcast, args=(url,), daemon=True).start()
+                
+                # Show loading message immediately 
+                self.track_info.config(text=f"Resolving podcast URL...")
+                self.player_frame.grid()
+                return
+            
+            # Standard audio stream handling continues as before
+            if not self.vlc_instance:
+                self.init_audio_player()
+            
+            if not self.vlc_instance:
+                print("VLC not available")
+                return
+                
+            # Stop any current playback
+            self.stop_playback()
+            
+            # Regular audio file handling
+            self.current_stream = self.vlc_instance.media_new(url)
+            self.player.set_media(self.current_stream)
+            self.player.audio_set_volume(self.volume_var.get())
+            self.track_info.config(text=f"Loading: {url.split('/')[-1]}")
+            self.player_frame.grid()
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            self.master.after(1000, self.update_media_info)
+                
+        except Exception as e:
+            print(f"Error playing audio stream: {e}")
+            traceback.print_exc()
+            self.track_info.config(text=f"Error: {str(e)}")
+
+    def _resolve_and_play_podcast(self, url):
+        """Resolve all redirects in a podcast URL and then play the final URL."""
+        try:
+            # Update UI on main thread
+            self.master.after(0, lambda: self.track_info.config(text="Resolving redirects..."))
+            
+            # Use requests to follow all redirects and get final URL
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            print(f"[DEBUG] Following redirects for: {url}")
+            response = requests.get(url, headers=headers, allow_redirects=True, stream=True, timeout=15)
+            
+            # Get the final URL after all redirects
+            final_url = response.url
+            print(f"[DEBUG] Final URL after redirects: {final_url}")
+            
+            # Close the connection since we just needed the redirect info
+            response.close()
+            
+            # Now play the resolved URL on the main thread
+            self.master.after(0, lambda: self._play_resolved_podcast(final_url))
+            
+        except Exception as e:
+            print(f"[DEBUG] Error resolving podcast URL: {e}")
+            traceback.print_exc()
+            # Update UI on main thread
+            self.master.after(0, lambda: self.track_info.config(text=f"Error: {str(e)}"))
+
+    def _play_resolved_podcast(self, resolved_url):
+        """Play the podcast after URL resolution."""
+        try:
+            if not self.vlc_instance:
+                self.init_audio_player()
+                
+            if not self.vlc_instance:
+                print("VLC not available")
+                return
+                
+            # Stop any current playback
+            self.stop_playback()
+            
+            print(f"[DEBUG] Playing resolved URL: {resolved_url}")
+            
+            # Create media with the resolved URL
+            self.current_stream = self.vlc_instance.media_new(resolved_url)
+            
+            # Add specific options for podcast streaming
+            self.current_stream.add_option(':http-reconnect')
+            self.current_stream.add_option(':network-caching=30000')
+            self.current_stream.add_option(':http-forward-cookies')
+            self.current_stream.add_option(':http-user-agent=Mozilla/5.0')
+            
+            # Set event manager
+            events = self.current_stream.event_manager()
+            events.event_attach(vlc.EventType.MediaStateChanged, self.on_media_state_changed)
+            
+            # Update UI
+            self.track_info.config(text=f"Loading podcast...")
+            self.player_frame.grid()
+            
+            # Play the stream
+            self.player.set_media(self.current_stream)
+            self.player.audio_set_volume(self.volume_var.get())
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            
+            # Frequent updates to catch metadata
+            self.master.after(500, self.update_media_info)
+            
+        except Exception as e:
+            print(f"Error playing resolved podcast: {e}")
+            traceback.print_exc()
+            self.track_info.config(text=f"Error: {str(e)}")
+
+    def on_media_state_changed(self, event):
+        """Handle media state change events from VLC."""
+        if not self.player:
+            return
+            
+        state = event.u.new_state
+        print(f"[DEBUG] Media state changed to: {state}")
+        
+        if state == vlc.State.Error:
+            self.master.after(0, lambda: self.track_info.config(text="Error playing stream"))
+        elif state == vlc.State.Playing:
+            self.master.after(0, lambda: self.track_info.config(text="Playing..."))
+        elif state == vlc.State.Ended:
+            self.master.after(0, self.stop_playback)
+
+    def update_media_info(self):
+        """Update media information display with more robust error handling."""
+        if not self.player or not self.current_stream:
+            return
+            
+        try:
+            # Check if player is still playing
+            if self.player.is_playing():
+                # Try to get stream metadata
+                media = self.player.get_media()
+                if media:
+                    title = media.get_meta(vlc.Meta.Title)
+                    artist = media.get_meta(vlc.Meta.Artist)
+                    now_playing = media.get_meta(vlc.Meta.NowPlaying)
+                    
+                    display_text = "Playing: "
+                    if title:
+                        display_text += title
+                        if artist:
+                            display_text += f" - {artist}"
+                    elif now_playing:
+                        display_text += now_playing
+                    elif self.is_playing:
+                        # If still no metadata but playing, show status
+                        display_text = "Playing stream..."
+                    
+                    # Update the display
+                    self.track_info.config(text=display_text)
+                
+                # Schedule next update
+                self.master.after(2000, self.update_media_info)
+            else:
+                # Check if we're in an error state
+                state = self.player.get_state()
+                if state == vlc.State.Error:
+                    self.track_info.config(text="Error playing stream")
+                elif state == vlc.State.Ended:
+                    self.stop_playback()
+                else:
+                    # Reschedule check if not playing but not in error state
+                    self.master.after(2000, self.update_media_info)
+                    
+        except Exception as e:
+            print(f"Error updating media info: {e}")
+            # Still reschedule to keep trying
+            self.master.after(2000, self.update_media_info)
+
+    def toggle_playback(self):
+        """Toggle between play and pause."""
+        if not self.current_stream:
+            return
+            
+        if self.is_playing:
+            self.player.pause()
+            self.is_playing = False
+            self.play_button.config(text="▶️")
+        else:
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            # Restart info updates
+            self.master.after(1000, self.update_media_info)
+
+    def stop_playback(self):
+        """Stop playback and reset player."""
+        if self.player:
+            self.player.stop()
+        
+        self.is_playing = False
+        if hasattr(self, 'play_button'):
+            self.play_button.config(text="▶️")
+        if hasattr(self, 'track_info'):
+            self.track_info.config(text="No stream playing")
+        
+        # Hide the player frame when stopped
+        if hasattr(self, 'player_frame'):
+            self.player_frame.grid_remove()
+
+    def set_volume(self, *args):
+        """Set the player volume."""
+        volume = self.volume_var.get()
+        if self.player:
+            self.player.audio_set_volume(volume)
+        self.volume_label.config(text=f"{volume}%")
+
+    def cleanup_audio(self):
+        """Clean up audio resources."""
+        if self.player:
+            self.player.stop()
+        self.vlc_instance = None
+        self.player = None
 
 def main():
     # Initialize configuration files
