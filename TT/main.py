@@ -1597,6 +1597,7 @@ class BBSTerminalApp:
             self.master.after(500, self.send_username)
 
     def parse_and_save_chatlog_message(self, clean_line, original_line):
+        message_content = ""  # Ensure it's always defined
         """Parse chat messages with improved filtering to prevent system messages in chatlog."""
         skip_patterns = [
             r"You are in",
