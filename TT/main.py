@@ -82,6 +82,95 @@ class BBSTerminalApp:
         file_path = os.path.join(base_path, "TT", relative_path)
         return file_path
 
+
+    def start_auto_reconnect(self):
+            """Start the auto-reconnect process when disconnected."""
+            if not self.auto_logon_enabled.get():
+                return
+        
+            # Store the current connection details
+            self.auto_logon_host = self.host.get()
+            self.auto_logon_port = self.port.get()
+            self.auto_logon_attempts = 0
+        
+            print("[DEBUG] Auto-logon: Starting auto-reconnect sequence (waiting 5 seconds)")
+            # First attempt after 5 seconds
+            self.master.after(5000, self.attempt_auto_reconnect)
+
+    def attempt_auto_reconnect(self):
+        """Attempt to reconnect to the BBS."""
+        if not self.auto_logon_enabled.get() or self.connected:
+            return
+
+        self.auto_logon_attempts += 1
+        
+        # Cap at 999 attempts
+        if self.auto_logon_attempts > 999:
+            print("[DEBUG] Auto-logon: Maximum attempts reached (999)")
+            return
+        
+        print(f"[DEBUG] Auto-logon: Reconnect attempt {self.auto_logon_attempts}")
+        
+        # Attempt to connect using the existing connection mechanism
+        self.host.set(self.auto_logon_host)
+        self.port.set(self.auto_logon_port)
+        
+        # Use the existing start_connection method instead of creating a new thread
+        # that might conflict with the existing event loop
+        self.connect_button.config(text="Connecting...")
+        self.start_connection()
+        
+        # Schedule the auto-login sequence check
+        self.master.after(5000, self.check_auto_login)
+        
+        # Schedule next reconnection attempt only if this one fails
+        # Add a separate check to avoid stacking reconnection attempts
+        self.master.after(3000, self.schedule_next_attempt)
+        
+    def schedule_next_attempt(self):
+        """Schedule the next reconnection attempt if still not connected."""
+        if not self.connected and self.auto_logon_enabled.get():
+            self.master.after(3000, self.attempt_auto_reconnect)
+        else:
+            print("[DEBUG] Auto-logon: Connection established or disabled, stopping reconnection attempts")
+            self.auto_logon_attempts = 0
+
+    def check_auto_login(self):
+            """Check if connection was successful and start auto-login sequence."""
+            if not self.connected or not self.auto_logon_enabled.get():
+                return
+        
+            print("[DEBUG] Auto-logon: Connected, starting auto-login sequence")
+            self.execute_auto_login_sequence()
+
+    def execute_auto_login_sequence(self):
+            """Execute the auto-login sequence with specified timing."""
+            if not self.connected or not self.writer:
+                return
+        
+            # Load username and password directly from files for reliability
+            username = self.load_username()
+            password = self.load_password()
+        
+            print("[DEBUG] Auto-logon: Sending username")
+            # Send username
+            self.master.after(0, lambda: self.send_custom_message(username))
+        
+            # Send password after 1 second
+            print("[DEBUG] Auto-logon: Sending password in 1 second")
+            self.master.after(1000, lambda: self.send_custom_message(password))
+        
+            # Send enter keystroke after another 1 second
+            print("[DEBUG] Auto-logon: Sending enter keystroke in 2 seconds")
+            self.master.after(2000, lambda: self.send_custom_message("\r\n"))
+
+
+
+
+
+
+
+
     def __init__(self, master):
         # Initialize sound-related attributes first
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1359,88 +1448,7 @@ class BBSTerminalApp:
 
         # Add these new methods to the BBSTerminalApp class:
 
-        def start_auto_reconnect(self):
-            """Start the auto-reconnect process when disconnected."""
-            if not self.auto_logon_enabled.get():
-                return
         
-            # Store the current connection details
-            self.auto_logon_host = self.host.get()
-            self.auto_logon_port = self.port.get()
-            self.auto_logon_attempts = 0
-        
-            print("[DEBUG] Auto-logon: Starting auto-reconnect sequence (waiting 5 seconds)")
-            # First attempt after 5 seconds
-            self.master.after(5000, self.attempt_auto_reconnect)
-
-        def attempt_auto_reconnect(self):
-            """Attempt to reconnect to the BBS."""
-            if not self.auto_logon_enabled.get() or self.connected:
-                return
-
-            self.auto_logon_attempts += 1
-            
-            # Cap at 999 attempts
-
-            if self.auto_logon_attempts > 999:
-                print("[DEBUG] Auto-logon: Maximum attempts reached (999)")
-                return
-        
-            print(f"[DEBUG] Auto-logon: Reconnect attempt {self.auto_logon_attempts}")
-        
-            # Attempt to connect
-            self.host.set(self.auto_logon_host)
-            self.port.set(self.auto_logon_port)
-        
-            # Start connection attempt
-        def run_telnet():
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self.telnet_client_task(self.auto_logon_host, self.auto_logon_port))
-
-            thread = threading.Thread(target=run_telnet, daemon=True)
-            thread.start()
-            self.append_terminal_text(f"Auto-logon: Reconnecting to {self.auto_logon_host}:{self.auto_logon_port}...\n", "normal")
-        
-            # Schedule the auto-login sequence check
-            self.master.after(5000, self.check_auto_login)
-        
-            # Schedule next reconnection attempt after 3 seconds if this one fails
-            self.master.after(3000, lambda: self.schedule_next_attempt())
-        
-        def schedule_next_attempt(self):
-            """Schedule the next reconnection attempt if still not connected."""
-            if not self.connected and self.auto_logon_enabled.get():
-                self.master.after(3000, self.attempt_auto_reconnect)
-
-        def check_auto_login(self):
-            """Check if connection was successful and start auto-login sequence."""
-            if not self.connected or not self.auto_logon_enabled.get():
-                return
-        
-            print("[DEBUG] Auto-logon: Connected, starting auto-login sequence")
-            self.execute_auto_login_sequence()
-
-        def execute_auto_login_sequence(self):
-            """Execute the auto-login sequence with specified timing."""
-            if not self.connected or not self.writer:
-                return
-        
-            # Load username and password directly from files for reliability
-            username = self.load_username()
-            password = self.load_password()
-        
-            print("[DEBUG] Auto-logon: Sending username")
-            # Send username
-            self.master.after(0, lambda: self.send_custom_message(username))
-        
-            # Send password after 1 second
-            print("[DEBUG] Auto-logon: Sending password in 1 second")
-            self.master.after(1000, lambda: self.send_custom_message(password))
-        
-            # Send enter keystroke after another 1 second
-            print("[DEBUG] Auto-logon: Sending enter keystroke in 2 seconds")
-            self.master.after(2000, lambda: self.send_custom_message("\r\n"))
-
 
 
 
@@ -1503,12 +1511,9 @@ class BBSTerminalApp:
             self.stop_event.set()
             self.stop_keep_alive()
             
-            # Clear the members list before disconnecting
-            self.clear_chat_members()
-
-            # Explicitly clear the chat members UI even if the connection is lost suddenly
+            # Instead of directly calling clear_chat_members, update the members list safely
             def update_ui():
-                self.chat_members = set()
+                self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
                 self.save_chat_members_file()
                 self.update_members_display()
             
@@ -1567,9 +1572,20 @@ class BBSTerminalApp:
         """Clear the active chat members list but preserve last seen timestamps."""
         if not self.members_frame or not self.members_frame.winfo_exists():
             return
+            
+        # Store members in a temporary variable
         self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
+        
+        # Save to file - this is fine to do in any thread
         self.save_chat_members_file()
-        self.update_members_display()
+        
+        # Schedule UI updates on the main thread
+        if threading.current_thread() is threading.main_thread():
+            self.update_members_display()
+        else:
+            # Use after_idle to ensure UI updates happen on main thread
+            self.master.after_idle(self.update_members_display)
+            
         print("[DEBUG] Chat members cleared")
 
     # 1.6️⃣ MESSAGES
