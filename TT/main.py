@@ -90,6 +90,9 @@ class BBSTerminalApp:
         self.current_sound = None
         self.last_sound_time = 0
         
+        
+
+
         print(f"[DEBUG] Chat sound path: {self.chat_sound_file}")
         print(f"[DEBUG] Directed sound path: {self.directed_sound_file}")
         
@@ -103,6 +106,14 @@ class BBSTerminalApp:
         self.player = None
         self.current_stream = None
         self.is_playing = False
+        
+        
+        # Inside __init__ method, add near other initialization variables:
+        self.auto_logon_enabled = tk.BooleanVar(value=False)
+        self.auto_logon_attempts = 0
+        self.auto_logon_host = ""
+        self.auto_logon_port = 0
+        
         
         # 1.0️⃣ 🎉 SETUP
         self.master = master
@@ -664,6 +675,14 @@ class BBSTerminalApp:
             variable=self.bannerless_mode
         )
         bannerless_check.grid(row=0, column=6, padx=5, pady=5, sticky=tk.W)
+
+        # Add Auto Logon checkbox
+        auto_logon_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Auto Logon",
+            variable=self.auto_logon_enabled
+        )
+        auto_logon_check.grid(row=0, column=7, padx=5, pady=5, sticky=tk.W)
 
         # At the end of build_ui, apply saved settings
         self.master.after(100, self.apply_saved_settings)
@@ -1337,35 +1356,99 @@ class BBSTerminalApp:
         self.append_terminal_text(f"Connecting to {host}:{port}...\n", "normal")
         self.start_keep_alive()
 
-        # Start automated logon sequence if enabled
-        if self.logon_automation_enabled.get():
-            self.master.after(10000, self.automated_logon_sequence)
 
-    def automated_logon_sequence(self):
-        """Execute the automated logon sequence."""
-        if not self.connected or not self.writer:
-            return
+        # Add these new methods to the BBSTerminalApp class:
+
+        def start_auto_reconnect(self):
+            """Start the auto-reconnect process when disconnected."""
+            if not self.auto_logon_enabled.get():
+                return
+        
+            # Store the current connection details
+            self.auto_logon_host = self.host.get()
+            self.auto_logon_port = self.port.get()
+            self.auto_logon_attempts = 0
+        
+            print("[DEBUG] Auto-logon: Starting auto-reconnect sequence (waiting 5 seconds)")
+            # First attempt after 5 seconds
+            self.master.after(5000, self.attempt_auto_reconnect)
+
+        def attempt_auto_reconnect(self):
+            """Attempt to reconnect to the BBS."""
+            if not self.auto_logon_enabled.get() or self.connected:
+                return
+
+            self.auto_logon_attempts += 1
             
-        username = self.username.get()
-        password = self.password.get()
+            # Cap at 999 attempts
+
+            if self.auto_logon_attempts > 999:
+                print("[DEBUG] Auto-logon: Maximum attempts reached (999)")
+                return
         
-        # Send username
-        self.master.after(0, lambda: self.send_custom_message(username))
+            print(f"[DEBUG] Auto-logon: Reconnect attempt {self.auto_logon_attempts}")
         
-        # Send password after 2 seconds
-        self.master.after(2000, lambda: self.send_custom_message(password))
+            # Attempt to connect
+            self.host.set(self.auto_logon_host)
+            self.port.set(self.auto_logon_port)
         
-        # Send first enter after 1 second
-        self.master.after(3000, lambda: self.send_custom_message("\r\n"))
+            # Start connection attempt
+        def run_telnet():
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self.telnet_client_task(self.auto_logon_host, self.auto_logon_port))
+
+            thread = threading.Thread(target=run_telnet, daemon=True)
+            thread.start()
+            self.append_terminal_text(f"Auto-logon: Reconnecting to {self.auto_logon_host}:{self.auto_logon_port}...\n", "normal")
         
-        # Send second enter after 1 second
-        self.master.after(4000, lambda: self.send_custom_message("\r\n"))
+            # Schedule the auto-login sequence check
+            self.master.after(5000, self.check_auto_login)
         
-        # Send third enter after 1 second
-        self.master.after(5000, lambda: self.send_custom_message("/go chat"))
+            # Schedule next reconnection attempt after 3 seconds if this one fails
+            self.master.after(3000, lambda: self.schedule_next_attempt())
         
-        # Send C after 1 second
-        self.master.after(6000, lambda: self.send_custom_message("t"))
+        def schedule_next_attempt(self):
+            """Schedule the next reconnection attempt if still not connected."""
+            if not self.connected and self.auto_logon_enabled.get():
+                self.master.after(3000, self.attempt_auto_reconnect)
+
+        def check_auto_login(self):
+            """Check if connection was successful and start auto-login sequence."""
+            if not self.connected or not self.auto_logon_enabled.get():
+                return
+        
+            print("[DEBUG] Auto-logon: Connected, starting auto-login sequence")
+            self.execute_auto_login_sequence()
+
+        def execute_auto_login_sequence(self):
+            """Execute the auto-login sequence with specified timing."""
+            if not self.connected or not self.writer:
+                return
+        
+            # Load username and password directly from files for reliability
+            username = self.load_username()
+            password = self.load_password()
+        
+            print("[DEBUG] Auto-logon: Sending username")
+            # Send username
+            self.master.after(0, lambda: self.send_custom_message(username))
+        
+            # Send password after 1 second
+            print("[DEBUG] Auto-logon: Sending password in 1 second")
+            self.master.after(1000, lambda: self.send_custom_message(password))
+        
+            # Send enter keystroke after another 1 second
+            print("[DEBUG] Auto-logon: Sending enter keystroke in 2 seconds")
+            self.master.after(2000, lambda: self.send_custom_message("\r\n"))
+
+
+
+
+
+
+
+
+        
 
     async def telnet_client_task(self, host, port):
         """Async function connecting via telnetlib3 (CP437 + ANSI)."""
@@ -1408,6 +1491,8 @@ class BBSTerminalApp:
         finally:
             await self.disconnect_from_bbs()
 
+    # In the disconnect_from_bbs method, before the final line:
+
     async def disconnect_from_bbs(self):
         """Stop the background thread and close connections."""
         if not self.connected or getattr(self, '_disconnecting', False):
@@ -1444,13 +1529,10 @@ class BBSTerminalApp:
                         self.writer.close()
                         # Some telnet writers may not have wait_closed
                         if hasattr(self.writer, 'wait_closed'):
-                            try:
-                                await self.writer.wait_closed()
-                            except Exception as e:
-                                print("Warning: Error during wait_closed: {e}")
+                            await self.writer.wait_closed()
                         else:
-                            # Give the writer a moment to finish closing
-                            await asyncio.sleep(0.1)
+                            pass
+                            
                 except Exception as e:
                     print(f"Warning: Error closing writer: {e}")
 
@@ -1468,6 +1550,13 @@ class BBSTerminalApp:
                 self.master.after_idle(update_connect_button)
 
             self.msg_queue.put_nowait("Disconnected from BBS.\n")
+            
+            # Add this: Start auto-reconnect sequence if enabled
+            if self.auto_logon_enabled.get():
+                if threading.current_thread() is threading.main_thread():
+                    self.start_auto_reconnect()
+                else:
+                    self.master.after_idle(self.start_auto_reconnect)
         finally:
             self._disconnecting = False
 
@@ -3643,7 +3732,8 @@ class BBSTerminalApp:
     def apply_saved_settings(self):
         """Apply saved settings after UI is built."""
         settings = self.load_saved_settings()
-        
+        self.auto_logon_enabled.set(self.saved_settings.get('auto_logon_enabled', False))
+
         # Apply paned window position if saved
         if self.paned and 'paned_pos' in settings and settings['paned_pos']:
             try:
@@ -3675,10 +3765,7 @@ class BBSTerminalApp:
         # Update display font
         self.update_display_font()
 
-    def on_closing(self):
-        """Extended closing handler to save frame sizes and cleanup."""
-        self.save_frame_sizes()
-        self.close_spelling_popup()  # Add cleanup of spell popup
+    
 
     async def request_actions_list(self):
         """Request the actions list with proper sequencing."""
@@ -4342,6 +4429,21 @@ class BBSTerminalApp:
         self.save_frame_sizes()
         self.close_spelling_popup()  # Add cleanup of spell popup
         self.master.quit()  # Ensure the main loop is stopped
+
+
+        settings = {
+            'show_connection_settings': self.show_connection_settings.get(),
+            'show_username': self.show_username.get(),
+            'show_password': self.show_password.get(),
+            'show_messages_to_you': self.show_messages_to_you.get(),
+            'bannerless_mode': self.bannerless_mode.get(),
+            'auto_logon_enabled': self.auto_logon_enabled.get()  # Add this line
+        }
+    
+        with open("settings.json", "w") as file:
+            json.dump(settings, file)
+
+
 
     async def cleanup(app):
         """Async cleanup function to handle disconnection."""
