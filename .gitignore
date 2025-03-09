@@ -5786,3 +5786,12 @@ venv/Lib/site-packages/python_vlc-3.0.21203.dist-info/RECORD
 venv/Lib/site-packages/python_vlc-3.0.21203.dist-info/REQUESTED
 venv/Lib/site-packages/python_vlc-3.0.21203.dist-info/top_level.txt
 venv/Lib/site-packages/python_vlc-3.0.21203.dist-info/WHEEL
+dist/TeleconferenceTerminal/_internal/chat.wav
+dist/TeleconferenceTerminal/_internal/directed.wav
+dist/TeleconferenceTerminal/_internal/python313.dll
+dist/TeleconferenceTerminal/_internal/_tcl_data/encoding/koi8-ru.enc
+dist/TeleconferenceTerminal/_internal/_tcl_data/encoding/koi8-t.enc
+dist/TeleconferenceTerminal/_internal/_tcl_data/tzdata/America/Ciudad_Juarez
+dist/TeleconferenceTerminal/_internal/charset_normalizer/md__mypyc.cp313-win_amd64.pyd
+dist/TeleconferenceTerminal/_internal/charset_normalizer/md.cp313-win_amd64.pyd
+dist/TeleconferenceTerminal/_internal/tcl8/8.5/tcltest-2.5.8.tm
