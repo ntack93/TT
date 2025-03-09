@@ -2,30 +2,28 @@
 
 block_cipher = None
 
+# Add this for better debugging
 a = Analysis(
     ['TT/main.py'],
     pathex=['c:\\Users\\Noah\\OneDrive\\Documents\\TT'],
     binaries=[],
     datas=[
-        ('TT/chat.wav', '.'),
-        ('TT/directed.wav', '.'),
+        ('TT/chat.wav', 'TT'),
+        ('TT/directed.wav', 'TT'),
         ('TT/init_config.py', 'TT'),
         ('TT/ASCII_EXT.py', 'TT'),
         ('TT/image_patch.py', 'TT'),
     ],
     hiddenimports=[
         'PIL', 'PIL._tkinter_finder', 'PIL._imaging', 'PIL.Image', 'PIL.ImageTk',
+        'PIL.ImageFile', 'PIL.GifImagePlugin', 'PIL.PngImagePlugin', 'PIL.JpegImagePlugin',
         'enchant', 'asyncio', 'telnetlib3', 'tkinter', 'tkinter.ttk',
         'tkinter.filedialog', 'tkinter.messagebox', 'winsound', 'queue', 
         'json', 'webbrowser', 'sys', 'requests', 'urllib3', 'certifi', 'idna', 'chardet',
         'io', 'traceback', 'shutil', 'tempfile', 'pathlib',
-        'vlc', 'python-vlc', 'urllib3.contrib', 'urllib3.contrib.socks',
-        'urllib3.util', 'urllib3.connection', 'urllib3.response',
-        'requests.adapters', 'requests.auth', 'requests.cookies', 
-        'requests.models', 'requests.hooks', 'requests.structures',
-        'threading', 'time',
+        'vlc'
     ],
-    hookspath=['.'],
+    hookspath=['.'],  # Look for hooks in current directory
     hooksconfig={},
     runtime_hooks=['runtime_hook.py'],
     excludes=[],
@@ -45,13 +43,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,  # Change to True for debugging
+    console=True,  # Keep True for debugging
     disable_windowed_traceback=False,
-    argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # Remove the icon line since you don't have an icon file
 )
 
 coll = COLLECT(

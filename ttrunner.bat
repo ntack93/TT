@@ -1,5 +1,5 @@
 @echo off
-:: filepath: c:\Users\Noah\OneDrive\Documents\TT\build.bat
+:: Teleconference Terminal Build Script
 echo Building Teleconference Terminal...
 echo.
 
@@ -7,19 +7,45 @@ echo Step 1: Clean previous builds
 rmdir /s /q "dist\TeleconferenceTerminal" 2>nul
 rmdir /s /q "build\tt_installer" 2>nul
 
-echo Step 2: Building with PyInstaller
-pyinstaller tt_installer.spec
+echo Step 2: Ensure PIL is properly installed
+py -3.12 -m pip install --upgrade pillow
 
-echo Step 3: Checking build output
+echo Step 3: Building with PyInstaller (Python 3.12)
+py -3.12 -m PyInstaller tt_installer.spec
+
+echo Step 4: Checking build output
 if not exist "dist\TeleconferenceTerminal\TeleconferenceTerminal.exe" (
   echo Build failed: Executable not found
   exit /b 1
 )
 
-echo Step 4: Fixing permissions
+echo Step 5: Copying sound files
+copy "TT\chat.wav" "dist\TeleconferenceTerminal\" /y
+copy "TT\directed.wav" "dist\TeleconferenceTerminal\" /y
+
+echo Step 6: Creating redist directory
+mkdir "redist" 2>nul
+
+echo Step 7: Checking for VC++ Redistributable files
+if not exist "redist\vc_redist.x86.exe" (
+  echo WARNING: VC++ Redistributable x86 missing from redist folder
+  echo Download from: https://aka.ms/vs/17/release/vc_redist.x86.exe
+)
+
+if not exist "redist\vc_redist.x64.exe" (
+  echo WARNING: VC++ Redistributable x64 missing from redist folder
+  echo Download from: https://aka.ms/vs/17/release/vc_redist.x64.exe
+)
+
+echo Step 8: Fixing permissions
 icacls "dist\TeleconferenceTerminal\*" /grant Everyone:(OI)(CI)F
 
-echo Step 5: Building installer with InnoSetup
+echo Step 9: Building installer with InnoSetup
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
 
 echo Build process complete!
+if exist "Output\TeleconferenceTerminal_Setup.exe" (
+  echo Installer created successfully at: Output\TeleconferenceTerminal_Setup.exe
+) else (
+  echo WARNING: Installer may not have been created successfully
+)

@@ -2,9 +2,17 @@
 Runtime hook for PyInstaller to ensure PIL modules are available globally
 and configure VLC paths
 """
-import sys
 import os
+import sys
 import traceback
+
+# Ensure PIL can be found
+if hasattr(sys, '_MEIPASS'):
+    # Add paths to search for PIL
+    sys.path.insert(0, sys._MEIPASS)
+    
+    # Explicitly set DLL search paths for PIL dependencies
+    os.environ['PATH'] = sys._MEIPASS + os.pathsep + os.environ['PATH']
 
 # Adjust Python path to find packaged VLC
 if hasattr(sys, '_MEIPASS'):

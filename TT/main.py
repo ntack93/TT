@@ -10,9 +10,26 @@ import json
 import os
 import webbrowser
 import sys
-import PIL
-import PIL.Image
-import PIL.ImageTk
+# Add this at the beginning of main.py
+try:
+    import PIL
+    import PIL.Image
+    import PIL.ImageTk
+    print("PIL modules imported successfully")
+except ImportError as e:
+    print(f"PIL import error: {e}")
+    import sys
+    print(f"Python path: {sys.path}")
+    # Try to install PIL at runtime if needed (only works if pip is available)
+    try:
+        import subprocess
+        subprocess.call([sys.executable, "-m", "pip", "install", "pillow"])
+        import PIL
+        import PIL.Image
+        import PIL.ImageTk
+        print("Installed PIL successfully")
+    except Exception as e:
+        print(f"Could not install PIL: {e}")
 import requests
 from io import BytesIO
 import winsound  # Import winsound for playing sound effects on Windows
