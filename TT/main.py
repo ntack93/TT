@@ -1616,6 +1616,56 @@ class BBSTerminalApp:
         
         return result
 
+
+    def play_chat_sound(self):
+        """Play chat sound with immediate interruption of any playing sound."""
+        try:
+            # Avoid playing sounds too frequently (debounce)
+            current_time = time.time()
+            if current_time - self.last_sound_time < 1.0:
+                print("[DEBUG] Skipping sound - too soon after previous sound")
+                return
+                
+            if hasattr(self, 'chat_sound_file') and os.path.exists(self.chat_sound_file):
+                print(f"[DEBUG] Playing chat sound: {self.chat_sound_file}")
+                # Stop any playing sound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                # Play the sound asynchronously
+                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                self.current_sound = "chat"
+                self.last_sound_time = current_time
+            else:
+                print(f"[DEBUG] Chat sound file not found: {getattr(self, 'chat_sound_file', 'Not set')}")
+        except Exception as e:
+            print(f"Error playing chat sound: {e}")
+
+    def play_directed_sound(self):
+        """Play directed sound with immediate interruption of any playing sound."""
+        try:
+            # Avoid playing sounds too frequently (debounce)
+            current_time = time.time()
+            if current_time - self.last_sound_time < 1.0:
+                print("[DEBUG] Skipping sound - too soon after previous sound")
+                return
+                
+            if hasattr(self, 'directed_sound_file') and os.path.exists(self.directed_sound_file):
+                print(f"[DEBUG] Playing directed sound: {self.directed_sound_file}")
+                # Stop any playing sound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                # Play the sound asynchronously with priority
+                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                self.current_sound = "directed"
+                self.last_sound_time = current_time
+            else:
+                print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
+        except Exception as e:
+            print(f"Error playing directed sound: {e}")
+
+
+
+
+
+
     def process_data_chunk(self, data):
         """Process incoming data with enhanced banner detection for multiple formats."""
         # Decode CP437 data
@@ -4529,49 +4579,7 @@ class BBSTerminalApp:
         if self.command_index == -1:
             self.input_var.set(self.current_command)
 
-    def play_chat_sound(self):
-        """Play chat sound with immediate interruption of any playing sound."""
-        try:
-            # Avoid playing sounds too frequently (debounce)
-            current_time = time.time()
-            if current_time - self.last_sound_time < 1.0:
-                print("[DEBUG] Skipping sound - too soon after previous sound")
-                return
-                
-            if hasattr(self, 'chat_sound_file') and os.path.exists(self.chat_sound_file):
-                print(f"[DEBUG] Playing chat sound: {self.chat_sound_file}")
-                # Stop any playing sound
-                winsound.PlaySound(None, winsound.SND_PURGE)
-                # Play the sound asynchronously
-                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                self.current_sound = "chat"
-                self.last_sound_time = current_time
-            else:
-                print(f"[DEBUG] Chat sound file not found: {getattr(self, 'chat_sound_file', 'Not set')}")
-        except Exception as e:
-            print(f"Error playing chat sound: {e}")
-
-    def play_directed_sound(self):
-        """Play directed sound with immediate interruption of any playing sound."""
-        try:
-            # Avoid playing sounds too frequently (debounce)
-            current_time = time.time()
-            if current_time - self.last_sound_time < 1.0:
-                print("[DEBUG] Skipping sound - too soon after previous sound")
-                return
-                
-            if hasattr(self, 'directed_sound_file') and os.path.exists(self.directed_sound_file):
-                print(f"[DEBUG] Playing directed sound: {self.directed_sound_file}")
-                # Stop any playing sound
-                winsound.PlaySound(None, winsound.SND_PURGE)
-                # Play the sound asynchronously with priority
-                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                self.current_sound = "directed"
-                self.last_sound_time = current_time
-            else:
-                print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
-        except Exception as e:
-            print(f"Error playing directed sound: {e}")
+    
 
     def seek_position(self, *args):
         """Set playback position when the user drags the seek slider."""
