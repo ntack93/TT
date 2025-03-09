@@ -4,6 +4,13 @@ and configure VLC paths
 """
 import sys
 import os
+import traceback
+
+# Adjust Python path to find packaged VLC
+if hasattr(sys, '_MEIPASS'):
+    # Running as PyInstaller bundle
+    os.environ['PYTHONPATH'] = sys._MEIPASS
+    os.environ['VLC_PLUGIN_PATH'] = os.path.join(sys._MEIPASS, 'vlc', 'plugins')
 
 # Ensure PIL modules are available globally
 try:
@@ -14,31 +21,55 @@ try:
     sys.modules['Image'] = PIL.Image
     sys.modules['ImageTk'] = PIL.ImageTk
     
-    print("Runtime hook: PIL modules made globally available")
+    print("PIL modules made globally available")
 except Exception as e:
-    print(f"Runtime hook error: {e}")
+    print(f"Error importing PIL: {e}")
 
-# Set up VLC environment
+# Setup VLC environment variables for packaged application
 def setup_vlc():
     try:
-        # Get the base directory (executable location in frozen app)
-        base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        print("Setting up VLC environment...")
         
-        # Set VLC plugin path to our bundled plugins
-        plugin_path = os.path.join(base_dir, 'plugins')
-        if os.path.exists(plugin_path):
+        # Get the base directory
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            # Running in development mode
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        print(f"Base directory: {base_dir}")
+        
+        # Set plugin paths in multiple places to maximize chances of discovery
+        plugin_paths = [
+            os.path.join(base_dir, 'plugins'),
+            os.path.join(base_dir, 'vlc', 'plugins'),
+            os.path.join(base_dir)
+        ]
+        
+        # Find the first path that exists
+        plugin_path = None
+        for path in plugin_paths:
+            if os.path.exists(path):
+                plugin_path = path
+                print(f"Found plugin path: {path}")
+                break
+        
+        if plugin_path:
             os.environ['VLC_PLUGIN_PATH'] = plugin_path
-            print(f"Runtime hook: VLC plugin path set to {plugin_path}")
+            print(f"Set VLC_PLUGIN_PATH to {plugin_path}")
+        else:
+            print("Warning: No VLC plugin path found")
+            
+        # Set the library path
+        os.environ['PYTHONPATH'] = base_dir
         
         # Silence VLC messages
         os.environ['VLC_VERBOSE'] = '-1'
-        
-        # Force VLC to run in the correct mode
-        os.environ['VLC_PLUGIN_PATH'] = plugin_path
-        
-        print("Runtime hook: VLC environment configured")
+            
     except Exception as e:
-        print(f"Runtime hook VLC configuration error: {e}")
-        
-# Call the setup function
+        print(f"Error setting up VLC environment: {e}")
+        traceback.print_exc()
+
+# Call setup function
 setup_vlc()

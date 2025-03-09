@@ -21,8 +21,12 @@ import random
 from ASCII_EXT import create_cp437_to_unicode_map  # Import the function from ASCII_EXT.py
 from init_config import init_config_files, verify_sound_files  # Add this line
 import traceback
-import vlc  # Add VLC for audio stream playback
-
+  # Add VLC for audio stream playback
+try:
+    import vlc
+except ImportError:
+    print("VLC module not found. Audio playback features will be disabled.")
+    vlc = None
 # Apply patches for PyInstaller compatibility
 try:
     from image_patch import apply_patches, Image, ImageTk
@@ -1678,10 +1682,10 @@ class BBSTerminalApp:
             'classic_public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
             'classic_regular': r'^\[([^@\]]+(?:@[^\]]+)?):\]\s*(.+)$',
             
-            # Alternative format patterns
+            # Alternative format patterns - MAJORLINK STYLE
             'alt_whisper': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(whispered\):\s*(.+)$',
             'alt_direct_to_you': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+you\):\s*(.+)$',
-            'alt_public_direct': r'^From\s+([^@\(]+(?:@[^\\(]+)?)\s*\(to\s+([^@\)]+(?:@[^\)]+)?)\):\s*(.+)$',
+            'alt_public_direct': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+([^@\)]+(?:@[^\)]+)?)\):\s*(.+)$',
             'alt_regular': r'^From\s+([^@:]+(?:@[^:]+)?):(?:\s*)(.+)$',
             
             # PBX-style formats
@@ -1716,7 +1720,7 @@ class BBSTerminalApp:
                 # Always log whispers/directs in chatlog
                 self.save_chatlog_message(sender, formatted)
                 
-                # Store any hyperlinks in the message
+                # Store any hyperlinks in the message - MAKE SURE THIS IS CALLED
                 self.parse_and_store_hyperlinks(message, sender)
                 
             elif 'page_notification' in msg_type:
@@ -1732,7 +1736,7 @@ class BBSTerminalApp:
                 # Also log in chatlog
                 self.save_chatlog_message(sender, formatted)
                 
-                # Store any hyperlinks
+                # Store any hyperlinks - MAKE SURE THIS IS CALLED
                 self.parse_and_store_hyperlinks(message, sender)
                 
             elif 'public_direct' in msg_type or ('pbx_direct' in msg_type and len(match.groups()) >= 3):
@@ -1750,23 +1754,19 @@ class BBSTerminalApp:
                 is_to_you = False
                 
                 if your_username:
-                    # Compare base usernames (without domain)
-                    r_base = recipient.split('@')[0].strip().lower()
-                    y_base = your_username.split('@')[0].strip().lower()
-                    is_to_you = (r_base == y_base)
+                    is_to_you = your_username.lower() == recipient.lower() or recipient.lower() == "you"
                     
                 if is_to_you:
-                    # Message is to you - show in directed messages
                     self.append_directed_message(formatted)
                     self.play_directed_sound()
                 else:
-                    # Regular message between others - only play chat sound
+                    # Regular message to someone else
                     self.play_chat_sound()
                     
                 # Always save to chatlog
                 self.save_chatlog_message(sender, formatted)
                 
-                # Store any hyperlinks
+                # Store any hyperlinks - MAKE SURE THIS IS CALLED
                 self.parse_and_store_hyperlinks(message, sender)
                 
             else:
@@ -1778,16 +1778,17 @@ class BBSTerminalApp:
                 self.save_chatlog_message(sender, formatted)
                 self.play_chat_sound()
                 
-                # Store any hyperlinks
+                # Store any hyperlinks - MAKE SURE THIS IS CALLED
                 self.parse_and_store_hyperlinks(message, sender)
             
             # We've matched and processed a message, so return
             return
 
         # If we get here, we didn't match any known pattern
-        # Consider logging unmatched messages for debugging
-        print(f"[DEBUG] Unmatched message format: {clean_line}")
-        # No fallback here to avoid logging system lines
+        # Check for URLs in the raw message and store them with "Unknown" sender
+        if re.search(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)', clean_line):
+            print(f"[DEBUG] Found URLs in unmatched message: {clean_line}")
+            self.parse_and_store_hyperlinks(clean_line, "Unknown")
 
     def send_message(self, event=None):
         """Send the user's typed message and manage command history."""
@@ -2171,25 +2172,48 @@ class BBSTerminalApp:
             self.directed_msg_display.insert(tk.END, text[last_end:], tag)
 
     def open_hyperlink(self, event):
-        """Open the hyperlink in a web browser or audio player if it's an audio stream."""
-        index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
-        start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-        if not start_index:
-            start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
-        end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
-        if not end_index:
-            end_index = self.terminal_display.index("end")
-        url = self.terminal_display.get(start_index, end_index).strip()
-        
-        # Check if this is an audio stream - enhanced detection
-        if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
-            'redirect.mp3' in url.lower() or
-            'podcast' in url.lower() or
-            'pod' in url.lower() and '.mp3' in url.lower() or
-            any(x in url.lower() for x in ['podtrac.com', 'podderapp.com', 'audioboom.com'])):
-            self.play_audio_stream(url)
-        else:
-            webbrowser.open(url)
+        """Open the hyperlink with improved error handling."""
+        try:
+            index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
+            
+            # First try to search for https://
+            start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.terminal_display.index("end")
+                
+            # Get the URL
+            url = self.terminal_display.get(start_index, end_index).strip()
+            
+            print(f"[DEBUG] Clicked URL: {url}")
+            
+            # Check if this is an audio stream - enhanced detection
+            if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
+                'redirect.mp3' in url.lower() or
+                'podcast' in url.lower() or
+                'pod' in url.lower() and '.mp3' in url.lower() or
+                any(x in url.lower() for x in ['podtrac.com', 'podderapp.com', 'audioboom.com'])):
+                print(f"[DEBUG] Detected as audio stream, playing...")
+                self.play_audio_stream(url)
+            else:
+                print(f"[DEBUG] Opening in web browser...")
+                webbrowser.open(url)
+        except Exception as e:
+            print(f"Error opening hyperlink: {e}")
+            traceback.print_exc()
 
     def open_directed_message_hyperlink(self, event):
         """Open the hyperlink from directed messages in browser or audio player if it's an audio stream."""
@@ -2276,7 +2300,7 @@ class BBSTerminalApp:
             self.preview_window.destroy()
 
         self.preview_window = tk.Toplevel(self.master)
-        self.preview_window.overrideredirect(True)
+        self.preview_window.overrideredirect=True
         self.preview_window.attributes("-topmost", True)
 
         # Position the preview window near the mouse pointer
@@ -2487,7 +2511,7 @@ class BBSTerminalApp:
         photo = self.get_thumbnail(url)
         if photo:
             self.preview_window = tk.Toplevel(self.master)
-            self.preview_window.overrideredirect(True)
+            self.preview_window.overrideredirect=True
             self.preview_window.attributes("-topmost", True)
             label = tk.Label(self.preview_window, image=photo, bd=1, relief="solid")
             label.image = photo  # keep a reference to avoid garbage collection
@@ -3393,6 +3417,10 @@ class BBSTerminalApp:
             sender = link.get("sender", "Unknown")
             url = link.get("url", "")
             
+            # Skip empty or invalid URLs
+            if not url or url == "http://":
+                continue
+                
             self.links_display.insert(tk.END, f"{timestamp} from {sender}:\n")
             self.links_display.insert(tk.END, f"{url}\n\n", "hyperlink")
         
@@ -3428,22 +3456,24 @@ class BBSTerminalApp:
                 break
 
     def parse_and_store_hyperlinks(self, message, sender=None):
-        """Extract and store hyperlinks from a message."""
-        # More comprehensive URL pattern
+        """Extract and store hyperlinks from a message with improved handling for all formats."""
+        # More comprehensive URL pattern with improved handling for complex URLs
         url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        
+        # Debug output to track message processing
+        print(f"[DEBUG] Parsing links from message: {message}")
+        print(f"[DEBUG] Sender: {sender}")
         
         # Extract all URLs from the message
         urls = url_pattern.findall(message)
         
-        # Add debug output to see raw message
-        print(f"[DEBUG] Raw message: {message}")
         print(f"[DEBUG] Found URLs: {urls}")
         
         # Clean URLs (remove trailing punctuation)
         cleaned_urls = []
         for url in urls:
             # Remove trailing punctuation that might have been caught
-            url = re.sub(r'[.,;:]+$', '', url)
+            url = re.sub(r'[.,;:)}\]]+$', '', url)
             # Add http:// to www. urls
             if url.startswith('www.'):
                 url = 'http://' + url
@@ -3454,6 +3484,10 @@ class BBSTerminalApp:
         for url in cleaned_urls:
             print(f"[DEBUG] Storing URL: {url} from {sender}")  # Debug line
             self.store_hyperlink(url, sender, timestamp)
+            
+            # Make sure to update the links display if window is open
+            if hasattr(self, 'chatlog_window') and self.chatlog_window and self.chatlog_window.winfo_exists():
+                self.master.after(0, self.display_stored_links)
 
     def show_all_messages(self):
         """Deselect user and show all messages combined."""
@@ -3844,135 +3878,393 @@ class BBSTerminalApp:
         b = random.randint(100, 255)
         return f"#{r:02x}{g:02x}{b:02x}"
 
-    # Add these new helper methods
-    def deselect_all_members(self):
-        """Deselect all members in the list."""
-        for child in self.members_frame.winfo_children():
-            if isinstance(child, ttk.Button):
-                child.configure(style="Bubble.TButton")
-        self.selected_member = None
 
-    def get_selected_member(self):
-        """Return the currently selected member."""
-        return getattr(self, 'selected_member', None)
+    def init_audio_player(self):
+        """Initialize the audio player with expanded plugin discovery and debug output."""
+        if vlc is None:
+            print("VLC module is not available")
+            return
 
-    def on_closing(self):
-        """Extended closing handler to save frame sizes and cleanup."""
-        self.save_frame_sizes()
-        self.close_spelling_popup()  # Add cleanup of spell popup
-        self.master.quit()  # Ensure the main loop is stopped
-
-    async def cleanup(app):
-        """Async cleanup function to handle disconnection."""
         try:
-            # Cancel all pending tasks first
-            for task in asyncio.all_tasks(app.loop):
-                task.cancel()
-
-            # Clean up audio player
-            app.cleanup_audio()
-
-            # Clear only the active members list
-            app.clear_chat_members()
-
-            # Then handle the disconnect
-            if app.connected:
-                await app.disconnect_from_bbs()
-
-            # Finally close the loop 
-            app.loop.stop()
-            app.loop.close()
+            print(f"[DEBUG] VLC version: {vlc.__version__}")
+            print(f"[DEBUG] Python version: {sys.version}")
+            
+            # Create a plugins directory if needed (for packaged app)
+            if getattr(sys, 'frozen', False):
+                plugins_dir = os.path.join(os.path.dirname(sys.executable), 'plugins')
+                if not os.path.exists(plugins_dir):
+                    os.makedirs(plugins_dir)
+                print(f"[DEBUG] Created plugins directory: {plugins_dir}")
+            
+            # Set environment variables
+            os.environ["VLC_VERBOSE"] = "-1"
+            
+            # Comprehensive instance parameters
+            instance_params = [
+                '--quiet', 
+                '--no-xlib',
+                '--no-video-title-show',
+                '--no-plugins-cache',
+                '--network-caching=10000',  # 10 second network cache
+                '--http-reconnect',
+                '--live-caching=10000',
+                '--file-caching=10000',
+                '--http-forward-cookies',
+                '--http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            ]
+            
+            try:
+                # Create VLC instance with full parameters
+                self.vlc_instance = vlc.Instance(*instance_params)
+                print("[DEBUG] VLC initialized with full parameters")
+            except Exception as e:
+                print(f"[DEBUG] Full VLC init failed: {e}")
+                try:
+                    # Fallback to minimal parameters
+                    self.vlc_instance = vlc.Instance('--quiet', '--no-xlib')
+                    print("[DEBUG] VLC initialized with minimal parameters")
+                except Exception as e2:
+                    print(f"[DEBUG] Minimal VLC init failed: {e2}")
+                    self.vlc_instance = None
+                    return
+            
+            # Create and configure the media player
+            self.player = self.vlc_instance.media_player_new()
+            
+            # Log player capabilities
+            if hasattr(self.player, 'get_version'):
+                print(f"[DEBUG] VLC player version: {self.player.get_version()}")
+            
+            self.current_stream = None
+            self.is_playing = False
+            
+            print("[DEBUG] VLC audio player initialized successfully")
+            
         except Exception as e:
-            print(f"Error during cleanup: {e}")
+            print(f"[ERROR] Error initializing audio player: {e}")
+            traceback.print_exc()
+            self.vlc_instance = None
+            self.player = None
 
-    def previous_command(self, event=None):
-        """Navigate to previous command in history."""
-        if not self.command_history:
-            return "break"
+    def play_audio_stream(self, url):
+        """Play audio stream with advanced handling for complex podcast URLs."""
+        try:
+            print(f"[DEBUG] Attempting to play: {url}")
             
-        # Save current input if starting to browse history
-        if self.command_index == -1:
-            self.current_command = self.input_var.get()
+            # Special handling for complex podcast URLs
+            if ('podderapp.com' in url or 'podtrac.com' in url or 'redirect.mp3' in url or 
+                any(x in url for x in ['rss', 'feed', 'podcast'])):
+                
+                threading.Thread(
+                    target=self._deep_resolve_and_play_podcast, 
+                    args=(url,), 
+                    daemon=True
+                ).start()
+                
+                self.track_info.config(text="Processing podcast URL...")
+                self.player_frame.grid()
+                return
+                
+            # Standard audio stream handling
+            if not self.vlc_instance:
+                self.init_audio_player()
+                
+            if not self.vlc_instance:
+                print("[ERROR] VLC not available")
+                self.track_info.config(text="Error: VLC not available")
+                return
+                
+            # Stop any current playback
+            self.stop_playback()
             
-        # Move up in history
-        if self.command_index < len(self.command_history) - 1:
-            self.command_index += 1
-            self.input_var.set(self.command_history[-(self.command_index + 1)])
-            
-        # Position cursor at end
-        self.input_box.icursor(tk.END)
-        return "break"
+            # Regular media handling
+            self.current_stream = self.vlc_instance.media_new(url)
+            self.player.set_media(self.current_stream)
+            self.player.audio_set_volume(self.volume_var.get())
+            self.track_info.config(text=f"Loading: {url.split('/')[-1]}")
+            self.player_frame.grid()
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            self.master.after(1000, self.update_media_info)
+                
+        except Exception as e:
+            print(f"[ERROR] Error playing audio stream: {e}")
+            traceback.print_exc()
+            self.track_info.config(text=f"Error: {str(e)}")
 
-    def next_command(self, event=None):
-        """Navigate to next command in history."""
-        if self.command_index == -1:
-            return "break"
+    def _deep_resolve_and_play_podcast(self, url):
+        """More robust podcast URL resolution with multiple fallback strategies."""
+        try:
+            self.master.after(0, lambda: self.track_info.config(text="Resolving podcast URL..."))
             
-        # Move down in history
-        self.command_index -= 1
-        if self.command_index == -1:
-            # Restore current input when reaching bottom
-            self.input_var.set(self.current_command)
+            # Try Step 1: Direct playback first
+            self.master.after(0, lambda: self._try_direct_play(url))
+            
+            # If direct play doesn't work, try Step 2: Manual header resolution in background
+            threading.Thread(target=self._resolve_with_custom_headers, args=(url,), daemon=True).start()
+        
+        except Exception as e:
+            print(f"[ERROR] Deep resolve error: {e}")
+            traceback.print_exc()
+            self.master.after(0, lambda: self.track_info.config(text=f"Error: {str(e)}"))
+
+    def _try_direct_play(self, url):
+        """Try playing the URL directly with advanced options."""
+        try:
+            if not self.vlc_instance:
+                self.init_audio_player()
+            
+            if not self.vlc_instance:
+                print("[ERROR] VLC not available")
+                self.track_info.config(text="Error: VLC not available")
+                return
+                
+            # Stop any current playback
+            self.stop_playback()
+            
+            print(f"[DEBUG] Trying direct playback of: {url}")
+            
+            # Create media with aggressive options
+            self.current_stream = self.vlc_instance.media_new(url)
+            
+            # Add options to handle redirect chains
+            self.current_stream.add_option(':http-reconnect')
+            self.current_stream.add_option(':network-caching=30000')
+            self.current_stream.add_option(':file-caching=30000')
+            self.current_stream.add_option(':http-forward-cookies')
+            self.current_stream.add_option(':http-user-agent=Mozilla/5.0')
+            self.current_stream.add_option(':prefetch-buffer-size=1048576')  # 1MB prefetch
+            self.current_stream.add_option(':sout-mux-caching=30000')
+            
+            # Set event manager for status updates
+            events = self.current_stream.event_manager()
+            events.event_attach(vlc.EventType.MediaStateChanged, self.on_media_state_changed)
+            
+            # Update UI
+            self.track_info.config(text=f"Loading podcast...")
+            self.player_frame.grid()
+            
+            # Play the stream
+            self.player.set_media(self.current_stream)
+            self.player.audio_set_volume(self.volume_var.get())
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            
+            # Check status frequently
+            self.master.after(500, self._check_playback_status)
+            
+        except Exception as e:
+            print(f"[ERROR] Direct play error: {e}")
+            traceback.print_exc()
+
+    def _resolve_with_custom_headers(self, url):
+        """Resolve podcast URL with extensive custom headers."""
+        try:
+            print(f"[DEBUG] Trying manual resolution of: {url}")
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,application/ogg;q=0.7,*/*;q=0.6',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive',
+                'Sec-Fetch-Dest': 'audio',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'cross-site',
+                'Range': 'bytes=0-'  # Request only the beginning to get headers
+            }
+            
+            # Create a session that preserves cookies
+            session = requests.Session()
+            
+            # Follow redirects and get final URL
+            response = session.head(url, headers=headers, allow_redirects=True, timeout=15)
+            
+            # Get the final URL
+            final_url = response.url
+            print(f"[DEBUG] Final URL after redirection: {final_url}")
+            
+            # Play the final URL in the main thread
+            self.master.after(0, lambda: self._play_resolved_podcast(final_url))
+            
+        except Exception as e:
+            print(f"[ERROR] Custom header resolution error: {e}")
+            traceback.print_exc()
+
+    def _check_playback_status(self):
+        """Check if playback has started successfully."""
+        if not self.player:
+            return
+        
+        state = self.player.get_state()
+        print(f"[DEBUG] Player state: {state}")
+        
+        if state == vlc.State.Playing:
+            self.track_info.config(text="Playing podcast...")
+            self.update_media_info()
+        elif state == vlc.State.Error:
+            self.track_info.config(text="Error: Unable to play podcast")
+        elif state in (vlc.State.Opening, vlc.State.Buffering):
+            # Still loading, check again soon
+            self.master.after(1000, self._check_playback_status)
         else:
-            self.input_var.set(self.command_history[-(self.command_index + 1)])
+            # Other state, check less frequently
+            self.master.after(2000, self._check_playback_status)
+
+    def _play_resolved_podcast(self, final_url):
+        """Play a podcast after URL resolution."""
+        try:
+            if not self.vlc_instance:
+                self.init_audio_player()
+                
+            if not self.vlc_instance:
+                print("[ERROR] VLC not available")
+                self.track_info.config(text="Error: VLC not available")
+                return
+                
+            print(f"[DEBUG] Playing resolved URL: {final_url}")
             
-        # Position cursor at end
-        self.input_box.icursor(tk.END)
-        return "break"
-
-    def save_current_input(self, event=None):
-        """Save current input when focus is lost."""
-        if self.command_index == -1:
-            self.current_command = self.input_var.get()
-
-    def restore_current_input(self, event=None):
-        """Restore current input when focus returns."""
-        if self.command_index == -1:
-            self.input_var.set(self.current_command)
-
-    def play_chat_sound(self):
-        """Play chat sound with immediate interruption of any playing sound."""
-        try:
-            # Avoid playing sounds too frequently (debounce)
-            current_time = time.time()
-            if current_time - self.last_sound_time < 1.0:
-                print("[DEBUG] Skipping sound - too soon after previous sound")
-                return
-                
-            if hasattr(self, 'chat_sound_file') and os.path.exists(self.chat_sound_file):
-                print(f"[DEBUG] Playing chat sound: {self.chat_sound_file}")
-                # Stop any playing sound
-                winsound.PlaySound(None, winsound.SND_PURGE)
-                # Play the sound asynchronously
-                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                self.current_sound = "chat"
-                self.last_sound_time = current_time
-            else:
-                print(f"[DEBUG] Chat sound file not found: {getattr(self, 'chat_sound_file', 'Not set')}")
+            # Create media with the resolved URL
+            self.current_stream = self.vlc_instance.media_new(final_url)
+            
+            # Add specific options for podcast streaming
+            self.current_stream.add_option(':http-reconnect')
+            self.current_stream.add_option(':network-caching=30000')
+            self.current_stream.add_option(':file-caching=30000')
+            self.current_stream.add_option(':http-forward-cookies')
+            self.current_stream.add_option(':http-user-agent=Mozilla/5.0')
+            self.current_stream.add_option(':prefetch-buffer-size=1048576')  # 1MB prefetch
+            
+            # Set event manager
+            events = self.current_stream.event_manager()
+            events.event_attach(vlc.EventType.MediaStateChanged, self.on_media_state_changed)
+            
+            # Check if player is already playing something else
+            if self.is_playing:
+                self.player.stop()
+            
+            # Update UI
+            self.track_info.config(text=f"Loading resolved podcast...")
+            self.player_frame.grid()
+            
+            # Play the stream
+            self.player.set_media(self.current_stream)
+            self.player.audio_set_volume(self.volume_var.get())
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            
+            # Check status and update metadata
+            self.master.after(500, self._check_playback_status)
+            
         except Exception as e:
-            print(f"Error playing chat sound: {e}")
+            print(f"[ERROR] Error playing resolved podcast: {e}")
+            traceback.print_exc()
+            self.track_info.config(text=f"Error: {str(e)}")
 
-    def play_directed_sound(self):
-        """Play directed sound with immediate interruption of any playing sound."""
+    def on_media_state_changed(self, event):
+        """Handle media state change events from VLC."""
+        if not self.player:
+            return
+            
+        state = event.u.new_state
+        print(f"[DEBUG] Media state changed to: {state}")
+        
+        if state == vlc.State.Error:
+            self.master.after(0, lambda: self.track_info.config(text="Error playing stream"))
+        elif state == vlc.State.Playing:
+            self.master.after(0, lambda: self.track_info.config(text="Playing..."))
+            self.master.after(1000, self.update_media_info)
+        elif state == vlc.State.Ended:
+            self.master.after(0, self.stop_playback)
+
+    def update_media_info(self):
+        """Update media information if available."""
+        if not self.player or not self.current_stream:
+            return
+            
         try:
-            # Avoid playing sounds too frequently (debounce)
-            current_time = time.time()
-            if current_time - self.last_sound_time < 1.0:
-                print("[DEBUG] Skipping sound - too soon after previous sound")
-                return
+            # Check if player is still playing
+            if self.player.is_playing():
+                # Try to get stream metadata
+                media = self.player.get_media()
+                if media:
+                    title = media.get_meta(vlc.Meta.Title)
+                    artist = media.get_meta(vlc.Meta.Artist)
+                    
+                    if title:
+                        if artist:
+                            self.track_info.config(text=f"{artist} - {title}")
+                        else:
+                            self.track_info.config(text=title)
+                    else:
+                        # If no metadata, use filename from URL
+                        url = media.get_mrl()
+                        self.track_info.config(text=f"Playing: {url.split('/')[-1]}")
                 
-            if hasattr(self, 'directed_sound_file') and os.path.exists(self.directed_sound_file):
-                print(f"[DEBUG] Playing directed sound: {self.directed_sound_file}")
-                # Stop any playing sound
-                winsound.PlaySound(None, winsound.SND_PURGE)
-                # Play the sound asynchronously with priority
-                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-                self.current_sound = "directed"
-                self.last_sound_time = current_time
+                # Schedule next update
+                self.master.after(5000, self.update_media_info)
             else:
-                print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
+                # Check if we're in an error state
+                state = self.player.get_state()
+                if state == vlc.State.Error:
+                    self.track_info.config(text="Error playing stream")
+                elif state == vlc.State.Ended:
+                    self.stop_playback()
+                else:
+                    # Not playing but not error/ended, keep checking
+                    self.master.after(2000, self.update_media_info)
+            
         except Exception as e:
-            print(f"Error playing directed sound: {e}")
+            print(f"Error updating media info: {e}")
+            # Still reschedule to keep trying
+            self.master.after(2000, self.update_media_info)
+
+    def toggle_playback(self):
+        """Toggle between play and pause."""
+        if not self.current_stream:
+            return
+            
+        if self.is_playing:
+            self.player.pause()
+            self.is_playing = False
+            self.play_button.config(text="▶️")
+        else:
+            self.player.play()
+            self.is_playing = True
+            self.play_button.config(text="⏸️")
+            # Restart info updates
+            self.master.after(1000, self.update_media_info)
+
+    def stop_playback(self):
+        """Stop playback and reset player."""
+        if self.player:
+            self.player.stop()
+        
+        self.is_playing = False
+        if hasattr(self, 'play_button'):
+            self.play_button.config(text="▶️")
+        if hasattr(self, 'track_info'):
+            self.track_info.config(text="No stream playing")
+        
+        # Hide the player frame when stopped
+        if hasattr(self, 'player_frame'):
+            self.player_frame.grid_remove()
+
+    def set_volume(self, *args):
+        """Set the player volume."""
+        volume = self.volume_var.get()
+        if self.player:
+            self.player.audio_set_volume(volume)
+        self.volume_label.config(text=f"{volume}%")
+
+    def cleanup_audio(self):
+        """Clean up audio resources."""
+        if self.player:
+            self.player.stop()
+        self.vlc_instance = None
+        self.player = None
 
     def load_command_history(self):
         """Load command history from file."""
@@ -4261,6 +4553,135 @@ class BBSTerminalApp:
             self.player.stop()
         self.vlc_instance = None
         self.player = None
+
+    def deselect_all_members(self):
+        """Deselect all members in the list."""
+        for child in self.members_frame.winfo_children():
+            if isinstance(child, ttk.Button):
+                child.configure(style="Bubble.TButton")
+        self.selected_member = None
+
+    def get_selected_member(self):
+        """Return the currently selected member."""
+        return getattr(self, 'selected_member', None)
+
+    def on_closing(self):
+        """Extended closing handler to save frame sizes and cleanup."""
+        self.save_frame_sizes()
+        self.close_spelling_popup()  # Add cleanup of spell popup
+        self.master.quit()  # Ensure the main loop is stopped
+
+    async def cleanup(app):
+        """Async cleanup function to handle disconnection."""
+        try:
+            # Cancel all pending tasks first
+            for task in asyncio.all_tasks(app.loop):
+                task.cancel()
+
+            # Clean up audio player
+            app.cleanup_audio()
+
+            # Clear only the active members list
+            app.clear_chat_members()
+
+            # Then handle the disconnect
+            if app.connected:
+                await app.disconnect_from_bbs()
+
+            # Finally close the loop 
+            app.loop.stop()
+            app.loop.close()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
+    def previous_command(self, event=None):
+        """Navigate to previous command in history."""
+        if not self.command_history:
+            return "break"
+            
+        # Save current input if starting to browse history
+        if self.command_index == -1:
+            self.current_command = self.input_var.get()
+            
+        # Move up in history
+        if self.command_index < len(self.command_history) - 1:
+            self.command_index += 1
+            self.input_var.set(self.command_history[-(self.command_index + 1)])
+            
+        # Position cursor at end
+        self.input_box.icursor(tk.END)
+        return "break"
+
+    def next_command(self, event=None):
+        """Navigate to next command in history."""
+        if self.command_index == -1:
+            return "break"
+            
+        # Move down in history
+        self.command_index -= 1
+        if self.command_index == -1:
+            # Restore current input when reaching bottom
+            self.input_var.set(self.current_command)
+        else:
+            self.input_var.set(self.command_history[-(self.command_index + 1)])
+            
+        # Position cursor at end
+        self.input_box.icursor(tk.END)
+        return "break"
+
+    def save_current_input(self, event=None):
+        """Save current input when focus is lost."""
+        if self.command_index == -1:
+            self.current_command = self.input_var.get()
+
+    def restore_current_input(self, event=None):
+        """Restore current input when focus returns."""
+        if self.command_index == -1:
+            self.input_var.set(self.current_command)
+
+    def play_chat_sound(self):
+        """Play chat sound with immediate interruption of any playing sound."""
+        try:
+            # Avoid playing sounds too frequently (debounce)
+            current_time = time.time()
+            if current_time - self.last_sound_time < 1.0:
+                print("[DEBUG] Skipping sound - too soon after previous sound")
+                return
+                
+            if hasattr(self, 'chat_sound_file') and os.path.exists(self.chat_sound_file):
+                print(f"[DEBUG] Playing chat sound: {self.chat_sound_file}")
+                # Stop any playing sound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                # Play the sound asynchronously
+                winsound.PlaySound(self.chat_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                self.current_sound = "chat"
+                self.last_sound_time = current_time
+            else:
+                print(f"[DEBUG] Chat sound file not found: {getattr(self, 'chat_sound_file', 'Not set')}")
+        except Exception as e:
+            print(f"Error playing chat sound: {e}")
+
+    def play_directed_sound(self):
+        """Play directed sound with immediate interruption of any playing sound."""
+        try:
+            # Avoid playing sounds too frequently (debounce)
+            current_time = time.time()
+            if current_time - self.last_sound_time < 1.0:
+                print("[DEBUG] Skipping sound - too soon after previous sound")
+                return
+                
+            if hasattr(self, 'directed_sound_file') and os.path.exists(self.directed_sound_file):
+                print(f"[DEBUG] Playing directed sound: {self.directed_sound_file}")
+                # Stop any playing sound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                # Play the sound asynchronously with priority
+                winsound.PlaySound(self.directed_sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                self.current_sound = "directed"
+                self.last_sound_time = current_time
+            else:
+                print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
+        except Exception as e:
+            print(f"Error playing directed sound: {e}")
 
 def main():
     # Initialize configuration files
