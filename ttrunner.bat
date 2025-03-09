@@ -22,6 +22,9 @@ if not exist "dist\TeleconferenceTerminal\TeleconferenceTerminal.exe" (
 echo Step 5: Copying sound files
 copy "TT\chat.wav" "dist\TeleconferenceTerminal\" /y
 copy "TT\directed.wav" "dist\TeleconferenceTerminal\" /y
+mkdir "dist\TeleconferenceTerminal\_internal" 2>nul
+copy "TT\chat.wav" "dist\TeleconferenceTerminal\_internal\" /y
+copy "TT\directed.wav" "dist\TeleconferenceTerminal\_internal\" /y
 
 echo Step 6: Creating redist directory
 mkdir "redist" 2>nul

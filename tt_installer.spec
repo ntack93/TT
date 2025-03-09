@@ -10,6 +10,8 @@ a = Analysis(
     datas=[
         ('TT/chat.wav', 'TT'),
         ('TT/directed.wav', 'TT'),
+        ('TT/chat.wav', '_internal'),
+        ('TT/directed.wav', '_internal'),
         ('TT/init_config.py', 'TT'),
         ('TT/ASCII_EXT.py', 'TT'),
         ('TT/image_patch.py', 'TT'),
