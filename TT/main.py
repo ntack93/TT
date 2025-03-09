@@ -599,6 +599,24 @@ class BBSTerminalApp:
         self.track_info = ttk.Label(info_frame, text="No stream playing")
         self.track_info.pack(side=tk.LEFT, padx=5, pady=5)
         
+        # 1) Add a DoubleVar for the seek slider
+        self.seek_var = tk.DoubleVar(value=0)
+
+        # 2) Create a new frame for the seek bar
+        seek_frame = ttk.Frame(self.player_frame)
+        seek_frame.pack(fill=tk.X, expand=True)
+
+        # 3) Create the seek Scale
+        self.seek_scale = ttk.Scale(
+            seek_frame,
+            from_=0,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self.seek_var,
+            command=self.seek_position
+        )
+        self.seek_scale.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
+
         # Initialize VLC instance
         self.init_audio_player()
         
@@ -1458,6 +1476,8 @@ class BBSTerminalApp:
 
     def clear_chat_members(self):
         """Clear the active chat members list but preserve last seen timestamps."""
+        if not self.members_frame or not self.members_frame.winfo_exists():
+            return
         self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
         self.save_chat_members_file()
         self.update_members_display()
@@ -2968,6 +2988,8 @@ class BBSTerminalApp:
 
     def update_members_display(self):
         """Update the chat members display with bubble icons and adjust panel width."""
+        if not self.members_frame or not self.members_frame.winfo_exists():
+            return
         # Clear existing widgets
         for widget in self.members_frame.winfo_children():
             widget.destroy()
@@ -4003,7 +4025,8 @@ class BBSTerminalApp:
             self.player.play()
             self.is_playing = True
             self.play_button.config(text="⏸️")
-            self.master.after(1000, self.update_media_info)
+            # 4) Start updating the seek bar once we begin playback
+            self.master.after(1000, self.update_seek_bar)
                 
         except Exception as e:
             print(f"[ERROR] Error playing audio stream: {e}")
@@ -4431,6 +4454,21 @@ class BBSTerminalApp:
                 print(f"[DEBUG] Directed sound file not found: {getattr(self, 'directed_sound_file', 'Not set')}")
         except Exception as e:
             print(f"Error playing directed sound: {e}")
+
+    def seek_position(self, *args):
+        """Set playback position when the user drags the seek slider."""
+        if self.player and self.is_playing:
+            new_pos = self.seek_var.get() / 100.0
+            self.player.set_position(new_pos)
+
+    def update_seek_bar(self):
+        """Continuously update the seek slider while playing."""
+        if self.player and self.is_playing:
+            length_ms = self.player.get_length()
+            if length_ms > 0:
+                current_pos = self.player.get_position()
+                self.seek_var.set(current_pos * 100)
+        self.master.after(1000, self.update_seek_bar)
 
 def main():
     # Initialize configuration files
