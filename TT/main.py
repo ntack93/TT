@@ -1667,7 +1667,7 @@ class BBSTerminalApp:
 
 
     def process_data_chunk(self, data):
-        """Process incoming data with enhanced banner detection for multiple formats."""
+        """Process incoming data with enhanced action list detection."""
         # Decode CP437 data
         if isinstance(data, bytes):
             data = self.decode_cp437(data)
@@ -1703,9 +1703,45 @@ class BBSTerminalApp:
             # Store initial ANSI state
             self.current_ansi_state = ''.join([f"\x1b[{code}m" for code in ansi_codes]) if ansi_codes else ''
             
-            # ENHANCED BANNER START DETECTION
-            # ===============================
-            # Match any of the common banner start patterns
+            # ENHANCED ACTION LIST DETECTION - Check this before banner detection
+            # =================================================================
+            if "Action listing for" in clean_line:
+                print("[DEBUG] Action listing header detected")
+                self.actions = []
+                self.collecting_actions = True
+                self.append_terminal_text(original_with_ansi + "\n", "normal")
+                continue
+                
+            # Continue collecting actions if in action list mode
+            elif self.collecting_actions:
+                # Display the line
+                self.append_terminal_text(original_with_ansi + "\n", "normal")
+                
+                # Check for end of action list - either standalone colon or empty line
+                if clean_line == ":" or clean_line == "" or clean_line.endswith(":"):
+                    if self.actions:
+                        print(f"[DEBUG] Finished collecting actions: {self.actions}")
+                        self.collecting_actions = False
+                        self.master.after_idle(self.update_actions_listbox)
+                    continue
+                    
+                # Extract action words when in collection mode
+                action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
+                valid_actions = [
+                    word for word in action_matches 
+                    if (word.lower() not in {
+                        'action', 'list', 'for', 'the', 'and', 'you', 'are',
+                        'can', 'use', 'these', 'actions', 'available', 'default'
+                    } and len(word) >= 2)
+                ]
+                    
+                if valid_actions:
+                    print(f"[DEBUG] Found valid actions: {valid_actions}")
+                    self.actions.extend(valid_actions)
+                continue
+            
+            # BANNER START DETECTION
+            # =====================
             if (not in_banner and (
                     "You are in" in clean_line or 
                     clean_line.startswith("Topic:") or
@@ -1729,8 +1765,8 @@ class BBSTerminalApp:
                 if not self.bannerless_mode.get():
                     self.append_terminal_text(original_with_ansi + "\n", "normal")
                 
-                # ENHANCED BANNER END DETECTION
-                # ============================
+                # BANNER END DETECTION
+                # ===================
                 # 1. Check for user list ending indicators
                 user_list_end_detected = any(pattern in clean_line for pattern in [
                     "are here with you", 
@@ -1740,7 +1776,7 @@ class BBSTerminalApp:
                 ])
                 
                 # 2. Check for standalone colon as MajorLink delimiter
-                if clean_line == ":":
+                if clean_line == ":" or clean_line.endswith(":"):
                     banner_complete = True
                     in_banner = False
                     self.collecting_users = False
@@ -1752,9 +1788,11 @@ class BBSTerminalApp:
                     if self.bannerless_mode.get():
                         self.append_terminal_text(":\n", "normal")
                     
-                    # Request actions after banner processing
+                    # Request actions after banner processing - IMPORTANT: This triggers the action list
                     if not self.actions_requested_this_session:
-                        self.request_actions_after_banner()
+                        self.send_actions_request()
+                        self.actions_requested_this_session = True
+                        self.last_banner_time = time.time()
                     continue
                 
                 # 3. Check for assistance line (occurs after user list)
@@ -1773,9 +1811,11 @@ class BBSTerminalApp:
                     if self.bannerless_mode.get():
                         self.append_terminal_text("> \n", "normal")
                     
-                    # Request actions after banner processing
+                    # Request actions after banner processing - IMPORTANT: This triggers the action list
                     if not self.actions_requested_this_session:
-                        self.request_actions_after_banner()
+                        self.send_actions_request()
+                        self.actions_requested_this_session = True
+                        self.last_banner_time = time.time()
                     continue
                 
                 # 4. If we've detected the user list ending but no assistance line yet,
@@ -1788,40 +1828,6 @@ class BBSTerminalApp:
                 if in_banner or self.collecting_users:
                     continue
             
-            # Check for action list header
-            if "Action listing for:" in clean_line:
-                print("[DEBUG] Action listing header detected")
-                self.actions = []
-                self.collecting_actions = True
-                continue
-            
-            # Handle action list collection
-            elif self.collecting_actions:
-                # Check for end of action list
-                if clean_line == ":" or clean_line == "" or any(pattern in clean_line for pattern in [
-                    "Just press", "Just type", "assistance"
-                ]):
-                    if self.actions:
-                        print(f"[DEBUG] Finished collecting actions: {self.actions}")
-                        self.collecting_actions = False
-                        self.master.after_idle(self.update_actions_listbox)
-                    continue
-                
-                # Extract action words
-                action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
-                valid_actions = [
-                    word for word in action_matches 
-                    if (word.lower() not in {
-                        'action', 'list', 'for', 'the', 'and', 'you', 'are',
-                        'can', 'use', 'these', 'actions', 'available'
-                    } and len(word) >= 2)
-                ]
-                
-                if valid_actions:
-                    print(f"[DEBUG] Found valid actions: {valid_actions}")
-                    self.actions.extend(valid_actions)
-                continue
-
             # If we reach here, it's a regular line (not part of banner or action list)
             if clean_line:
                 self.append_terminal_text(original_with_ansi + "\n", "normal")
@@ -1829,6 +1835,27 @@ class BBSTerminalApp:
                 self.parse_and_save_chatlog_message(clean_line, original_with_ansi)
 
         self.partial_line = lines[-1]
+
+    def send_actions_request(self):
+        """Send request for action list with improved reliability for MajorLink format."""
+        if not self.connected or not self.writer:
+            return
+
+        print("[DEBUG] Sending action list request")
+        
+        # Send the appropriate command to request actions - works for both PBX and MajorLink
+        message = "actions\r\n"  
+        
+        async def send():
+            try:
+                self.writer.write(message)
+                await self.writer.drain()
+                print("[DEBUG] Action request sent")
+            except Exception as e:
+                print(f"[ERROR] Failed to send actions request: {e}")
+        
+        # Run the async function in the event loop
+        asyncio.run_coroutine_threadsafe(send(), self.loop)
 
     def request_actions_after_banner(self):
         """Request actions list after banner is processed with delay."""
