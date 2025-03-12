@@ -408,7 +408,7 @@ class BBSTerminalApp:
 
         # Create the Chatroom Members panel in the MIDDLE with fixed width
         members_frame = ttk.LabelFrame(container, text="Chatroom Members", width=default_panel_width)
-        members_frame.pack_propagate(False)  # Prevent frame from shrinking
+        members_frame.pack_propagate=False  # Prevent frame from shrinking
         self.members_canvas = tk.Canvas(members_frame, highlightthickness=0)
         self.members_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -430,7 +430,7 @@ class BBSTerminalApp:
 
         # Create the Actions listbox on the RIGHT with fixed width
         actions_frame = ttk.LabelFrame(container, text="Actions", width=default_panel_width)
-        actions_frame.pack_propagate(False)  # Prevent frame from shrinking
+        actions_frame.pack_propagate=False  # Prevent frame from shrinking
         self.actions_canvas = tk.Canvas(actions_frame, highlightthickness=0)
         self.actions_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -506,6 +506,12 @@ class BBSTerminalApp:
         chatlog_button = ttk.Button(util_buttons_frame, text="Chatlog", 
                                    command=self.show_chatlog_window, style="Chatlog.TButton")
         chatlog_button.pack(side=tk.LEFT, padx=2)
+        
+        # Add Mini Mode button
+        mini_mode_button = ttk.Button(util_buttons_frame, text="Mini Mode", 
+                                     command=self.toggle_mini_mode, 
+                                     style="MiniMode.TButton")
+        mini_mode_button.pack(side=tk.LEFT, padx=2)
 
         # Connection settings example:
         self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
@@ -746,6 +752,564 @@ class BBSTerminalApp:
 
         self.update_display_font()
 
+    def start_keep_alive(self):
+        """Start the keep-alive coroutine if enabled."""
+        if self.keep_alive_enabled.get():
+            self.keep_alive_stop_event.clear()
+            if self.loop:
+                self.keep_alive_task = self.loop.create_task(self.keep_alive())
+
+    def stop_keep_alive(self):
+        """Stop the keep-alive coroutine."""
+        self.keep_alive_stop_event.set()
+        if self.keep_alive_task:
+            self.keep_alive_task.cancel()
+
+    def toggle_keep_alive(self):
+        """Toggle the keep-alive coroutine based on the checkbox state."""
+        if self.keep_alive_enabled.get():
+            self.start_keep_alive()
+        else:
+            self.stop_keep_alive()
+
+
+    def open_hyperlink(self, event):
+        """Handle clicking a hyperlink in the terminal display."""
+        try:
+            index = self.terminal_display.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
+            start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.terminal_display.index("end")
+                
+            # Get the URL
+            url = self.terminal_display.get(start_index, end_index).strip()
+            
+            # Store the URL in history
+            self.store_hyperlink(url, "terminal_click")
+            
+            # Handle audio streams and other URLs appropriately
+            if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
+                'redirect.mp3' in url.lower() or
+                'podcast' in url.lower() or
+                'pod' in url.lower() and '.mp3' in url.lower() or
+                any(x in url.lower() for x in ['podtrac.com', 'podderapp.com', 'audioboom.com'])):
+                self.play_audio_stream(url)
+            else:
+                webbrowser.open(url)
+        except Exception as e:
+            print(f"Error opening hyperlink: {e}")
+            traceback.print_exc()
+
+    def insert_directed_message_with_hyperlinks(self, text, tag):
+        """Insert directed message text with hyperlinks detected and tagged."""
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        last_end = 0
+        
+        for match in url_pattern.finditer(text):
+            start, end = match.span()
+            
+            # Insert non-URL text before the hyperlink
+            if start > last_end:
+                self.directed_msg_display.insert(tk.END, text[last_end:start], tag)
+            
+            # Clean the URL to remove trailing punctuation
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            
+            # Insert URL with hyperlink tag
+            self.directed_msg_display.insert(tk.END, url, ("hyperlink",))
+            
+            # Store URL for history/debugging
+            print(f"[DEBUG] Directed message hyperlink found: {url}")
+            self.store_hyperlink(url, "directed_message")
+            
+            last_end = end
+        
+        # Insert any remaining text after the last URL
+        if last_end < len(text):
+            self.directed_msg_display.insert(tk.END, text[last_end:], tag)
+
+    # 1.8️⃣ FAVORITES
+    def show_favorites_window(self):
+        """Open a Toplevel window to manage favorite BBS addresses."""
+        if self.favorites_window and self.favorites_window.winfo_exists():
+            self.favorites_window.lift()
+            self.favorites_window.attributes('-topmost', True)
+            return
+
+        self.favorites_window = tk.Toplevel(self.master)
+        self.favorites_window.title("Favorite BBS Addresses")
+        self.favorites_window.attributes('-topmost', True)  # Keep window on top
+
+        row_index = 0
+        self.favorites_listbox = tk.Listbox(self.favorites_window, height=10, width=50)
+        self.favorites_listbox.grid(row=row_index, column=0, columnspan=2, padx=5, pady=5)
+        self.update_favorites_listbox()
+
+        row_index += 1
+        self.new_favorite_var = tk.StringVar()
+        ttk.Entry(self.favorites_window, textvariable=self.new_favorite_var, width=40).grid(
+            row=row_index, column=0, padx=5, pady=5)
+
+        add_button = ttk.Button(self.favorites_window, text="Add", command=self.add_favorite)
+        add_button.grid(row=row_index, column=1, padx=5, pady=5)
+
+        row_index += 1
+        remove_button = ttk.Button(self.favorites_window, text="Remove", command=self.remove_favorite)
+        remove_button.grid(row=row_index, column=0, columnspan=2, pady=5)
+
+        self.favorites_listbox.bind("<<ListboxSelect>>", self.populate_host_field)
+
+    def update_favorites_listbox(self):
+        self.favorites_listbox.delete(0, tk.END)
+        for address in self.favorites:
+            self.favorites_listbox.insert(tk.END, address)
+
+    def add_favorite(self):
+        new_address = self.new_favorite_var.get().strip()
+        if new_address and new_address not in self.favorites:
+            self.favorites.append(new_address)
+            self.update_favorites_listbox()
+            self.new_favorite_var.set("")
+            self.save_favorites()
+
+    def remove_favorite(self):
+        selected_index = self.favorites_listbox.curselection()
+        if selected_index:
+            address = self.favorites_listbox.get(selected_index)
+            self.favorites.remove(address)
+            self.update_favorites_listbox()
+            self.save_favorites()
+
+    def populate_host_field(self, event):
+        selected_index = self.favorites_listbox.curselection()
+        if selected_index:
+            address = self.favorites_listbox.get(selected_index)
+            self.host.set(address)
+
+
+    def on_scroll_change(self, *args):
+        """Custom scrollbar handler to ensure bottom line visibility."""
+        self.terminal_display.yview_moveto(args[0])
+        if float(args[1]) == 1.0:  # If scrolled to bottom
+            self.master.update_idletasks()
+            self.terminal_display.see(tk.END)
+
+
+
+
+    def send_username(self):
+        """Send the username to the BBS."""
+        if self.connected and self.writer:
+            message = self.username.get() + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+                if self.remember_username.get():
+                    self.save_username()
+            except Exception as e:
+                print(f"Error sending username: {e}")
+
+    def send_password(self):
+        """Send the password to the BBS."""
+        if self.connected and self.writer:
+            message = self.password.get() + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+                if self.remember_password.get():
+                    self.save_password()
+            except Exception as e:
+                print(f"Error sending password: {e}")
+
+
+    def open_directed_message_hyperlink(self, event):
+        """Open the hyperlink from directed messages in browser or audio player if it's an audio stream."""
+        index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
+        start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+        if not start_index:
+            start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
+        end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
+        if not end_index:
+            end_index = self.directed_msg_display.index("end")
+        url = self.directed_msg_display.get(start_index, end_index).strip()
+        
+        # Check if this is an audio stream
+        if url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')):
+            self.play_audio_stream(url)
+        else:
+            webbrowser.open(url)
+
+
+    # Mini Mode methods
+    def toggle_mini_mode(self):
+        """Toggle between normal and mini mode (floating window)."""
+        if hasattr(self, 'mini_window') and self.mini_window is not None and self.mini_window.winfo_exists():
+            # Switch back to normal mode
+            self.exit_mini_mode()
+        else:
+            # Switch to mini mode
+            self.enter_mini_mode()
+            
+    def enter_mini_mode(self):
+        """Create a floating borderless mini terminal window."""
+        # Create the mini window
+        self.mini_window = tk.Toplevel(self.master)
+        self.mini_window.title("Terminal Mini Mode")
+        self.mini_window.attributes('-topmost', True)  # Always on top
+        self.mini_window.overrideredirect=True  # Borderless
+        
+        # Get current terminal display size and position
+        terminal_x = self.terminal_display.winfo_rootx()
+        terminal_y = self.terminal_display.winfo_rooty()
+        terminal_width = self.terminal_display.winfo_width()
+        terminal_height = self.terminal_display.winfo_height()
+        
+        # Set initial size based on current terminal
+        self.mini_window.geometry(f"{terminal_width}x{terminal_height + 30}+{terminal_x}+{terminal_y}")
+        
+        # Configure the window content
+        self.mini_window.configure(bg="black")
+        self.mini_window.columnconfigure(0, weight=1)
+        self.mini_window.rowconfigure(0, weight=1)
+        
+        # Create a grip for resizing the window
+        self.grip = ttk.Sizegrip(self.mini_window)
+        self.grip.place(relx=1.0, rely=1.0, anchor="se")
+        
+        # Create title bar (initially hidden)
+        self.mini_titlebar = tk.Frame(self.mini_window, bg="#333333", height=20)
+        self.mini_titlebar.pack(fill=tk.X, side=tk.TOP)
+        self.mini_titlebar.pack_forget()  # Hide initially
+        
+        # Add exit button to titlebar
+        self.exit_button = tk.Button(self.mini_titlebar, text="×", bg="#333333", fg="white", 
+                                   font=("Arial", 12), bd=0, command=self.exit_mini_mode)
+        self.exit_button.pack(side=tk.RIGHT)
+        
+        # Add label to titlebar
+        tk.Label(self.mini_titlebar, text="Terminal Mini Mode", bg="#333333", fg="white", 
+                font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
+        
+        # Create a new terminal display
+        self.mini_terminal = tk.Text(self.mini_window, wrap=tk.WORD, bg="black", 
+                                   font=self.terminal_display.cget("font"), fg="white")
+        self.mini_terminal.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
+        
+        # Copy content from main terminal
+        content = self.terminal_display.get("1.0", tk.END)
+        self.mini_terminal.insert("1.0", content)
+        self.mini_terminal.configure(state=tk.DISABLED)
+        self.define_mini_terminal_tags()
+        
+        # Create input field at bottom
+        self.mini_input_var = tk.StringVar()
+        self.mini_input = ttk.Entry(self.mini_window, textvariable=self.mini_input_var)
+        self.mini_input.pack(fill=tk.X, side=tk.BOTTOM, padx=2, pady=(0, 2))
+        self.mini_input.bind("<Return>", self.send_mini_message)
+        self.mini_input.focus_set()  # Auto-focus the input field
+        
+        # Add character limit to mini input
+        self.mini_input_var.trace('w', self.limit_mini_input_length)
+        
+        # Make window draggable
+        self.mini_window.bind("<ButtonPress-1>", self.start_move)
+        self.mini_window.bind("<ButtonRelease-1>", self.stop_move)
+        self.mini_window.bind("<B1-Motion>", self.do_move)
+        
+        # Show controls on hover
+        self.mini_window.bind("<Enter>", self.show_mini_controls)
+        self.mini_window.bind("<Leave>", self.hide_mini_controls)
+        
+        # Set up redirector for terminal content
+        self.is_in_mini_mode = True
+        
+    def exit_mini_mode(self):
+        """Return from mini mode to normal mode."""
+        if hasattr(self, 'mini_window') and self.mini_window is not None:
+            self.is_in_mini_mode = False
+            self.mini_window.destroy()
+            self.mini_window = None
+            
+            # Focus back on main input
+            self.input_box.focus_set()
+
+    def define_mini_terminal_tags(self):
+        """Define the same ANSI color tags for the mini terminal."""
+        # Copy the tags from main terminal
+        for tag in self.terminal_display.tag_names():
+            try:
+                tag_config = self.terminal_display.tag_configure(tag)
+                self.mini_terminal.tag_configure(tag, foreground=tag_config['foreground'])
+                
+                # Copy hyperlink binding if it exists
+                if tag == "hyperlink":
+                    self.mini_terminal.tag_bind(tag, "<Button-1>", self.open_hyperlink_from_mini)
+                    self.mini_terminal.tag_bind(tag, "<Enter>", self.show_mini_thumbnail_preview)
+                    self.mini_terminal.tag_bind(tag, "<Leave>", self.hide_thumbnail_preview)
+            except Exception as e:
+                print(f"Error copying tag {tag}: {e}")
+            
+    def send_mini_message(self, event=None):
+        """Send message from mini mode input field."""
+        if not self.connected or not self.writer:
+            return
+            
+        message = self.mini_input_var.get().strip()
+        self.mini_input_var.set("")
+        
+        if message:
+            # Use the same sending mechanism as main input
+            full_message = message + "\r\n"
+            
+            async def send():
+                try:
+                    self.writer.write(full_message)
+                    await self.writer.drain()
+                except Exception as e:
+                    print(f"Error sending mini message: {e}")
+                        
+            asyncio.run_coroutine_threadsafe(send(), self.loop)
+
+    def limit_mini_input_length(self, *args):
+        """Limit mini input field to 250 characters."""
+        value = self.mini_input_var.get()
+        if len(value) > 250:
+            self.mini_input_var.set(value[:250])
+
+    def start_move(self, event):
+        """Start window move operation."""
+        self.x = event.x
+        self.y = event.y
+
+    def stop_move(self, event):
+        """Stop window move operation."""
+        self.x = None
+        self.y = None
+
+    def do_move(self, event):
+        """Move the window."""
+        if not hasattr(self, 'grip') or not self.grip.winfo_containing(event.x_root, event.y_root):
+            # Skip if cursor is over the resize grip
+            deltax = event.x - self.x
+            deltay = event.y - self.y
+            x = self.mini_window.winfo_x() + deltax
+            y = self.mini_window.winfo_y() + deltay
+            self.mini_window.geometry(f"+{x}+{y}")
+
+    def show_mini_controls(self, event):
+        """Show controls when mouse enters mini window."""
+        if hasattr(self, 'mini_titlebar'):
+            self.mini_titlebar.pack(fill=tk.X, side=tk.TOP)
+
+    def hide_mini_controls(self, event):
+        """Hide controls when mouse leaves mini window."""
+        # Check if pointer is still in titlebar
+        x, y = self.mini_window.winfo_pointerxy()
+        widget_under_cursor = self.mini_window.winfo_containing(x, y)
+        
+        if not (widget_under_cursor and 
+                hasattr(self, 'mini_titlebar') and 
+                widget_under_cursor.winfo_toplevel() == self.mini_titlebar.winfo_toplevel()):
+            if hasattr(self, 'mini_titlebar'):
+                self.mini_titlebar.pack_forget()
+    
+    def parse_mini_terminal_text(self, text):
+        """Parse text with ANSI codes for the mini terminal."""
+        if not text:
+            return
+            
+        # For better performance, use a simplified approach for mini terminal
+        try:
+            # Extract URLs for hyperlinking
+            url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+            
+            i = 0
+            while i < len(text):
+                if text[i:i+2] == '\x1b[':  # ANSI escape sequence
+                    # Find the end of the sequence
+                    m_pos = text.find('m', i+2)
+                    if m_pos != -1:
+                        # Skip the escape sequence
+                        i = m_pos + 1
+                    else:
+                        i += 1
+                else:
+                    # Find next escape sequence
+                    next_esc = text.find('\x1b[', i)
+                    if next_esc == -1:
+                        # No more escape sequences, process the rest
+                        segment = text[i:]
+                        self.insert_mini_text_with_hyperlinks(segment)
+                        break
+                    else:
+                        # Process the text up to the next escape sequence
+                        segment = text[i:next_esc]
+                        self.insert_mini_text_with_hyperlinks(segment)
+                        i = next_esc
+        except Exception as e:
+            print(f"Error in parse_mini_terminal_text: {e}")
+            # Fallback to plain text insert
+            plain_text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+            self.mini_terminal.insert(tk.END, plain_text)
+
+    def insert_mini_text_with_hyperlinks(self, text):
+        """Insert text into mini terminal with hyperlink detection."""
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        last_end = 0
+        
+        for match in url_pattern.finditer(text):
+            start, end = match.span()
+            # Insert non-URL text
+            if start > last_end:
+                self.mini_terminal.insert(tk.END, text[last_end:start])
+            
+            # Clean and insert URL
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            self.mini_terminal.insert(tk.END, url, "hyperlink")
+            
+            last_end = end
+        
+        # Insert remaining text
+        if last_end < len(text):
+            self.mini_terminal.insert(tk.END, text[last_end:])
+
+    def open_hyperlink_from_mini(self, event):
+        """Handle clicking a hyperlink in the mini terminal."""
+        try:
+            index = self.mini_terminal.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
+            start_index = self.mini_terminal.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.mini_terminal.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.mini_terminal.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.mini_terminal.index("end")
+                
+            # Get the URL
+            url = self.mini_terminal.get(start_index, end_index).strip()
+            
+            # Use the same handling as main terminal
+            if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
+                'redirect.mp3' in url.lower() or
+                'podcast' in url.lower() or
+                'pod' in url.lower() and '.mp3' in url.lower() or
+                any(x in url.lower() for x in ['podtrac.com', 'podderapp.com', 'audioboom.com'])):
+                self.play_audio_stream(url)
+            else:
+                webbrowser.open(url)
+        except Exception as e:
+            print(f"Error opening hyperlink from mini: {e}")
+            traceback.print_exc()
+
+    def show_mini_thumbnail_preview(self, event):
+        """Show thumbnail preview when hovering links in mini terminal."""
+        try:
+            index = self.mini_terminal.index(f"@{event.x},{event.y}")
+            start_index = self.mini_terminal.search("https://", index, backwards=True, stopindex="1.0")
+            if not start_index:
+                start_index = self.mini_terminal.search("http://", index, backwards=True, stopindex="1.0")
+            if start_index:
+                end_index = self.mini_terminal.search(r"\s", start_index, stopindex="end", regexp=True)
+                if not end_index:
+                    end_index = self.mini_terminal.index("end")
+                url = self.mini_terminal.get(start_index, end_index).strip()
+                self.show_thumbnail(url, event)
+        except Exception as e:
+            print(f"Error in thumbnail preview: {e}")
+
+    def show_thumbnail_preview(self, event):
+        """Show a thumbnail preview of the hyperlink with improved error handling."""
+        try:
+            index = self.terminal_display.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
+            start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.terminal_display.index("end")
+                
+            # Now safely get the URL
+            url = self.terminal_display.get(start_index, end_index).strip()
+            if url:
+                self.show_thumbnail(url, event)
+        except Exception as e:
+            print(f"Error in thumbnail preview: {e}")
+
+    def show_directed_message_thumbnail_preview(self, event):
+        """Show a thumbnail preview of the hyperlink from directed messages with improved error handling."""
+        try:
+            index = self.directed_msg_display.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
+            start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
+            if not start_index:
+                start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
+            end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
+            if not end_index:
+                end_index = self.directed_msg_display.index("end")
+                
+            # Now safely get the URL
+            url = self.directed_msg_display.get(start_index, end_index).strip()
+            if url:
+                self.show_thumbnail(url, event)
+        except Exception as e:
+            print(f"Error in directed message thumbnail preview: {e}")
      
 
         # Add Messages to You checkbox
@@ -851,6 +1415,7 @@ class BBSTerminalApp:
         # Add new button styles
         configure_button_style("Teleconference", "#20c997")  # Teal
         configure_button_style("BRB", "#6610f2")  # Purple
+        configure_button_style("MiniMode", "#9932CC")  # Dark Orchid
 
         # Configure bubble styles
         style.configure("Bubble.TButton",
@@ -1071,7 +1636,7 @@ class BBSTerminalApp:
 
         # Users panel
         users_frame = ttk.Frame(paned, width=panel_sizes["users"])
-        users_frame.pack_propagate(False)  # Prevent shrinking below specified width
+        users_frame.pack_propagate=False  # Prevent shrinking below specified width
         users_frame.columnconfigure(0, weight=1)
         users_frame.rowconfigure(1, weight=1)
         
@@ -1102,7 +1667,7 @@ class BBSTerminalApp:
 
         # Links panel
         links_frame = ttk.Frame(paned, width=panel_sizes["links"])
-        links_frame.pack_propagate(False)  # Prevent shrinking below specified width
+        links_frame.pack_propagate=False  # Prevent shrinking below specified width
         links_frame.columnconfigure(0, weight=1)
         links_frame.rowconfigure(1, weight=1)
         
@@ -1446,18 +2011,283 @@ class BBSTerminalApp:
         self.start_keep_alive()
 
 
-        # Add these new methods to the BBSTerminalApp class:
 
+
+    def show_triggers_window(self):
+        """Open a Toplevel window to manage triggers."""
+        if self.triggers_window and self.triggers_window.winfo_exists():
+            self.triggers_window.lift()
+            self.triggers_window.attributes('-topmost', True)
+            return
+
+        self.triggers_window = tk.Toplevel(self.master)
+        self.triggers_window.title("Automation Triggers")
+        self.triggers_window.attributes('-topmost', True)  # Keep window on top
+
+        row_index = 0
+        triggers_frame = ttk.Frame(self.triggers_window)
+        triggers_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.trigger_vars = []
+        self.response_vars = []
+
+        for i in range(10):
+            ttk.Label(triggers_frame, text=f"Trigger {i+1}:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
+            trigger_var = tk.StringVar(value=self.triggers[i]['trigger'] if i < len(self.triggers) else "")
+            response_var = tk.StringVar(value=self.triggers[i]['response'] if i < len(self.triggers) else "")
+            self.trigger_vars.append(trigger_var)
+            self.response_vars.append(response_var)
+            ttk.Entry(triggers_frame, textvariable=trigger_var, width=30).grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
+            ttk.Entry(triggers_frame, textvariable=response_var, width=30).grid(row=row_index, column=2, padx=5, pady=5, sticky=tk.W)
+            row_index += 1
+
+        save_button = ttk.Button(triggers_frame, text="Save", command=self.save_triggers)
+        save_button.grid(row=row_index, column=0, columnspan=3, pady=10)
+
+    def save_triggers(self):
+        """Save triggers from the triggers window."""
+        self.triggers = []
+        for trigger_var, response_var in zip(self.trigger_vars, self.response_vars):
+            self.triggers.append({
+                'trigger': trigger_var.get().strip(),
+                'response': response_var.get().strip()
+            })
+        self.save_triggers_to_file()
+        self.triggers_window.destroy()
+
+
+
+
+        # 1.9️⃣ LOCAL STORAGE FOR USER/PASS
+    def load_username(self):
+        if os.path.exists("username.json"):
+            with open("username.json", "r") as file:
+                return json.load(file)
+        return ""
+
+    def save_username(self):
+        with open("username.json", "w") as file:
+            json.dump(self.username.get(), file)
+
+    def load_password(self):
+        if os.path.exists("password.json"):
+            with open("password.json", "r") as file:
+                return json.load(file)
+        return ""
+
+    def save_password(self):
+        with open("password.json", "w") as file:
+            json.dump(self.password.get(), file)
+
+    def load_triggers(self):
+        """Load triggers from a local file or initialize an empty list."""
+        if os.path.exists("triggers.json"):
+            with open("triggers.json", "r") as file:
+                return json.load(file)
+        return []
+
+    def save_triggers_to_file(self):
+        """Save triggers to a local file."""
+        with open("triggers.json", "w") as file:
+            json.dump(self.triggers, file)
+
+    def load_favorites(self):
+        if os.path.exists("favorites.json"):
+            with open("favorites.json", "r") as file:
+                return json.load(file)
+        return []
+
+    def save_favorites(self):
+        with open("favorites.json", "w") as file:
+            json.dump(self.favorites, file)    
+
+    def load_font_settings(self):
+        """Load font settings from a local file or return defaults."""
+        try:
+            if os.path.exists("font_settings.json"):
+                with open("font_settings.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading font settings: {e}")
+        return {
+            'font_name': "Courier New",
+            'font_size': 10,
+            'fg': 'white',
+            'bg': 'black'
+        }
+
+
+    def load_chat_members_file(self):
+        """Load chat members from chat_members.json, or return an empty set if not found."""
+        if os.path.exists("chat_members.json"):
+            with open("chat_members.json", "r") as file:
+                try:
+                    return set(json.load(file))
+                except Exception as e:
+                    print(f"[DEBUG] Error loading chat members file: {e}")
+                    return set()
+        return set()
+
+    def save_chat_members_file(self):
+        """Save the current chat members set to chat_members.json."""
+        try:
+            with open("chat_members.json", "w") as file:
+                json.dump(list(self.chat_members), file)
+        except Exception as e:
+            print(f"[DEBUG] Error saving chat members file: {e}")
+
+    def load_last_seen_file(self):
+        """Load last seen timestamps from last_seen.json, or return an empty dictionary if not found."""
+        if os.path.exists("last_seen.json"):
+            with open("last_seen.json", "r") as file:
+                try:
+                    return json.load(file)
+                except Exception as e:
+                    print(f"[DEBUG] Error loading last seen file: {e}")
+                    return {}
+        return {}
+
+    def save_last_seen_file(self):
+        """Save the current last seen timestamps to last_seen.json."""
+        try:
+            with open("last_seen.json", "w") as file:
+                json.dump(self.last_seen, file)
+        except Exception as e:
+            print(f"Error saving last seen file: {e}")
+
+    def refresh_chat_members(self):
+        """Periodically refresh the chat members list."""
+        self.update_members_display()
+        self.master.after(5000, self.refresh_chat_members)
+
+    def append_directed_message(self, text):
+        """Append text to the directed messages display with hyperlink support."""
+        if not text.endswith('\n'):
+            text += '\n'
+            
+        self.directed_msg_display.configure(state=tk.NORMAL)
         
-
-
-
-
-
-
-
+        # Get current content
+        current_content = self.directed_msg_display.get('1.0', tk.END)
         
+        # Only append if the message isn't already present
+        if text not in current_content:
+            # Use insert_with_hyperlinks for directed messages
+            self.insert_directed_message_with_hyperlinks(text, "normal")
+            self.directed_msg_display.see(tk.END)
+            
+        self.directed_msg_display.configure(state=tk.DISABLED)
 
+    def load_frame_sizes(self):
+        """Load saved frame sizes from file"""
+        try:
+            if os.path.exists("frame_sizes.json"):
+                with open("frame_sizes.json", "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading frame sizes: {e}")
+        return {}
+
+    def save_frame_sizes(self):
+        """Save current frame sizes and panel positions to file"""
+        try:
+            # Get standard frame sizes
+            sizes = {
+                'paned_pos': self.paned.sash_coord(0)[1] if hasattr(self.paned, 'sash_coord') else 200,
+                'window_geometry': self.master.geometry()
+            }
+            
+            # Add panel sizes if chatlog window exists
+            if hasattr(self, 'chatlog_window') and self.chatlog_window.winfo_exists():
+                try:
+                    paned = self.chatlog_window.nametowidget("main_paned")
+                    if paned:
+                        try:
+                            sizes.update({
+                                "users": paned.sashpos(0),
+                                "links": paned.winfo_width() - paned.sashpos(1)
+                            })
+                        except tk.TclError:
+                            print("Warning: Could not get sash positions")
+                except Exception as e:
+                    print(f"Warning: Error getting panel positions: {e}")
+                    
+            with open("frame_sizes.json", "w") as f:
+                json.dump(sizes, f)
+        except Exception as e:
+            print(f"Error saving frame sizes: {e}")
+
+    def load_saved_settings(self):
+        """Load all saved UI settings."""
+        try:
+            if os.path.exists("settings.json"):
+                with open("settings.json", "r") as f:
+                    settings = json.load(f)
+                    # Apply loaded settings - removed PBX and Majorlink modes
+                    self.font_name.set(settings.get('font_name', "Courier New"))
+                    self.font_size.set(settings.get('font_size', 10))
+                    self.logon_automation_enabled.set(settings.get('logon_automation', False))
+                    self.keep_alive_enabled.set(settings.get('keep_alive', False))
+                    self.show_messages_to_you.set(settings.get('show_messages', True))
+                    self.bannerless_mode.set(settings.get('bannerless_mode', False))
+                    return settings
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+        return {}
+
+    def apply_saved_settings(self):
+        """Apply saved settings after UI is built."""
+        settings = self.load_saved_settings()
+        self.auto_logon_enabled.set(self.saved_settings.get('auto_logon_enabled', False))
+
+        # Apply paned window position if saved
+        if self.paned and 'paned_pos' in settings and settings['paned_pos']:
+            try:
+                # Use different methods based on paned window type
+                if isinstance(self.paned, ttk.PanedWindow):
+                    self.paned.paneconfig(self.output_frame, weight=settings['paned_pos'])
+                else:
+                    # For tk.PanedWindow
+                    def set_sash():
+                        try:
+                            self.paned.sash_place(0, settings['paned_pos'], 0)
+                        except Exception as e:
+                            print(f"Error setting sash position: {e}")
+                    self.master.after(100, set_sash)
+            except Exception as e:
+                print(f"Error applying paned window settings: {e}")
+
+        # Apply window geometry if saved
+        if 'window_geometry' in settings:
+            try:
+                self.master.geometry(settings['window_geometry'])
+            except Exception as e:
+                print(f"Error setting window geometry: {e}")
+
+        # Apply Messages to You visibility
+        if not settings.get('show_messages', True):
+            self.toggle_messages_frame()
+
+        # Update display font
+        self.update_display_font()
+        
+    def load_command_history(self):
+        """Load command history from file."""
+        try:
+            if os.path.exists("command_history.json"):
+                with open("command_history.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading command history: {e}")
+        return []
+
+    def save_command_history(self):
+        """Save command history to file."""
+        try:
+            with open("command_history.json", "w") as file:
+                json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
+        except Exception as e:
+            print(f"Error saving command history: {e}")
     async def telnet_client_task(self, host, port):
         """Async function connecting via telnetlib3 (CP437 + ANSI)."""
         try:
@@ -1616,6 +2446,12 @@ class BBSTerminalApp:
         
         return result
 
+
+    def limit_input_length(self, *args):
+        """Limit input field to 255 characters"""
+        value = self.input_var.get()
+        if len(value) > 255:
+            self.input_var.set(value[:255])
 
     def play_chat_sound(self):
         """Play chat sound with immediate interruption of any playing sound."""
@@ -2009,6 +2845,60 @@ class BBSTerminalApp:
             print(f"[DEBUG] Found URLs in unmatched message: {clean_line}")
             self.parse_and_store_hyperlinks(clean_line, "Unknown")
 
+
+    def insert_with_hyperlinks(self, text, tags):
+        """Enhanced hyperlink detection and insertion."""
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        last_end = 0
+        
+        for match in url_pattern.finditer(text):
+            start, end = match.span()
+            # Insert non-URL text
+            if start > last_end:
+                self.terminal_display.insert(tk.END, text[last_end:start], tags)
+            
+            # Clean and insert URL
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            self.terminal_display.insert(tk.END, url, ("hyperlink",) + (tags if isinstance(tags, tuple) else (tags,)))
+
+            last_end = end
+        
+        # Insert remaining text
+        if last_end < len(text):
+            self.terminal_display.insert(tk.END, text[last_end:], tags)
+
+    def insert_directed_message_with_hyperlinks(self, text, tag):
+        """Insert directed message text with hyperlinks detected and tagged."""
+        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+        last_end = 0
+        
+        for match in url_pattern.finditer(text):
+            start, end = match.span()
+            
+            # Insert non-URL text before the hyperlink
+            if start > last_end:
+                self.directed_msg_display.insert(tk.END, text[last_end:start], tag)
+            
+            # Clean the URL to remove trailing punctuation
+            url = text[start:end].rstrip('.,;:)]}\'"')
+            if url.startswith('www.'):
+                url = 'http://' + url
+            
+            # Insert URL with hyperlink tag
+            self.directed_msg_display.insert(tk.END, url, ("hyperlink",))
+            
+            # Store URL for history/debugging
+            print(f"[DEBUG] Directed message hyperlink found: {url}")
+            self.store_hyperlink(url, "directed_message")
+            
+            last_end = end
+        
+        # Insert any remaining text after the last URL
+        if last_end < len(text):
+            self.directed_msg_display.insert(tk.END, text[last_end:], tag)
+
     def send_message(self, event=None):
         """Send the user's typed message and manage command history."""
         if not self.connected or not self.writer:
@@ -2064,29 +2954,7 @@ class BBSTerminalApp:
         self.command_index = -1
         self.current_command = ""
 
-    def send_username(self):
-        """Send the username to the BBS."""
-        if self.connected and self.writer:
-            message = self.username.get() + "\r\n"
-            self.writer.write(message)
-            try:
-                self.loop.call_soon_threadsafe(self.writer.drain)
-                if self.remember_username.get():
-                    self.save_username()
-            except Exception as e:
-                print(f"Error sending username: {e}")
-
-    def send_password(self):
-        """Send the password to the BBS."""
-        if self.connected and self.writer:
-            message = self.password.get() + "\r\n"
-            self.writer.write(message)
-            try:
-                self.loop.call_soon_threadsafe(self.writer.drain)
-                if self.remember_password.get():
-                    self.save_password()
-            except Exception as e:
-                print(f"Error sending password: {e}")
+    
 
     def check_triggers(self, message):
         """Check incoming messages for triggers and send automated response if matched."""
@@ -2155,168 +3023,6 @@ class BBSTerminalApp:
                 
             await asyncio.sleep(total_seconds)
 
-    def start_keep_alive(self):
-        """Start the keep-alive coroutine if enabled."""
-        if self.keep_alive_enabled.get():
-            self.keep_alive_stop_event.clear()
-            if self.loop:
-                self.keep_alive_task = self.loop.create_task(self.keep_alive())
-
-    def stop_keep_alive(self):
-        """Stop the keep-alive coroutine."""
-        self.keep_alive_stop_event.set()
-        if self.keep_alive_task:
-            self.keep_alive_task.cancel()
-
-    def toggle_keep_alive(self):
-        """Toggle the keep-alive coroutine based on the checkbox state."""
-        if self.keep_alive_enabled.get():
-            self.start_keep_alive()
-        else:
-            self.stop_keep_alive()
-
-    # 1.8️⃣ FAVORITES
-    def show_favorites_window(self):
-        """Open a Toplevel window to manage favorite BBS addresses."""
-        if self.favorites_window and self.favorites_window.winfo_exists():
-            self.favorites_window.lift()
-            self.favorites_window.attributes('-topmost', True)
-            return
-
-        self.favorites_window = tk.Toplevel(self.master)
-        self.favorites_window.title("Favorite BBS Addresses")
-        self.favorites_window.attributes('-topmost', True)  # Keep window on top
-
-        row_index = 0
-        self.favorites_listbox = tk.Listbox(self.favorites_window, height=10, width=50)
-        self.favorites_listbox.grid(row=row_index, column=0, columnspan=2, padx=5, pady=5)
-        self.update_favorites_listbox()
-
-        row_index += 1
-        self.new_favorite_var = tk.StringVar()
-        ttk.Entry(self.favorites_window, textvariable=self.new_favorite_var, width=40).grid(
-            row=row_index, column=0, padx=5, pady=5)
-
-        add_button = ttk.Button(self.favorites_window, text="Add", command=self.add_favorite)
-        add_button.grid(row=row_index, column=1, padx=5, pady=5)
-
-        row_index += 1
-        remove_button = ttk.Button(self.favorites_window, text="Remove", command=self.remove_favorite)
-        remove_button.grid(row=row_index, column=0, columnspan=2, pady=5)
-
-        self.favorites_listbox.bind("<<ListboxSelect>>", self.populate_host_field)
-
-    def update_favorites_listbox(self):
-        self.favorites_listbox.delete(0, tk.END)
-        for address in self.favorites:
-            self.favorites_listbox.insert(tk.END, address)
-
-    def add_favorite(self):
-        new_address = self.new_favorite_var.get().strip()
-        if new_address and new_address not in self.favorites:
-            self.favorites.append(new_address)
-            self.update_favorites_listbox()
-            self.new_favorite_var.set("")
-            self.save_favorites()
-
-    def remove_favorite(self):
-        selected_index = self.favorites_listbox.curselection()
-        if selected_index:
-            address = self.favorites_listbox.get(selected_index)
-            self.favorites.remove(address)
-            self.update_favorites_listbox()
-            self.save_favorites()
-
-    def populate_host_field(self, event):
-        selected_index = self.favorites_listbox.curselection()
-        if selected_index:
-            address = self.favorites_listbox.get(selected_index)
-            self.host.set(address)
-
-    def load_favorites(self):
-        if os.path.exists("favorites.json"):
-            with open("favorites.json", "r") as file:
-                return json.load(file)
-        return []
-
-    def save_favorites(self):
-        with open("favorites.json", "w") as file:
-            json.dump(self.favorites, file)
-
-    # 1.9️⃣ LOCAL STORAGE FOR USER/PASS
-    def load_username(self):
-        if os.path.exists("username.json"):
-            with open("username.json", "r") as file:
-                return json.load(file)
-        return ""
-
-    def save_username(self):
-        with open("username.json", "w") as file:
-            json.dump(self.username.get(), file)
-
-    def load_password(self):
-        if os.path.exists("password.json"):
-            with open("password.json", "r") as file:
-                return json.load(file)
-        return ""
-
-    def save_password(self):
-        with open("password.json", "w") as file:
-            json.dump(self.password.get(), file)
-
-    def load_triggers(self):
-        """Load triggers from a local file or initialize an empty list."""
-        if os.path.exists("triggers.json"):
-            with open("triggers.json", "r") as file:
-                return json.load(file)
-        return []
-
-    def save_triggers_to_file(self):
-        """Save triggers to a local file."""
-        with open("triggers.json", "w") as file:
-            json.dump(self.triggers, file)
-
-    def show_triggers_window(self):
-        """Open a Toplevel window to manage triggers."""
-        if self.triggers_window and self.triggers_window.winfo_exists():
-            self.triggers_window.lift()
-            self.triggers_window.attributes('-topmost', True)
-            return
-
-        self.triggers_window = tk.Toplevel(self.master)
-        self.triggers_window.title("Automation Triggers")
-        self.triggers_window.attributes('-topmost', True)  # Keep window on top
-
-        row_index = 0
-        triggers_frame = ttk.Frame(self.triggers_window)
-        triggers_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        self.trigger_vars = []
-        self.response_vars = []
-
-        for i in range(10):
-            ttk.Label(triggers_frame, text=f"Trigger {i+1}:").grid(row=row_index, column=0, padx=5, pady=5, sticky=tk.E)
-            trigger_var = tk.StringVar(value=self.triggers[i]['trigger'] if i < len(self.triggers) else "")
-            response_var = tk.StringVar(value=self.triggers[i]['response'] if i < len(self.triggers) else "")
-            self.trigger_vars.append(trigger_var)
-            self.response_vars.append(response_var)
-            ttk.Entry(triggers_frame, textvariable=trigger_var, width=30).grid(row=row_index, column=1, padx=5, pady=5, sticky=tk.W)
-            ttk.Entry(triggers_frame, textvariable=response_var, width=30).grid(row=row_index, column=2, padx=5, pady=5, sticky=tk.W)
-            row_index += 1
-
-        save_button = ttk.Button(triggers_frame, text="Save", command=self.save_triggers)
-        save_button.grid(row=row_index, column=0, columnspan=3, pady=10)
-
-    def save_triggers(self):
-        """Save triggers from the triggers window."""
-        self.triggers = []
-        for trigger_var, response_var in zip(self.trigger_vars, self.response_vars):
-            self.triggers.append({
-                'trigger': trigger_var.get().strip(),
-                'response': response_var.get().strip()
-            })
-        self.save_triggers_to_file()
-        self.triggers_window.destroy()
 
     def append_terminal_text(self, text, default_tag="normal"):
         """Append text to the terminal display with improved error handling."""
@@ -2326,6 +3032,16 @@ class BBSTerminalApp:
             self.parse_ansi_and_insert(text)
             self.terminal_display.see(tk.END)
             self.terminal_display.configure(state=tk.DISABLED)
+            
+            # If in mini mode, also update mini terminal
+            if hasattr(self, 'is_in_mini_mode') and self.is_in_mini_mode and hasattr(self, 'mini_terminal'):
+                try:
+                    self.mini_terminal.configure(state=tk.NORMAL)
+                    self.parse_mini_terminal_text(text)
+                    self.mini_terminal.see(tk.END)
+                    self.mini_terminal.configure(state=tk.DISABLED)
+                except Exception as mini_err:
+                    print(f"[ERROR] Mini terminal update failed: {mini_err}")
         except Exception as e:
             print(f"[ERROR] Failed to update terminal display: {e}")
             traceback.print_exc()
@@ -2337,181 +3053,6 @@ class BBSTerminalApp:
             except Exception as e2:
                 print(f"[ERROR] Even simple terminal update failed: {e2}")
 
-    def insert_with_hyperlinks(self, text, tags):
-        """Enhanced hyperlink detection and insertion."""
-        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
-        last_end = 0
-        
-        for match in url_pattern.finditer(text):
-            start, end = match.span()
-            # Insert non-URL text
-            if start > last_end:
-                self.terminal_display.insert(tk.END, text[last_end:start], tags)
-            
-            # Clean and insert URL
-            url = text[start:end].rstrip('.,;:)]}\'"')
-            if url.startswith('www.'):
-                url = 'http://' + url
-            self.terminal_display.insert(tk.END, url, ("hyperlink",) + (tags if isinstance(tags, tuple) else (tags,)))
-
-            last_end = end
-        
-        # Insert remaining text
-        if last_end < len(text):
-            self.terminal_display.insert(tk.END, text[last_end:], tags)
-
-    def insert_directed_message_with_hyperlinks(self, text, tag):
-        """Insert directed message text with hyperlinks detected and tagged."""
-        url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
-        last_end = 0
-        
-        for match in url_pattern.finditer(text):
-            start, end = match.span()
-            
-            # Insert non-URL text before the hyperlink
-            if start > last_end:
-                self.directed_msg_display.insert(tk.END, text[last_end:start], tag)
-            
-            # Clean the URL to remove trailing punctuation
-            url = text[start:end].rstrip('.,;:)]}\'"')
-            if url.startswith('www.'):
-                url = 'http://' + url
-            
-            # Insert URL with hyperlink tag
-            self.directed_msg_display.insert(tk.END, url, ("hyperlink",))
-            
-            # Store URL for history/debugging
-            print(f"[DEBUG] Directed message hyperlink found: {url}")
-            self.store_hyperlink(url, "directed_message")
-            
-            last_end = end
-        
-        # Insert any remaining text after the last URL
-        if last_end < len(text):
-            self.directed_msg_display.insert(tk.END, text[last_end:], tag)
-
-    def open_hyperlink(self, event):
-        """Open the hyperlink with improved error handling."""
-        try:
-            index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
-            
-            # First try to search for https://
-            start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-            
-            # If not found, try for http://
-            if not start_index:
-                start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
-                
-            # If still not found, exit
-            if not start_index:
-                print("No URL found at cursor position")
-                return
-                
-            # Search for whitespace after the URL
-            end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
-            
-            # If no whitespace found, use end of text
-            if not end_index:
-                end_index = self.terminal_display.index("end")
-                
-            # Get the URL
-            url = self.terminal_display.get(start_index, end_index).strip()
-            
-            print(f"[DEBUG] Clicked URL: {url}")
-            
-            # Check if this is an audio stream - enhanced detection
-            if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
-                'redirect.mp3' in url.lower() or
-                'podcast' in url.lower() or
-                'pod' in url.lower() and '.mp3' in url.lower() or
-                any(x in url.lower() for x in ['podtrac.com', 'podderapp.com', 'audioboom.com'])):
-                print(f"[DEBUG] Detected as audio stream, playing...")
-                self.play_audio_stream(url)
-            else:
-                print(f"[DEBUG] Opening in web browser...")
-                webbrowser.open(url)
-        except Exception as e:
-            print(f"Error opening hyperlink: {e}")
-            traceback.print_exc()
-
-    def open_directed_message_hyperlink(self, event):
-        """Open the hyperlink from directed messages in browser or audio player if it's an audio stream."""
-        index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
-        start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
-        if not start_index:
-            start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
-        end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
-        if not end_index:
-            end_index = self.directed_msg_display.index("end")
-        url = self.directed_msg_display.get(start_index, end_index).strip()
-        
-        # Check if this is an audio stream
-        if url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')):
-            self.play_audio_stream(url)
-        else:
-            webbrowser.open(url)
-
-    def show_thumbnail_preview(self, event):
-        """Show a thumbnail preview of the hyperlink with improved error handling."""
-        try:
-            index = self.terminal_display.index(f"@{event.x},{event.y}")
-            
-            # First try to search for https://
-            start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-            
-            # If not found, try for http://
-            if not start_index:
-                start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
-                
-            # If still not found, exit
-            if not start_index:
-                print("No URL found at cursor position")
-                return
-                
-            # Search for whitespace after the URL
-            end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
-            
-            # If no whitespace found, use end of text
-            if not end_index:
-                end_index = self.terminal_display.index("end")
-                
-            # Now safely get the URL
-            url = self.terminal_display.get(start_index, end_index).strip()
-            if url:
-                self.show_thumbnail(url, event)
-        except Exception as e:
-            print(f"Error in thumbnail preview: {e}")
-
-    def show_directed_message_thumbnail_preview(self, event):
-        """Show a thumbnail preview of the hyperlink from directed messages with improved error handling."""
-        try:
-            index = self.directed_msg_display.index(f"@{event.x},{event.y}")
-            
-            # First try to search for https://
-            start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
-            
-            # If not found, try for http://
-            if not start_index:
-                start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
-                
-            # If still not found, exit
-            if not start_index:
-                print("No URL found at cursor position")
-                return
-                
-            # Search for whitespace after the URL
-            end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
-            
-            # If no whitespace found, use end of text
-            if not end_index:
-                end_index = self.directed_msg_display.index("end")
-                
-            # Now safely get the URL
-            url = self.directed_msg_display.get(start_index, end_index).strip()
-            if url:
-                self.show_thumbnail(url, event)
-        except Exception as e:
-            print(f"Error in directed message thumbnail preview: {e}")
 
     def show_thumbnail(self, url, event):
         """Display a thumbnail preview near the mouse pointer."""
@@ -2565,6 +3106,7 @@ class BBSTerminalApp:
                 if self.preview_window and label.winfo_exists():
                     label.config(text="Preview not available")
             self.master.after(0, update_label_error)
+
 
     def _handle_image_preview(self, image_data, label, is_gif=False):
         """Process and display image thumbnail."""
@@ -3341,131 +3883,10 @@ class BBSTerminalApp:
             if not self.actions_requested_this_session:
                 self.request_actions_after_banner()
 
-    def load_chat_members_file(self):
-        """Load chat members from chat_members.json, or return an empty set if not found."""
-        if os.path.exists("chat_members.json"):
-            with open("chat_members.json", "r") as file:
-                try:
-                    return set(json.load(file))
-                except Exception as e:
-                    print(f"[DEBUG] Error loading chat members file: {e}")
-                    return set()
-        return set()
+    
 
-    def save_chat_members_file(self):
-        """Save the current chat members set to chat_members.json."""
-        try:
-            with open("chat_members.json", "w") as file:
-                json.dump(list(self.chat_members), file)
-        except Exception as e:
-            print(f"[DEBUG] Error saving chat members file: {e}")
-
-    def load_last_seen_file(self):
-        """Load last seen timestamps from last_seen.json, or return an empty dictionary if not found."""
-        if os.path.exists("last_seen.json"):
-            with open("last_seen.json", "r") as file:
-                try:
-                    return json.load(file)
-                except Exception as e:
-                    print(f"[DEBUG] Error loading last seen file: {e}")
-                    return {}
-        return {}
-
-    def save_last_seen_file(self):
-        """Save the current last seen timestamps to last_seen.json."""
-        try:
-            with open("last_seen.json", "w") as file:
-                json.dump(self.last_seen, file)
-        except Exception as e:
-            print(f"Error saving last seen file: {e}")
-
-    def refresh_chat_members(self):
-        """Periodically refresh the chat members list."""
-        self.update_members_display()
-        self.master.after(5000, self.refresh_chat_members)
-
-    def append_directed_message(self, text):
-        """Append text to the directed messages display with hyperlink support."""
-        if not text.endswith('\n'):
-            text += '\n'
-            
-        self.directed_msg_display.configure(state=tk.NORMAL)
-        
-        # Get current content
-        current_content = self.directed_msg_display.get('1.0', tk.END)
-        
-        # Only append if the message isn't already present
-        if text not in current_content:
-            # Use insert_with_hyperlinks for directed messages
-            self.insert_directed_message_with_hyperlinks(text, "normal")
-            self.directed_msg_display.see(tk.END)
-            
-        self.directed_msg_display.configure(state=tk.DISABLED)
-
-    def play_ding_sound(self):
-        """Play a standard ding sound effect."""
-        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-
-    def load_chat_members_file(self):
-        """Load chat members from chat_members.json, or return an empty set if not found."""
-        if os.path.exists("chat_members.json"):
-            with open("chat_members.json", "r") as file:
-                try:
-                    return set(json.load(file))
-                except Exception as e:
-                    print(f"[DEBUG] Error loading chat members file: {e}")
-                    return set()
-        return set()
-
-    def save_chat_members_file(self):
-        """Save the current chat members set to chat_members.json."""
-        try:
-            with open("chat_members.json", "w") as file:
-                json.dump(list(self.chat_members), file)
-        except Exception as e:
-            print(f"[DEBUG] Error saving chat members file: {e}")
-
-    def load_last_seen_file(self):
-        """Load last seen timestamps from last_seen.json, or return an empty dictionary if not found."""
-        if os.path.exists("last_seen.json"):
-            with open("last_seen.json", "r") as file:
-                try:
-                    return json.load(file)
-                except Exception as e:
-                    print(f"[DEBUG] Error loading last seen file: {e}")
-                    return {}
-        return {}
-
-    def save_last_seen_file(self):
-        """Save the current last seen timestamps to last_seen.json."""
-        try:
-            with open("last_seen.json", "w") as file:
-                json.dump(self.last_seen, file)
-        except Exception as e:
-            print("Error saving last seen file: {e}")
-
-    def refresh_chat_members(self):
-        """Periodically refresh the chat members list."""
-        self.update_members_display()
-        self.master.after(5000, self.refresh_chat_members)
-
-    def append_directed_message(self, text):
-        """Append text to the directed messages display."""
-        # Check if message already exists in the display
-        if not text.endswith('\n'):
-            text += '\n'
-            
-        self.directed_msg_display.configure(state=tk.NORMAL)
-        
-        # Get current content
-        current_content = self.directed_msg_display.get('1.0', tk.END)
-        
-        # Only append if the message isn't already present
-        if text not in current_content:
-            self.insert_directed_message_with_hyperlinks(text, "normal")
-            self.directed_msg_display.see(tk.END)
-            
-        self.directed_msg_display.configure(state=tk.DISABLED)
+    
+    
 
     def play_ding_sound(self):
         """Play a standard ding sound effect."""
@@ -3715,20 +4136,7 @@ class BBSTerminalApp:
         self.chatlog_listbox.selection_clear(0, tk.END)
         self.display_chatlog_messages(None)
 
-    def load_font_settings(self):
-        """Load font settings from a local file or return defaults."""
-        try:
-            if os.path.exists("font_settings.json"):
-                with open("font_settings.json", "r") as file:
-                    return json.load(file)
-        except Exception as e:
-            print(f"Error loading font settings: {e}")
-        return {
-            'font_name': "Courier New",
-            'font_size': 10,
-            'fg': 'white',
-            'bg': 'black'
-        }
+   
 
     def delete_selected_user(self):
         """Delete the selected user from the chatlog and users list."""
@@ -3752,111 +4160,11 @@ class BBSTerminalApp:
             # Show all messages after deletion
             self.display_chatlog_messages(None)
 
-    def on_scroll_change(self, *args):
-        """Custom scrollbar handler to ensure bottom line visibility."""
-        self.terminal_display.yview_moveto(args[0])
-        if float(args[1]) == 1.0:  # If scrolled to bottom
-            self.master.update_idletasks()
-            self.terminal_display.see(tk.END)
+    
 
-    def limit_input_length(self, *args):
-        """Limit input field to 255 characters"""
-        value = self.input_var.get()
-        if len(value) > 255:
-            self.input_var.set(value[:255])
+    
 
-    def load_frame_sizes(self):
-        """Load saved frame sizes from file"""
-        try:
-            if os.path.exists("frame_sizes.json"):
-                with open("frame_sizes.json", "r") as f:
-                    return json.load(f)
-        except Exception as e:
-            print(f"Error loading frame sizes: {e}")
-        return {}
-
-    def save_frame_sizes(self):
-        """Save current frame sizes and panel positions to file"""
-        try:
-            # Get standard frame sizes
-            sizes = {
-                'paned_pos': self.paned.sash_coord(0)[1] if hasattr(self.paned, 'sash_coord') else 200,
-                'window_geometry': self.master.geometry()
-            }
-            
-            # Add panel sizes if chatlog window exists
-            if hasattr(self, 'chatlog_window') and self.chatlog_window.winfo_exists():
-                try:
-                    paned = self.chatlog_window.nametowidget("main_paned")
-                    if paned:
-                        try:
-                            sizes.update({
-                                "users": paned.sashpos(0),
-                                "links": paned.winfo_width() - paned.sashpos(1)
-                            })
-                        except tk.TclError:
-                            print("Warning: Could not get sash positions")
-                except Exception as e:
-                    print(f"Warning: Error getting panel positions: {e}")
-                    
-            with open("frame_sizes.json", "w") as f:
-                json.dump(sizes, f)
-        except Exception as e:
-            print(f"Error saving frame sizes: {e}")
-
-    def load_saved_settings(self):
-        """Load all saved UI settings."""
-        try:
-            if os.path.exists("settings.json"):
-                with open("settings.json", "r") as f:
-                    settings = json.load(f)
-                    # Apply loaded settings - removed PBX and Majorlink modes
-                    self.font_name.set(settings.get('font_name', "Courier New"))
-                    self.font_size.set(settings.get('font_size', 10))
-                    self.logon_automation_enabled.set(settings.get('logon_automation', False))
-                    self.keep_alive_enabled.set(settings.get('keep_alive', False))
-                    self.show_messages_to_you.set(settings.get('show_messages', True))
-                    self.bannerless_mode.set(settings.get('bannerless_mode', False))
-                    return settings
-        except Exception as e:
-            print(f"Error loading settings: {e}")
-        return {}
-
-    def apply_saved_settings(self):
-        """Apply saved settings after UI is built."""
-        settings = self.load_saved_settings()
-        self.auto_logon_enabled.set(self.saved_settings.get('auto_logon_enabled', False))
-
-        # Apply paned window position if saved
-        if self.paned and 'paned_pos' in settings and settings['paned_pos']:
-            try:
-                # Use different methods based on paned window type
-                if isinstance(self.paned, ttk.PanedWindow):
-                    self.paned.paneconfig(self.output_frame, weight=settings['paned_pos'])
-                else:
-                    # For tk.PanedWindow
-                    def set_sash():
-                        try:
-                            self.paned.sash_place(0, settings['paned_pos'], 0)
-                        except Exception as e:
-                            print(f"Error setting sash position: {e}")
-                    self.master.after(100, set_sash)
-            except Exception as e:
-                print(f"Error applying paned window settings: {e}")
-
-        # Apply window geometry if saved
-        if 'window_geometry' in settings:
-            try:
-                self.master.geometry(settings['window_geometry'])
-            except Exception as e:
-                print(f"Error setting window geometry: {e}")
-
-        # Apply Messages to You visibility
-        if not settings.get('show_messages', True):
-            self.toggle_messages_frame()
-
-        # Update display font
-        self.update_display_font()
+    
 
     
 
@@ -4486,23 +4794,7 @@ class BBSTerminalApp:
         self.vlc_instance = None
         self.player = None
 
-    def load_command_history(self):
-        """Load command history from file."""
-        try:
-            if os.path.exists("command_history.json"):
-                with open("command_history.json", "r") as file:
-                    return json.load(file)
-        except Exception as e:
-            print(f"Error loading command history: {e}")
-        return []
-
-    def save_command_history(self):
-        """Save command history to file."""
-        try:
-            with open("command_history.json", "w") as file:
-                json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
-        except Exception as e:
-            print(f"Error saving command history: {e}")
+   
 
     
 
