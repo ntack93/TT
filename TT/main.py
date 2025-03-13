@@ -553,6 +553,36 @@ class BBSTerminalApp:
         password_check = ttk.Checkbutton(checkbox_frame, text="Show Password", variable=self.show_password, command=self.toggle_password)
         password_check.grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
 
+
+        # Add Messages to You checkbox
+        messages_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Messages to You",
+            variable=self.show_messages_to_you,
+            command=self.toggle_messages_frame
+        )
+        messages_check.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
+
+        # Add Bannerless Mode checkbox
+        bannerless_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Bannerless Mode",
+            variable=self.bannerless_mode
+        )
+        bannerless_check.grid(row=0, column=6, padx=5, pady=5, sticky=tk.W)
+
+        # Add Auto Logon checkbox
+        auto_logon_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Auto Logon",
+            variable=self.auto_logon_enabled
+        )
+        auto_logon_check.grid(row=0, column=7, padx=5, pady=5, sticky=tk.W)
+
+
+
+
+
         # Add the Keep Alive checkbox
         keep_alive_frame = ttk.Frame(self.conn_frame)
         keep_alive_frame.grid(row=0, column=8, padx=5, pady=5)
@@ -978,6 +1008,549 @@ class BBSTerminalApp:
             self.play_audio_stream(url)
         else:
             webbrowser.open(url)
+
+
+    
+     
+
+        
+
+        # At the end of build_ui, apply saved settings
+        self.master.after(100, self.apply_saved_settings)
+
+        # Modify input box bindings for command history
+        self.input_box.bind("<Up>", self.previous_command)
+        self.input_box.bind("<Down>", self.next_command)
+        
+        # Add focus bindings for input box to preserve partial input
+        self.input_box.bind("<FocusOut>", self.save_current_input)
+        self.input_box.bind("<FocusIn>", self.restore_current_input)
+
+        # Fix mousewheel binding in update_actions_listbox
+        def on_mousewheel(event):
+            if self.current_scrollable_frame == self.actions_canvas:
+                self.actions_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+        def on_enter_frame(event):
+            self.current_scrollable_frame = self.actions_canvas
+            self.master.bind_all("<MouseWheel>", on_mousewheel)
+
+        def on_leave_frame(event):
+            if self.current_scrollable_frame == self.actions_canvas:
+                self.current_scrollable_frame = None
+                self.master.unbind_all("<MouseWheel>")
+
+        self.actions_canvas.bind("<Enter>", on_enter_frame)
+        self.actions_canvas.bind("<Leave>", on_leave_frame)
+
+    def configure_button_styles(self):
+        """Configure custom styles for buttons including bubbles."""
+        style = ttk.Style()
+        
+        # Enable themed widgets to use ttk styles
+        style.theme_use('default')
+        
+        # Configure default style settings for all states
+        def configure_button_style(name, bg, fg="white"):
+            # Create custom style
+            style.configure(
+                f"{name}.TButton",
+                foreground=fg,
+                background=bg,
+                bordercolor=bg,
+                darkcolor=bg,
+                lightcolor=bg,
+                font=("Arial VGA 437", 9, "bold"),
+                relief="raised",
+                padding=(10, 5)
+            )
+            
+            # Map the same colors to all states
+            style.map(
+                f"{name}.TButton",
+                foreground=[("pressed", fg), ("active", fg)],
+                background=[("pressed", bg), ("active", bg)],
+                bordercolor=[("pressed", bg), ("active", bg)],
+                relief=[("pressed", "sunken"), ("active", "raised")]
+            )
+        
+        # Connection button styles (dynamic green/red)
+        configure_button_style("Connect", "#28a745")  # Green
+        configure_button_style("Disconnect", "#dc3545")  # Red
+        
+        # Action buttons (playful colors)
+        configure_button_style("Wave", "#17a2b8")     # Blue
+        configure_button_style("Smile", "#ffc107", "black")  # Yellow with black text
+        configure_button_style("Dance", "#e83e8c")    # Pink
+        configure_button_style("Bow", "#6f42c1")      # Purple
+        
+        # Utility buttons
+        configure_button_style("Chatlog", "#007bff")   # Blue
+        configure_button_style("Favorites", "#fd7e14")  # Orange
+        configure_button_style("Settings", "#6c757d")   # Gray
+        configure_button_style("Triggers", "#20c997")   # Teal
+
+        # Add new button styles
+        configure_button_style("Teleconference", "#20c997")  # Teal
+        configure_button_style("BRB", "#6610f2")  # Purple
+        configure_button_style("MiniMode", "#9932CC")  # Dark Orchid
+
+        # Configure bubble styles
+        style.configure("Bubble.TButton",
+            padding=(10, 5),
+            relief="raised",
+            background="#f0f0f0",
+            borderwidth=2,
+            font=("Arial VGA 437", 9))
+            
+        style.configure("BubbleHover.TButton",
+            padding=(10, 5),
+            relief="raised",
+            background="#e0e0e0",
+            borderwidth=2,
+            font=("Arial VGA 437", 9))
+            
+        style.configure("BubbleSelected.TButton",
+            padding=(10, 5),
+            relief="sunken",
+            background="#d0d0d0",
+            borderwidth=2,
+            font=("Arial VGA 437", 9))
+
+        # Add audio player styles
+        style.configure("Audio.TButton",
+            font=("Arial", 14),
+            padding=2)
+        
+        style.configure("Volume.Horizontal.TScale",
+            sliderlength=20,
+            troughcolor="#c0c0c0",
+            background="#f0f0f0")
+
+    def toggle_all_sections(self):
+        """Toggle visibility of all sections based on the master checkbox."""
+        show = self.show_all.get()
+        self.show_connection_settings.set(show)
+        self.show_username.set(show)
+        self.show_password.set(show)
+        self.toggle_connection_settings()
+        self.toggle_username()
+        self.toggle_password()
+
+    def toggle_connection_settings(self):
+        """Toggle visibility of the Connection Settings section."""
+        if self.show_connection_settings.get():
+            self.conn_frame.grid()
+        else:
+            self.conn_frame.grid_remove()
+        self.update_paned_size()
+
+    def toggle_username(self):
+        """Toggle visibility of the Username section."""
+        if self.show_username.get():
+            self.username_frame.grid()
+        else:
+            self.username_frame.grid_remove()
+        self.update_paned_size()
+
+    def toggle_password(self):
+        """Toggle visibility of the Password section."""
+        if self.show_password.get():
+            self.password_frame.grid()
+        else:
+            self.password_frame.grid_remove()
+        self.update_paned_size()
+
+    def update_paned_size(self):
+        """Update the size of the paned window based on the visibility of sections."""
+        total_height = 200  # Base height for the BBS Output pane
+        if not self.show_connection_settings.get():
+            total_height += 50
+        if not self.show_username.get():
+            total_height += 50
+        if not self.show_password.get():
+            total_height += 50
+        self.paned.paneconfig(self.output_frame, minsize=total_height)
+
+    def create_context_menu(self, widget):
+        """Create a right-click context menu for the given widget."""
+        menu = tk.Menu(widget, tearoff=0)
+        menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
+        menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
+        menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
+        menu.add_command(label="Select All", command=lambda: widget.event_generate("<<SelectAll>>"))
+
+        def show_context_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+
+        widget.bind("<Button-3>", show_context_menu)
+
+    def create_members_context_menu(self):
+        """Create a right-click context menu for the members listbox."""
+        menu = tk.Menu(self.members_listbox, tearoff=0)
+        menu.add_command(label="Chatlog", command=self.show_member_chatlog)
+
+        def show_context_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+
+        self.members_listbox.bind("<Button-3>", show_context_menu)
+
+    def show_member_chatlog(self):
+        """Show the chatlog for the selected member."""
+        selected_index = self.members_listbox.curselection()
+        if selected_index:
+            username = self.members_listbox.get(selected_index)
+            self.show_chatlog_window()
+            self.select_chatlog_user(username)
+
+    def select_chatlog_user(self, username):
+        """Select the specified user in the chatlog listbox."""
+        for i in range(self.chatlog_listbox.size()):
+            if self.chatlog_listbox.get(i) == username:
+                self.chatlog_listbox.selection_set(i)
+                self.chatlog_listbox.see(i)
+                self.display_chatlog_messages(None)
+                break
+
+    
+
+    # 1.3️⃣ SETTINGS WINDOW
+    def show_chatlog_window(self):
+        """Open a Toplevel window to manage chatlog and hyperlinks."""
+        if self.chatlog_window and self.chatlog_window.winfo_exists():
+            self.chatlog_window.lift()
+            self.chatlog_window.attributes('-topmost', True)
+            return
+
+        # Load saved font settings
+        saved_font_settings = self.load_font_settings()
+        chatlog_font_settings = {
+            'font': (saved_font_settings.get('font_name', "Courier New"), 
+                    saved_font_settings.get('font_size', 10)),
+            'fg': saved_font_settings.get('fg', 'white'),
+            'bg': saved_font_settings.get('bg', 'black')
+        }
+
+        # Load saved frame sizes or use defaults for panels
+        frame_sizes = self.load_frame_sizes()
+        panel_sizes = {
+            "users": frame_sizes.get("users", 200),  # Default width of 200 pixels
+            "links": frame_sizes.get("links", 200)   # Default width of 200 pixels
+        }
+
+        self.chatlog_window = tk.Toplevel(self.master)
+        self.chatlog_window.title("Chatlog")
+        self.chatlog_window.geometry("1200x600")
+        self.chatlog_window.attributes('-topmost', True)
+        
+        # Make the window resizable
+        self.chatlog_window.columnconfigure(0, weight=1)
+        self.chatlog_window.rowconfigure(0, weight=1)
+
+        main_frame = ttk.Frame(self.chatlog_window)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=1)
+
+        # Create paned window with users/messages/links panels
+        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL, name="main_paned")
+        paned.grid(row=0, column=0, sticky="nsew")
+
+        # Users panel
+        users_frame = ttk.Frame(paned, width=panel_sizes["users"])
+        users_frame.pack_propagate=False  # Prevent shrinking below specified width
+        users_frame.columnconfigure(0, weight=1)
+        users_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(users_frame, text="Users").grid(row=0, column=0, sticky="w")
+        self.chatlog_listbox = tk.Listbox(users_frame, height=10, **chatlog_font_settings)
+        self.chatlog_listbox.grid(row=1, column=0, sticky="nsew")
+        users_scrollbar = ttk.Scrollbar(users_frame, command=self.chatlog_listbox.yview)
+        users_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
+        self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
+        
+        paned.add(users_frame)
+
+        # Messages panel (takes remaining space)
+        messages_frame = ttk.Frame(paned)
+        messages_frame.columnconfigure(0, weight=1)
+        messages_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(messages_frame, text="Messages").grid(row=0, column=0, sticky="w")
+        self.chatlog_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED,
+                                 **chatlog_font_settings)
+        self.chatlog_display.grid(row=1, column=0, sticky="nsew")
+        messages_scrollbar = ttk.Scrollbar(messages_frame, command=self.chatlog_display.yview)
+        messages_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.chatlog_display.configure(yscrollcommand=messages_scrollbar.set)
+        
+        paned.add(messages_frame)
+
+        # Links panel
+        links_frame = ttk.Frame(paned, width=panel_sizes["links"])
+        links_frame.pack_propagate=False  # Prevent shrinking below specified width
+        links_frame.columnconfigure(0, weight=1)
+        links_frame.rowconfigure(1, weight=1)
+        
+        ttk.Label(links_frame, text="Hyperlinks").grid(row=0, column=0, sticky="w")
+        self.links_display = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED,
+                               **chatlog_font_settings)
+        self.links_display.grid(row=1, column=0, sticky="nsew")
+        links_scrollbar = ttk.Scrollbar(links_frame, command=self.links_display.yview)
+        links_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.links_display.configure(yscrollcommand=links_scrollbar.set)
+        
+        self.links_display.tag_configure("hyperlink", foreground="blue", underline=True)
+        self.links_display.tag_bind("hyperlink", "<Button-1>", self.open_chatlog_hyperlink)
+        self.links_display.tag_bind("hyperlink", "<Enter>", self.show_chatlog_thumbnail_preview)
+        self.links_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
+        
+        paned.add(links_frame)
+
+        # Set initial sash positions based on saved sizes
+        def after_show():
+            total_width = paned.winfo_width()
+            users_width = panel_sizes["users"]
+            links_width = panel_sizes["links"]
+            messages_width = total_width - users_width - links_width
+            
+            # Set sash positions
+            paned.sashpos(0, users_width)  # Position between users and messages
+            paned.sashpos(1, users_width + messages_width)  # Position between messages and links
+
+        # Wait for window to be drawn before setting sash positions
+        self.chatlog_window.after(100, after_show)
+
+        # Save sizes when window is closed
+        self.chatlog_window.protocol("WM_DELETE_WINDOW", 
+            lambda: (self.save_panel_sizes(), self.chatlog_window.destroy()))
+
+        # Buttons frame at bottom
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.grid(row=1, column=0, sticky="ew", pady=5)
+        
+        ttk.Button(buttons_frame, text="Clear Chat", command=self.confirm_clear_chatlog).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Clear Links", command=self.confirm_clear_links).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Show All", command=self.show_all_messages).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Close", command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(buttons_frame, text="Change Font", command=self.show_change_font_window).pack(side=tk.RIGHT, padx=5)  # New button for changing font and colors
+
+        self.load_chatlog_list()
+        self.display_stored_links()
+        self.create_chatlog_context_menu()
+
+        self.master.after(100, self.show_all_messages)
+
+    def save_font_settings(self, window):
+        """Save the selected font settings and apply them to terminal displays only."""
+        try:
+            if not all(self.current_selections.values()):
+                tk.messagebox.showerror("Error", "Please select an option from each list")
+                return
+                
+            # Create font settings dictionary
+            font_settings = {
+                'font': (self.current_selections['font'], self.current_selections['size']),
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
+            
+            # Apply only to terminal displays
+            self.chatlog_display.configure(**font_settings)
+            self.directed_msg_display.configure(**font_settings)
+            
+            # For BBS Output, only update font, not colors
+            self.terminal_display.configure(font=(self.current_selections['font'], 
+                                               self.current_selections['size']))
+            
+            # Store settings for future use
+            self.current_font_settings = font_settings
+            
+            # Save to file
+            settings_to_save = {
+                'font_name': self.current_selections['font'],
+                'font_size': self.current_selections['size'],
+                'fg': self.current_selections['color'],
+                'bg': self.current_selections['bg']
+            }
+            with open("font_settings.json", "w") as file:
+                json.dump(settings_to_save, file)
+            
+            window.destroy()
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
+
+    # 1.4️⃣ ANSI PARSING
+    def define_ansi_tags(self):
+        """Define text tags for ANSI colors and attributes."""
+        # Reset all existing tags first
+        for tag in self.terminal_display.tag_names():
+            self.terminal_display.tag_delete(tag)
+
+        # Base colors with specific RGB values for better visibility
+        self.color_map = {
+            '30': 'darkgray',  # Changed from 'black' to 'darkgray' for better visibility
+            '31': 'red',
+            '32': 'green',
+            '33': 'yellow',
+            '34': 'bright_blue',  # Use bright blue for usernames
+            '35': 'magenta',
+            '36': 'cyan',
+            '37': 'white',
+            '90': 'gray',
+            '91': 'bright_red',
+            '92': 'bright_green',
+            '93': 'bright_yellow',
+            '94': 'bright_blue',
+            '95': 'bright_magenta',
+            '96': 'bright_cyan',
+            '97': 'bright_white',
+            '38': 'grey'  # Custom tag for grey color
+        }
+
+        # Define all color tags first
+        self.terminal_display.tag_configure("normal", foreground="white")
+        self.terminal_display.tag_configure("black", foreground="#000000")
+        self.terminal_display.tag_configure("darkgray", foreground="#707070")  # New darkgray tag for color '30'
+        self.terminal_display.tag_configure("red", foreground="#ff5555")
+        self.terminal_display.tag_configure("green", foreground="#55ff55")
+        self.terminal_display.tag_configure("yellow", foreground="#ffff55")
+        self.terminal_display.tag_configure("blue", foreground="#3399FF")
+        self.terminal_display.tag_configure("bright_blue", foreground="#5599ff")
+        self.terminal_display.tag_configure("magenta", foreground="#ff55ff")
+        self.terminal_display.tag_configure("cyan", foreground="#55ffff")
+        self.terminal_display.tag_configure("white", foreground="white")
+        self.terminal_display.tag_configure("gray", foreground="#aaaaaa")
+        self.terminal_display.tag_configure("grey", foreground="#B0B0B0")
+        
+        # Configure bright variants
+        self.terminal_display.tag_configure("bright_red", foreground="#ff8888")
+        self.terminal_display.tag_configure("bright_green", foreground="#88ff88")
+        self.terminal_display.tag_configure("bright_yellow", foreground="#ffff88")
+        self.terminal_display.tag_configure("bright_magenta", foreground="#ff88ff")
+        self.terminal_display.tag_configure("bright_cyan", foreground="#88ffff")
+        self.terminal_display.tag_configure("bright_white", foreground="white")
+
+        # Add blink tag
+        self.terminal_display.tag_configure("blink", background="")
+        self.blink_tags = set()
+        
+        # Start blink timer
+        self.blink_timer()
+
+        # Create a list of all defined tags for proper raising
+        all_tags = ["normal", "black", "red", "green", "yellow", "blue", "bright_blue", 
+                    "magenta", "cyan", "white", "gray", "grey",
+                    "bright_red", "bright_green", "bright_yellow", "bright_magenta", 
+                    "bright_cyan", "bright_white"]
+
+        # Ensure proper tag ordering
+        for tag in all_tags:
+            if hasattr(self.terminal_display, 'tag_raise'):
+                try:
+                    self.terminal_display.tag_raise(tag)
+                except Exception as e:
+                    print(f"Warning: Could not raise tag {tag}: {e}")
+
+        # Put important tags on top
+        for tag in ["bright_blue", "red", "yellow"]:
+            self.terminal_display.tag_raise(tag)
+
+    def parse_ansi_and_insert(self, text_data):
+        """Parse ANSI escape sequences with improved error handling."""
+        if not text_data:
+            return
+        try:
+            self.terminal_display.configure(state=tk.NORMAL)
+            i = 0
+            current_tags = ["normal"]
+            buffer = ""
+            while i < len(text_data):
+                try:
+                    char = text_data[i]
+                    if char == '\x1b' and i+1 < len(text_data) and text_data[i+1] == '[':
+                        if buffer:
+                            self.insert_with_hyperlinks(buffer, tuple(current_tags))
+                            buffer = ""
+                        seq_start = i
+                        i += 2
+                        params = ""
+                        while i < len(text_data) and not text_data[i].isalpha():
+                            params += text_data[i]
+                            i += 1
+                        if i < len(text_data):
+                            command = text_data[i]
+                            i += 1
+                            if command == 'm':
+                                codes = params.split(';')
+                                if not params or '0' in codes:
+                                    current_tags = ["normal"]
+                                for code in codes:
+                                    if not code:
+                                        continue
+                                    if code == '1':
+                                        current_tags = ["bright_" + tag if tag in self.color_map.values() else tag
+                                                        for tag in current_tags]
+                                    elif code == '5':
+                                        blink_tag = f"blink_{len(self.blink_tags)}"
+                                        self.terminal_display.tag_configure(blink_tag, background="")
+                                        self.blink_tags.add(blink_tag)
+                                        current_tags.append(blink_tag)
+                                    elif code in self.color_map:
+                                        current_tags = [t for t in current_tags if t not in self.color_map.values()]
+                                        current_tags.append(self.color_map[code])
+                    else:
+                        buffer += char
+                        i += 1
+                except Exception as inner_e:
+                    print(f"[ERROR] Error processing char at {i}: {inner_e}")
+                    i += 1
+            if buffer:
+                self.insert_with_hyperlinks(buffer, tuple(current_tags))
+        except Exception as e:
+            print(f"[ERROR] Error in ANSI parsing: {e}")
+            traceback.print_exc()
+            try:
+                self.terminal_display.insert(tk.END, text_data)
+            except:
+                pass
+        finally:
+            try:
+                self.terminal_display.configure(state=tk.DISABLED)
+            except:
+                pass
+            try:
+                self.terminal_display.tag_raise("hyperlink")
+            except:
+                pass
+
+
+    def send_username(self):
+        """Send the username to the BBS."""
+        if self.connected and self.writer:
+            message = self.username.get() + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+                if self.remember_username.get():
+                    self.save_username()
+            except Exception as e:
+                print(f"Error sending username: {e}")
+
+    def send_password(self):
+        """Send the password to the BBS."""
+        if self.connected and self.writer:
+            message = self.password.get() + "\r\n"
+            self.writer.write(message)
+            try:
+                self.loop.call_soon_threadsafe(self.writer.drain)
+                if self.remember_password.get():
+                    self.save_password()
+            except Exception as e:
+                print(f"Error sending password: {e}")
+
+
 
 
     # Mini Mode methods
@@ -1414,598 +1987,54 @@ class BBSTerminalApp:
                 self.show_thumbnail(url, event)
         except Exception as e:
             print(f"Error in directed message thumbnail preview: {e}")
-     
 
-        # Add Messages to You checkbox
-        messages_check = ttk.Checkbutton(
-            checkbox_frame,
-            text="Messages to You",
-            variable=self.show_messages_to_you,
-            command=self.toggle_messages_frame
-        )
-        messages_check.grid(row=0, column=5, padx=5, pady=5, sticky=tk.W)
 
-        # Add Bannerless Mode checkbox
-        bannerless_check = ttk.Checkbutton(
-            checkbox_frame,
-            text="Bannerless Mode",
-            variable=self.bannerless_mode
-        )
-        bannerless_check.grid(row=0, column=6, padx=5, pady=5, sticky=tk.W)
 
-        # Add Auto Logon checkbox
-        auto_logon_check = ttk.Checkbutton(
-            checkbox_frame,
-            text="Auto Logon",
-            variable=self.auto_logon_enabled
-        )
-        auto_logon_check.grid(row=0, column=7, padx=5, pady=5, sticky=tk.W)
 
-        # At the end of build_ui, apply saved settings
-        self.master.after(100, self.apply_saved_settings)
 
-        # Modify input box bindings for command history
-        self.input_box.bind("<Up>", self.previous_command)
-        self.input_box.bind("<Down>", self.next_command)
-        
-        # Add focus bindings for input box to preserve partial input
-        self.input_box.bind("<FocusOut>", self.save_current_input)
-        self.input_box.bind("<FocusIn>", self.restore_current_input)
 
-        # Fix mousewheel binding in update_actions_listbox
-        def on_mousewheel(event):
-            if self.current_scrollable_frame == self.actions_canvas:
-                self.actions_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
-        def on_enter_frame(event):
-            self.current_scrollable_frame = self.actions_canvas
-            self.master.bind_all("<MouseWheel>", on_mousewheel)
-
-        def on_leave_frame(event):
-            if self.current_scrollable_frame == self.actions_canvas:
-                self.current_scrollable_frame = None
-                self.master.unbind_all("<MouseWheel>")
-
-        self.actions_canvas.bind("<Enter>", on_enter_frame)
-        self.actions_canvas.bind("<Leave>", on_leave_frame)
-
-    def configure_button_styles(self):
-        """Configure custom styles for buttons including bubbles."""
-        style = ttk.Style()
-        
-        # Enable themed widgets to use ttk styles
-        style.theme_use('default')
-        
-        # Configure default style settings for all states
-        def configure_button_style(name, bg, fg="white"):
-            # Create custom style
-            style.configure(
-                f"{name}.TButton",
-                foreground=fg,
-                background=bg,
-                bordercolor=bg,
-                darkcolor=bg,
-                lightcolor=bg,
-                font=("Arial VGA 437", 9, "bold"),
-                relief="raised",
-                padding=(10, 5)
-            )
+    def exit_mini_mode(self):
+        """Return from mini mode to normal mode."""
+        if hasattr(self, 'mini_window') and self.mini_window is not None:
+            self.is_in_mini_mode = False
+            self.mini_window.destroy()
+            self.mini_window = None
             
-            # Map the same colors to all states
-            style.map(
-                f"{name}.TButton",
-                foreground=[("pressed", fg), ("active", fg)],
-                background=[("pressed", bg), ("active", bg)],
-                bordercolor=[("pressed", bg), ("active", bg)],
-                relief=[("pressed", "sunken"), ("active", "raised")]
-            )
+            # Focus back on main input
+            self.input_box.focus_set()
+
+
+
+    def limit_mini_input_length(self, *args):
+        """Limit mini input field to 250 characters."""
+        value = self.mini_input_var.get()
+        if len(value) > 250:
+            self.mini_input_var.set(value[:250])
+
+
+
+
+
+
+    def open_directed_message_hyperlink(self, event):
+        """Open the hyperlink from directed messages in browser or audio player if it's an audio stream."""
+        index = self.directed_msg_display.index("@%s,%s" % (event.x, event.y))
+        start_index = self.directed_msg_display.search("https://", index, backwards=True, stopindex="1.0")
+        if not start_index:
+            start_index = self.directed_msg_display.search("http://", index, backwards=True, stopindex="1.0")
+        end_index = self.directed_msg_display.search(r"\s", start_index, stopindex="end", regexp=True)
+        if not end_index:
+            end_index = self.directed_msg_display.index("end")
+        url = self.directed_msg_display.get(start_index, end_index).strip()
         
-        # Connection button styles (dynamic green/red)
-        configure_button_style("Connect", "#28a745")  # Green
-        configure_button_style("Disconnect", "#dc3545")  # Red
-        
-        # Action buttons (playful colors)
-        configure_button_style("Wave", "#17a2b8")     # Blue
-        configure_button_style("Smile", "#ffc107", "black")  # Yellow with black text
-        configure_button_style("Dance", "#e83e8c")    # Pink
-        configure_button_style("Bow", "#6f42c1")      # Purple
-        
-        # Utility buttons
-        configure_button_style("Chatlog", "#007bff")   # Blue
-        configure_button_style("Favorites", "#fd7e14")  # Orange
-        configure_button_style("Settings", "#6c757d")   # Gray
-        configure_button_style("Triggers", "#20c997")   # Teal
-
-        # Add new button styles
-        configure_button_style("Teleconference", "#20c997")  # Teal
-        configure_button_style("BRB", "#6610f2")  # Purple
-        configure_button_style("MiniMode", "#9932CC")  # Dark Orchid
-
-        # Configure bubble styles
-        style.configure("Bubble.TButton",
-            padding=(10, 5),
-            relief="raised",
-            background="#f0f0f0",
-            borderwidth=2,
-            font=("Arial VGA 437", 9))
-            
-        style.configure("BubbleHover.TButton",
-            padding=(10, 5),
-            relief="raised",
-            background="#e0e0e0",
-            borderwidth=2,
-            font=("Arial VGA 437", 9))
-            
-        style.configure("BubbleSelected.TButton",
-            padding=(10, 5),
-            relief="sunken",
-            background="#d0d0d0",
-            borderwidth=2,
-            font=("Arial VGA 437", 9))
-
-        # Add audio player styles
-        style.configure("Audio.TButton",
-            font=("Arial", 14),
-            padding=2)
-        
-        style.configure("Volume.Horizontal.TScale",
-            sliderlength=20,
-            troughcolor="#c0c0c0",
-            background="#f0f0f0")
-
-    def toggle_all_sections(self):
-        """Toggle visibility of all sections based on the master checkbox."""
-        show = self.show_all.get()
-        self.show_connection_settings.set(show)
-        self.show_username.set(show)
-        self.show_password.set(show)
-        self.toggle_connection_settings()
-        self.toggle_username()
-        self.toggle_password()
-
-    def toggle_connection_settings(self):
-        """Toggle visibility of the Connection Settings section."""
-        if self.show_connection_settings.get():
-            self.conn_frame.grid()
+        # Check if this is an audio stream
+        if url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')):
+            self.play_audio_stream(url)
         else:
-            self.conn_frame.grid_remove()
-        self.update_paned_size()
+            webbrowser.open(url)
 
-    def toggle_username(self):
-        """Toggle visibility of the Username section."""
-        if self.show_username.get():
-            self.username_frame.grid()
-        else:
-            self.username_frame.grid_remove()
-        self.update_paned_size()
 
-    def toggle_password(self):
-        """Toggle visibility of the Password section."""
-        if self.show_password.get():
-            self.password_frame.grid()
-        else:
-            self.password_frame.grid_remove()
-        self.update_paned_size()
-
-    def update_paned_size(self):
-        """Update the size of the paned window based on the visibility of sections."""
-        total_height = 200  # Base height for the BBS Output pane
-        if not self.show_connection_settings.get():
-            total_height += 50
-        if not self.show_username.get():
-            total_height += 50
-        if not self.show_password.get():
-            total_height += 50
-        self.paned.paneconfig(self.output_frame, minsize=total_height)
-
-    def create_context_menu(self, widget):
-        """Create a right-click context menu for the given widget."""
-        menu = tk.Menu(widget, tearoff=0)
-        menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
-        menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
-        menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
-        menu.add_command(label="Select All", command=lambda: widget.event_generate("<<SelectAll>>"))
-
-        def show_context_menu(event):
-            menu.tk_popup(event.x_root, event.y_root)
-
-        widget.bind("<Button-3>", show_context_menu)
-
-    def create_members_context_menu(self):
-        """Create a right-click context menu for the members listbox."""
-        menu = tk.Menu(self.members_listbox, tearoff=0)
-        menu.add_command(label="Chatlog", command=self.show_member_chatlog)
-
-        def show_context_menu(event):
-            menu.tk_popup(event.x_root, event.y_root)
-
-        self.members_listbox.bind("<Button-3>", show_context_menu)
-
-    def show_member_chatlog(self):
-        """Show the chatlog for the selected member."""
-        selected_index = self.members_listbox.curselection()
-        if selected_index:
-            username = self.members_listbox.get(selected_index)
-            self.show_chatlog_window()
-            self.select_chatlog_user(username)
-
-    def select_chatlog_user(self, username):
-        """Select the specified user in the chatlog listbox."""
-        for i in range(self.chatlog_listbox.size()):
-            if self.chatlog_listbox.get(i) == username:
-                self.chatlog_listbox.selection_set(i)
-                self.chatlog_listbox.see(i)
-                self.display_chatlog_messages(None)
-                break
-
-    def toggle_all_sections(self):
-        """Toggle visibility of all sections based on the master checkbox."""
-        show = self.show_all.get()
-        self.show_connection_settings.set(show)
-        self.show_username.set(show)
-        self.show_password.set(show)
-        self.toggle_connection_settings()
-        self.toggle_username()
-        self.toggle_password()
-
-    def toggle_connection_settings(self):
-        """Toggle visibility of the Connection Settings section."""
-        if self.show_connection_settings.get():
-            self.conn_frame.grid()
-        else:
-            self.conn_frame.grid_remove()
-        self.update_paned_size()
-
-    def toggle_username(self):
-        """Toggle visibility of the Username section."""
-        if self.show_username.get():
-            self.username_frame.grid()
-        else:
-            self.username_frame.grid_remove()
-        self.update_paned_size()
-
-    def toggle_password(self):
-        """Toggle visibility of the Password section."""
-        if self.show_password.get():
-            self.password_frame.grid()
-        else:
-            self.password_frame.grid_remove()
-        self.update_paned_size()
-
-    def update_paned_size(self):
-        """Update the size of the paned window based on the visibility of sections."""
-        total_height = 200  # Base height for the BBS Output pane
-        if not self.show_connection_settings.get():
-            total_height += 50
-        if not self.show_username.get():
-            total_height += 50
-        if not self.show_password.get():
-            total_height += 50
-        self.paned.paneconfig(self.output_frame, minsize=total_height)
-
-    def create_context_menu(self, widget):
-        """Create a right-click context menu for the given widget."""
-        menu = tk.Menu(widget, tearoff=0)
-        menu.add_command(label="Cut", command=lambda: widget.event_generate("<<Cut>>"))
-        menu.add_command(label="Copy", command=lambda: widget.event_generate("<<Copy>>"))
-        menu.add_command(label="Paste", command=lambda: widget.event_generate("<<Paste>>"))
-        menu.add_command(label="Select All", command=lambda: widget.event_generate("<<SelectAll>>"))
-
-        def show_context_menu(event):
-            menu.tk_popup(event.x_root, event.y_root)
-
-        widget.bind("<Button-3>", show_context_menu)
-
-    # 1.3️⃣ SETTINGS WINDOW
-    def show_chatlog_window(self):
-        """Open a Toplevel window to manage chatlog and hyperlinks."""
-        if self.chatlog_window and self.chatlog_window.winfo_exists():
-            self.chatlog_window.lift()
-            self.chatlog_window.attributes('-topmost', True)
-            return
-
-        # Load saved font settings
-        saved_font_settings = self.load_font_settings()
-        chatlog_font_settings = {
-            'font': (saved_font_settings.get('font_name', "Courier New"), 
-                    saved_font_settings.get('font_size', 10)),
-            'fg': saved_font_settings.get('fg', 'white'),
-            'bg': saved_font_settings.get('bg', 'black')
-        }
-
-        # Load saved frame sizes or use defaults for panels
-        frame_sizes = self.load_frame_sizes()
-        panel_sizes = {
-            "users": frame_sizes.get("users", 200),  # Default width of 200 pixels
-            "links": frame_sizes.get("links", 200)   # Default width of 200 pixels
-        }
-
-        self.chatlog_window = tk.Toplevel(self.master)
-        self.chatlog_window.title("Chatlog")
-        self.chatlog_window.geometry("1200x600")
-        self.chatlog_window.attributes('-topmost', True)
-        
-        # Make the window resizable
-        self.chatlog_window.columnconfigure(0, weight=1)
-        self.chatlog_window.rowconfigure(0, weight=1)
-
-        main_frame = ttk.Frame(self.chatlog_window)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(0, weight=1)
-
-        # Create paned window with users/messages/links panels
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL, name="main_paned")
-        paned.grid(row=0, column=0, sticky="nsew")
-
-        # Users panel
-        users_frame = ttk.Frame(paned, width=panel_sizes["users"])
-        users_frame.pack_propagate=False  # Prevent shrinking below specified width
-        users_frame.columnconfigure(0, weight=1)
-        users_frame.rowconfigure(1, weight=1)
-        
-        ttk.Label(users_frame, text="Users").grid(row=0, column=0, sticky="w")
-        self.chatlog_listbox = tk.Listbox(users_frame, height=10, **chatlog_font_settings)
-        self.chatlog_listbox.grid(row=1, column=0, sticky="nsew")
-        users_scrollbar = ttk.Scrollbar(users_frame, command=self.chatlog_listbox.yview)
-        users_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.chatlog_listbox.configure(yscrollcommand=users_scrollbar.set)
-        self.chatlog_listbox.bind("<<ListboxSelect>>", self.display_chatlog_messages)
-        
-        paned.add(users_frame)
-
-        # Messages panel (takes remaining space)
-        messages_frame = ttk.Frame(paned)
-        messages_frame.columnconfigure(0, weight=1)
-        messages_frame.rowconfigure(1, weight=1)
-        
-        ttk.Label(messages_frame, text="Messages").grid(row=0, column=0, sticky="w")
-        self.chatlog_display = tk.Text(messages_frame, wrap=tk.WORD, state=tk.DISABLED,
-                                 **chatlog_font_settings)
-        self.chatlog_display.grid(row=1, column=0, sticky="nsew")
-        messages_scrollbar = ttk.Scrollbar(messages_frame, command=self.chatlog_display.yview)
-        messages_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.chatlog_display.configure(yscrollcommand=messages_scrollbar.set)
-        
-        paned.add(messages_frame)
-
-        # Links panel
-        links_frame = ttk.Frame(paned, width=panel_sizes["links"])
-        links_frame.pack_propagate=False  # Prevent shrinking below specified width
-        links_frame.columnconfigure(0, weight=1)
-        links_frame.rowconfigure(1, weight=1)
-        
-        ttk.Label(links_frame, text="Hyperlinks").grid(row=0, column=0, sticky="w")
-        self.links_display = tk.Text(links_frame, wrap=tk.WORD, state=tk.DISABLED,
-                               **chatlog_font_settings)
-        self.links_display.grid(row=1, column=0, sticky="nsew")
-        links_scrollbar = ttk.Scrollbar(links_frame, command=self.links_display.yview)
-        links_scrollbar.grid(row=1, column=1, sticky="ns")
-        self.links_display.configure(yscrollcommand=links_scrollbar.set)
-        
-        self.links_display.tag_configure("hyperlink", foreground="blue", underline=True)
-        self.links_display.tag_bind("hyperlink", "<Button-1>", self.open_chatlog_hyperlink)
-        self.links_display.tag_bind("hyperlink", "<Enter>", self.show_chatlog_thumbnail_preview)
-        self.links_display.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
-        
-        paned.add(links_frame)
-
-        # Set initial sash positions based on saved sizes
-        def after_show():
-            total_width = paned.winfo_width()
-            users_width = panel_sizes["users"]
-            links_width = panel_sizes["links"]
-            messages_width = total_width - users_width - links_width
-            
-            # Set sash positions
-            paned.sashpos(0, users_width)  # Position between users and messages
-            paned.sashpos(1, users_width + messages_width)  # Position between messages and links
-
-        # Wait for window to be drawn before setting sash positions
-        self.chatlog_window.after(100, after_show)
-
-        # Save sizes when window is closed
-        self.chatlog_window.protocol("WM_DELETE_WINDOW", 
-            lambda: (self.save_panel_sizes(), self.chatlog_window.destroy()))
-
-        # Buttons frame at bottom
-        buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.grid(row=1, column=0, sticky="ew", pady=5)
-        
-        ttk.Button(buttons_frame, text="Clear Chat", command=self.confirm_clear_chatlog).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Clear Links", command=self.confirm_clear_links).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Show All", command=self.show_all_messages).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Close", command=self.chatlog_window.destroy).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(buttons_frame, text="Change Font", command=self.show_change_font_window).pack(side=tk.RIGHT, padx=5)  # New button for changing font and colors
-
-        self.load_chatlog_list()
-        self.display_stored_links()
-        self.create_chatlog_context_menu()
-
-        self.master.after(100, self.show_all_messages)
-
-    def save_font_settings(self, window):
-        """Save the selected font settings and apply them to terminal displays only."""
-        try:
-            if not all(self.current_selections.values()):
-                tk.messagebox.showerror("Error", "Please select an option from each list")
-                return
-                
-            # Create font settings dictionary
-            font_settings = {
-                'font': (self.current_selections['font'], self.current_selections['size']),
-                'fg': self.current_selections['color'],
-                'bg': self.current_selections['bg']
-            }
-            
-            # Apply only to terminal displays
-            self.chatlog_display.configure(**font_settings)
-            self.directed_msg_display.configure(**font_settings)
-            
-            # For BBS Output, only update font, not colors
-            self.terminal_display.configure(font=(self.current_selections['font'], 
-                                               self.current_selections['size']))
-            
-            # Store settings for future use
-            self.current_font_settings = font_settings
-            
-            # Save to file
-            settings_to_save = {
-                'font_name': self.current_selections['font'],
-                'font_size': self.current_selections['size'],
-                'fg': self.current_selections['color'],
-                'bg': self.current_selections['bg']
-            }
-            with open("font_settings.json", "w") as file:
-                json.dump(settings_to_save, file)
-            
-            window.destroy()
-        except Exception as e:
-            tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
-
-    # 1.4️⃣ ANSI PARSING
-    def define_ansi_tags(self):
-        """Define text tags for ANSI colors and attributes."""
-        # Reset all existing tags first
-        for tag in self.terminal_display.tag_names():
-            self.terminal_display.tag_delete(tag)
-
-        # Base colors with specific RGB values for better visibility
-        self.color_map = {
-            '30': 'darkgray',  # Changed from 'black' to 'darkgray' for better visibility
-            '31': 'red',
-            '32': 'green',
-            '33': 'yellow',
-            '34': 'bright_blue',  # Use bright blue for usernames
-            '35': 'magenta',
-            '36': 'cyan',
-            '37': 'white',
-            '90': 'gray',
-            '91': 'bright_red',
-            '92': 'bright_green',
-            '93': 'bright_yellow',
-            '94': 'bright_blue',
-            '95': 'bright_magenta',
-            '96': 'bright_cyan',
-            '97': 'bright_white',
-            '38': 'grey'  # Custom tag for grey color
-        }
-
-        # Define all color tags first
-        self.terminal_display.tag_configure("normal", foreground="white")
-        self.terminal_display.tag_configure("black", foreground="#000000")
-        self.terminal_display.tag_configure("darkgray", foreground="#707070")  # New darkgray tag for color '30'
-        self.terminal_display.tag_configure("red", foreground="#ff5555")
-        self.terminal_display.tag_configure("green", foreground="#55ff55")
-        self.terminal_display.tag_configure("yellow", foreground="#ffff55")
-        self.terminal_display.tag_configure("blue", foreground="#3399FF")
-        self.terminal_display.tag_configure("bright_blue", foreground="#5599ff")
-        self.terminal_display.tag_configure("magenta", foreground="#ff55ff")
-        self.terminal_display.tag_configure("cyan", foreground="#55ffff")
-        self.terminal_display.tag_configure("white", foreground="white")
-        self.terminal_display.tag_configure("gray", foreground="#aaaaaa")
-        self.terminal_display.tag_configure("grey", foreground="#B0B0B0")
-        
-        # Configure bright variants
-        self.terminal_display.tag_configure("bright_red", foreground="#ff8888")
-        self.terminal_display.tag_configure("bright_green", foreground="#88ff88")
-        self.terminal_display.tag_configure("bright_yellow", foreground="#ffff88")
-        self.terminal_display.tag_configure("bright_magenta", foreground="#ff88ff")
-        self.terminal_display.tag_configure("bright_cyan", foreground="#88ffff")
-        self.terminal_display.tag_configure("bright_white", foreground="white")
-
-        # Add blink tag
-        self.terminal_display.tag_configure("blink", background="")
-        self.blink_tags = set()
-        
-        # Start blink timer
-        self.blink_timer()
-
-        # Create a list of all defined tags for proper raising
-        all_tags = ["normal", "black", "red", "green", "yellow", "blue", "bright_blue", 
-                    "magenta", "cyan", "white", "gray", "grey",
-                    "bright_red", "bright_green", "bright_yellow", "bright_magenta", 
-                    "bright_cyan", "bright_white"]
-
-        # Ensure proper tag ordering
-        for tag in all_tags:
-            if hasattr(self.terminal_display, 'tag_raise'):
-                try:
-                    self.terminal_display.tag_raise(tag)
-                except Exception as e:
-                    print(f"Warning: Could not raise tag {tag}: {e}")
-
-        # Put important tags on top
-        for tag in ["bright_blue", "red", "yellow"]:
-            self.terminal_display.tag_raise(tag)
-
-    def parse_ansi_and_insert(self, text_data):
-        """Parse ANSI escape sequences with improved error handling."""
-        if not text_data:
-            return
-        try:
-            self.terminal_display.configure(state=tk.NORMAL)
-            i = 0
-            current_tags = ["normal"]
-            buffer = ""
-            while i < len(text_data):
-                try:
-                    char = text_data[i]
-                    if char == '\x1b' and i+1 < len(text_data) and text_data[i+1] == '[':
-                        if buffer:
-                            self.insert_with_hyperlinks(buffer, tuple(current_tags))
-                            buffer = ""
-                        seq_start = i
-                        i += 2
-                        params = ""
-                        while i < len(text_data) and not text_data[i].isalpha():
-                            params += text_data[i]
-                            i += 1
-                        if i < len(text_data):
-                            command = text_data[i]
-                            i += 1
-                            if command == 'm':
-                                codes = params.split(';')
-                                if not params or '0' in codes:
-                                    current_tags = ["normal"]
-                                for code in codes:
-                                    if not code:
-                                        continue
-                                    if code == '1':
-                                        current_tags = ["bright_" + tag if tag in self.color_map.values() else tag
-                                                        for tag in current_tags]
-                                    elif code == '5':
-                                        blink_tag = f"blink_{len(self.blink_tags)}"
-                                        self.terminal_display.tag_configure(blink_tag, background="")
-                                        self.blink_tags.add(blink_tag)
-                                        current_tags.append(blink_tag)
-                                    elif code in self.color_map:
-                                        current_tags = [t for t in current_tags if t not in self.color_map.values()]
-                                        current_tags.append(self.color_map[code])
-                    else:
-                        buffer += char
-                        i += 1
-                except Exception as inner_e:
-                    print(f"[ERROR] Error processing char at {i}: {inner_e}")
-                    i += 1
-            if buffer:
-                self.insert_with_hyperlinks(buffer, tuple(current_tags))
-        except Exception as e:
-            print(f"[ERROR] Error in ANSI parsing: {e}")
-            traceback.print_exc()
-            try:
-                self.terminal_display.insert(tk.END, text_data)
-            except:
-                pass
-        finally:
-            try:
-                self.terminal_display.configure(state=tk.DISABLED)
-            except:
-                pass
-            try:
-                self.terminal_display.tag_raise("hyperlink")
-            except:
-                pass
 
     def insert_buffer_with_hyperlinks(self, buffer, tags):
         """Insert a text buffer with hyperlink detection."""
@@ -4242,7 +4271,20 @@ class BBSTerminalApp:
         self.chatlog_listbox.selection_clear(0, tk.END)
         self.display_chatlog_messages(None)
 
-   
+    def load_font_settings(self):
+        """Load font settings from a local file or return defaults."""
+        try:
+            if os.path.exists("font_settings.json"):
+                with open("font_settings.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading font settings: {e}")
+        return {
+            'font_name': "Courier New",
+            'font_size': 10,
+            'fg': 'white',
+            'bg': 'black'
+        }
 
     def delete_selected_user(self):
         """Delete the selected user from the chatlog and users list."""
@@ -4266,11 +4308,111 @@ class BBSTerminalApp:
             # Show all messages after deletion
             self.display_chatlog_messages(None)
 
-    
+    def on_scroll_change(self, *args):
+        """Custom scrollbar handler to ensure bottom line visibility."""
+        self.terminal_display.yview_moveto(args[0])
+        if float(args[1]) == 1.0:  # If scrolled to bottom
+            self.master.update_idletasks()
+            self.terminal_display.see(tk.END)
 
-    
+    def limit_input_length(self, *args):
+        """Limit input field to 255 characters"""
+        value = self.input_var.get()
+        if len(value) > 255:
+            self.input_var.set(value[:255])
 
-    
+    def load_frame_sizes(self):
+        """Load saved frame sizes from file"""
+        try:
+            if os.path.exists("frame_sizes.json"):
+                with open("frame_sizes.json", "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading frame sizes: {e}")
+        return {}
+
+    def save_frame_sizes(self):
+        """Save current frame sizes and panel positions to file"""
+        try:
+            # Get standard frame sizes
+            sizes = {
+                'paned_pos': self.paned.sash_coord(0)[1] if hasattr(self.paned, 'sash_coord') else 200,
+                'window_geometry': self.master.geometry()
+            }
+            
+            # Add panel sizes if chatlog window exists
+            if hasattr(self, 'chatlog_window') and self.chatlog_window.winfo_exists():
+                try:
+                    paned = self.chatlog_window.nametowidget("main_paned")
+                    if paned:
+                        try:
+                            sizes.update({
+                                "users": paned.sashpos(0),
+                                "links": paned.winfo_width() - paned.sashpos(1)
+                            })
+                        except tk.TclError:
+                            print("Warning: Could not get sash positions")
+                except Exception as e:
+                    print(f"Warning: Error getting panel positions: {e}")
+                    
+            with open("frame_sizes.json", "w") as f:
+                json.dump(sizes, f)
+        except Exception as e:
+            print(f"Error saving frame sizes: {e}")
+
+    def load_saved_settings(self):
+        """Load all saved UI settings."""
+        try:
+            if os.path.exists("settings.json"):
+                with open("settings.json", "r") as f:
+                    settings = json.load(f)
+                    # Apply loaded settings - removed PBX and Majorlink modes
+                    self.font_name.set(settings.get('font_name', "Courier New"))
+                    self.font_size.set(settings.get('font_size', 10))
+                    self.logon_automation_enabled.set(settings.get('logon_automation', False))
+                    self.keep_alive_enabled.set(settings.get('keep_alive', False))
+                    self.show_messages_to_you.set(settings.get('show_messages', True))
+                    self.bannerless_mode.set(settings.get('bannerless_mode', False))
+                    return settings
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+        return {}
+
+    def apply_saved_settings(self):
+        """Apply saved settings after UI is built."""
+        settings = self.load_saved_settings()
+        self.auto_logon_enabled.set(self.saved_settings.get('auto_logon_enabled', False))
+
+        # Apply paned window position if saved
+        if self.paned and 'paned_pos' in settings and settings['paned_pos']:
+            try:
+                # Use different methods based on paned window type
+                if isinstance(self.paned, ttk.PanedWindow):
+                    self.paned.paneconfig(self.output_frame, weight=settings['paned_pos'])
+                else:
+                    # For tk.PanedWindow
+                    def set_sash():
+                        try:
+                            self.paned.sash_place(0, settings['paned_pos'], 0)
+                        except Exception as e:
+                            print(f"Error setting sash position: {e}")
+                    self.master.after(100, set_sash)
+            except Exception as e:
+                print(f"Error applying paned window settings: {e}")
+
+        # Apply window geometry if saved
+        if 'window_geometry' in settings:
+            try:
+                self.master.geometry(settings['window_geometry'])
+            except Exception as e:
+                print(f"Error setting window geometry: {e}")
+
+        # Apply Messages to You visibility
+        if not settings.get('show_messages', True):
+            self.toggle_messages_frame()
+
+        # Update display font
+        self.update_display_font()
 
     
 
@@ -4900,7 +5042,23 @@ class BBSTerminalApp:
         self.vlc_instance = None
         self.player = None
 
-   
+    def load_command_history(self):
+        """Load command history from file."""
+        try:
+            if os.path.exists("command_history.json"):
+                with open("command_history.json", "r") as file:
+                    return json.load(file)
+        except Exception as e:
+            print(f"Error loading command history: {e}")
+        return []
+
+    def save_command_history(self):
+        """Save command history to file."""
+        try:
+            with open("command_history.json", "w") as file:
+                json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
+        except Exception as e:
+            print(f"Error saving command history: {e}")
 
     
 
