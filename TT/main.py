@@ -939,6 +939,28 @@ class BBSTerminalApp:
             except Exception as e:
                 print(f"Error sending password: {e}")
 
+    def exit_mini_mode(self):
+        """Return from mini mode to normal mode."""
+        if hasattr(self, 'mini_window') and self.mini_window is not None:
+            self.is_in_mini_mode = False
+            self.mini_window.destroy()
+            self.mini_window = None
+            
+            # Focus back on main input
+            self.input_box.focus_set()
+
+
+
+    def limit_mini_input_length(self, *args):
+        """Limit mini input field to 250 characters."""
+        value = self.mini_input_var.get()
+        if len(value) > 250:
+            self.mini_input_var.set(value[:250])
+
+
+
+
+
 
     def open_directed_message_hyperlink(self, event):
         """Open the hyperlink from directed messages in browser or audio player if it's an audio stream."""
@@ -1017,6 +1039,8 @@ class BBSTerminalApp:
         content = self.terminal_display.get("1.0", tk.END)
         self.mini_terminal.insert("1.0", content)
         self.mini_terminal.configure(state=tk.DISABLED)
+        
+        # Define ANSI tags directly instead of trying to copy from main terminal
         self.define_mini_terminal_tags()
         
         # Create input field at bottom
@@ -1024,7 +1048,6 @@ class BBSTerminalApp:
         self.mini_input = ttk.Entry(self.mini_window, textvariable=self.mini_input_var)
         self.mini_input.pack(fill=tk.X, side=tk.BOTTOM, padx=2, pady=(0, 2))
         self.mini_input.bind("<Return>", self.send_mini_message)
-        self.mini_input.focus_set()  # Auto-focus the input field
         
         # Add character limit to mini input
         self.mini_input_var.trace('w', self.limit_mini_input_length)
@@ -1041,73 +1064,38 @@ class BBSTerminalApp:
         # Set up redirector for terminal content
         self.is_in_mini_mode = True
         
-    def exit_mini_mode(self):
-        """Return from mini mode to normal mode."""
-        if hasattr(self, 'mini_window') and self.mini_window is not None:
-            self.is_in_mini_mode = False
-            self.mini_window.destroy()
-            self.mini_window = None
-            
-            # Focus back on main input
-            self.input_box.focus_set()
-
-    def define_mini_terminal_tags(self):
-        """Define the same ANSI color tags for the mini terminal."""
-        # Copy the tags from main terminal
-        for tag in self.terminal_display.tag_names():
-            try:
-                tag_config = self.terminal_display.tag_configure(tag)
-                self.mini_terminal.tag_configure(tag, foreground=tag_config['foreground'])
-                
-                # Copy hyperlink binding if it exists
-                if tag == "hyperlink":
-                    self.mini_terminal.tag_bind(tag, "<Button-1>", self.open_hyperlink_from_mini)
-                    self.mini_terminal.tag_bind(tag, "<Enter>", self.show_mini_thumbnail_preview)
-                    self.mini_terminal.tag_bind(tag, "<Leave>", self.hide_thumbnail_preview)
-            except Exception as e:
-                print(f"Error copying tag {tag}: {e}")
-            
-    def send_mini_message(self, event=None):
-        """Send message from mini mode input field."""
-        if not self.connected or not self.writer:
-            return
-            
-        message = self.mini_input_var.get().strip()
-        self.mini_input_var.set("")
+        # Add hyperlink bindings
+        self.mini_terminal.tag_bind("hyperlink", "<Button-1>", self.open_hyperlink_from_mini)
+        self.mini_terminal.tag_bind("hyperlink", "<Enter>", self.show_mini_thumbnail_preview)
+        self.mini_terminal.tag_bind("hyperlink", "<Leave>", self.hide_thumbnail_preview)
         
-        if message:
-            # Use the same sending mechanism as main input
-            full_message = message + "\r\n"
-            
-            async def send():
-                try:
-                    self.writer.write(full_message)
-                    await self.writer.drain()
-                except Exception as e:
-                    print(f"Error sending mini message: {e}")
-                        
-            asyncio.run_coroutine_threadsafe(send(), self.loop)
-
-    def limit_mini_input_length(self, *args):
-        """Limit mini input field to 250 characters."""
-        value = self.mini_input_var.get()
-        if len(value) > 250:
-            self.mini_input_var.set(value[:250])
+        # Scroll to the end of content to ensure latest messages are visible
+        self.mini_terminal.see(tk.END)
+        
+        # Set focus to input field after a short delay to ensure it works
+        self.master.after(100, self.mini_input.focus_set)
+        
+        # ANSI scrolling fix - ensure the terminal sees the latest content
+        self.master.update_idletasks()
+        self.mini_terminal.see(tk.END)
 
     def start_move(self, event):
-        """Start window move operation."""
-        self.x = event.x
-        self.y = event.y
-
+        """Start window move operation for mini mode."""
+        # Only allow dragging from the window border, not over text
+        if event.widget != self.mini_terminal:
+            self.x = event.x
+            self.y = event.y
+        
     def stop_move(self, event):
-        """Stop window move operation."""
-        self.x = None
-        self.y = None
-
+        """Stop window move operation for mini mode."""
+        if hasattr(self, 'x'):
+            self.x = None
+            self.y = None
+        
     def do_move(self, event):
-        """Move the window."""
-        if not hasattr(self, 'grip') or not self.grip.winfo_containing(event.x_root, event.y_root):
-            # Skip if cursor is over the resize grip
+        """Move the mini window when dragging."""
+        # Only move if we have start coordinates and not over text area
+        if hasattr(self, 'x') and self.x is not None and event.widget != self.mini_terminal:
             deltax = event.x - self.x
             deltay = event.y - self.y
             x = self.mini_window.winfo_x() + deltax
@@ -1122,76 +1110,186 @@ class BBSTerminalApp:
     def hide_mini_controls(self, event):
         """Hide controls when mouse leaves mini window."""
         # Check if pointer is still in titlebar
-        x, y = self.mini_window.winfo_pointerxy()
-        widget_under_cursor = self.mini_window.winfo_containing(x, y)
-        
-        if not (widget_under_cursor and 
-                hasattr(self, 'mini_titlebar') and 
-                widget_under_cursor.winfo_toplevel() == self.mini_titlebar.winfo_toplevel()):
-            if hasattr(self, 'mini_titlebar'):
+        if hasattr(self, 'mini_titlebar'):
+            x, y = self.mini_window.winfo_pointerxy()
+            widget_under_cursor = self.mini_window.winfo_containing(x, y)
+            
+            if not (widget_under_cursor and widget_under_cursor.winfo_toplevel() == self.mini_window):
                 self.mini_titlebar.pack_forget()
-    
+
+    def define_mini_terminal_tags(self):
+        """Define ANSI color tags directly for the mini terminal."""
+        # Define basic color tags
+        self.mini_terminal.tag_configure("normal", foreground="white")
+        self.mini_terminal.tag_configure("black", foreground="#000000")
+        self.mini_terminal.tag_configure("darkgray", foreground="#707070")
+        self.mini_terminal.tag_configure("red", foreground="#ff5555")
+        self.mini_terminal.tag_configure("green", foreground="#55ff55")
+        self.mini_terminal.tag_configure("yellow", foreground="#ffff55")
+        self.mini_terminal.tag_configure("blue", foreground="#3399FF")
+        self.mini_terminal.tag_configure("bright_blue", foreground="#5599ff")
+        self.mini_terminal.tag_configure("magenta", foreground="#ff55ff")
+        self.mini_terminal.tag_configure("cyan", foreground="#55ffff")
+        self.mini_terminal.tag_configure("white", foreground="white")
+        self.mini_terminal.tag_configure("gray", foreground="#aaaaaa")
+        self.mini_terminal.tag_configure("grey", foreground="#B0B0B0")
+        
+        # Configure bright variants
+        self.mini_terminal.tag_configure("bright_red", foreground="#ff8888")
+        self.mini_terminal.tag_configure("bright_green", foreground="#88ff88")
+        self.mini_terminal.tag_configure("bright_yellow", foreground="#ffff88")
+        self.mini_terminal.tag_configure("bright_magenta", foreground="#ff88ff")
+        self.mini_terminal.tag_configure("bright_cyan", foreground="#88ffff")
+        self.mini_terminal.tag_configure("bright_white", foreground="white")
+        
+        # Add hyperlink tag
+        self.mini_terminal.tag_configure("hyperlink", foreground="blue", underline=True)
+
     def parse_mini_terminal_text(self, text):
-        """Parse text with ANSI codes for the mini terminal."""
-        if not text:
+        """Insert text into mini terminal with proper ANSI handling and auto-scroll."""
+        if not text or not hasattr(self, 'mini_terminal') or not self.mini_terminal.winfo_exists():
             return
             
-        # For better performance, use a simplified approach for mini terminal
         try:
-            # Extract URLs for hyperlinking
-            url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
+            # Make text widget editable
+            self.mini_terminal.configure(state=tk.NORMAL)
             
+            # Process ANSI escape sequences
             i = 0
+            current_tags = ["normal"]
+            buffer = ""
+            
             while i < len(text):
                 if text[i:i+2] == '\x1b[':  # ANSI escape sequence
+                    # Insert any accumulated text with current tags
+                    if buffer:
+                        self.insert_mini_text_with_hyperlinks(buffer, tuple(current_tags))
+                        buffer = ""
+                    
                     # Find the end of the sequence
-                    m_pos = text.find('m', i+2)
-                    if m_pos != -1:
-                        # Skip the escape sequence
-                        i = m_pos + 1
-                    else:
+                    seq_end = text.find('m', i+2)
+                    if seq_end == -1:
                         i += 1
+                        continue
+                    
+                    # Process the color code
+                    code_str = text[i+2:seq_end]
+                    codes = code_str.split(';')
+                    
+                    # Reset colors if code is 0
+                    if '0' in codes or not code_str:
+                        current_tags = ["normal"]
+                    
+                    # Process each color code
+                    for code in codes:
+                        if not code:
+                            continue
+                        if code == '1':  # Bold/bright
+                            current_tags = [t.replace('bright_', '') for t in current_tags]
+                            current_tags = ["bright_" + t if t in self.color_map.values() and not t.startswith('bright_') else t for t in current_tags]
+                        elif code in self.color_map:
+                            # Remove any existing color tags
+                            current_tags = [t for t in current_tags if t not in self.color_map.values()]
+                            # Add new color tag
+                            current_tags.append(self.color_map[code])
+                    
+                    i = seq_end + 1
                 else:
-                    # Find next escape sequence
-                    next_esc = text.find('\x1b[', i)
-                    if next_esc == -1:
-                        # No more escape sequences, process the rest
-                        segment = text[i:]
-                        self.insert_mini_text_with_hyperlinks(segment)
-                        break
-                    else:
-                        # Process the text up to the next escape sequence
-                        segment = text[i:next_esc]
-                        self.insert_mini_text_with_hyperlinks(segment)
-                        i = next_esc
+                    buffer += text[i]
+                    i += 1
+            
+            # Insert any remaining text
+            if buffer:
+                self.insert_mini_text_with_hyperlinks(buffer, tuple(current_tags))
+            
+            # Force scrolling to the end
+            self.mini_terminal.see(tk.END)
+            self.master.update_idletasks()
+            
+            # Double-check scrolling (particularly important for long messages)
+            self.mini_terminal.yview_moveto(1.0)
+            
         except Exception as e:
             print(f"Error in parse_mini_terminal_text: {e}")
-            # Fallback to plain text insert
-            plain_text = re.sub(r'\x1b\[[0-9;]*m', '', text)
-            self.mini_terminal.insert(tk.END, plain_text)
+            # Fallback: insert as plain text
+            try:
+                plain_text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+                self.mini_terminal.insert(tk.END, plain_text)
+                self.mini_terminal.see(tk.END)
+            except Exception as e2:
+                print(f"Fallback text insertion also failed: {e2}")
+                pass
+        finally:
+            # Always make sure to disable editing and set focus back to input
+            self.mini_terminal.configure(state=tk.DISABLED)
+            self.master.after_idle(self.mini_input.focus_set)
 
-    def insert_mini_text_with_hyperlinks(self, text):
-        """Insert text into mini terminal with hyperlink detection."""
+    def insert_mini_text_with_hyperlinks(self, text, tags=("normal",)):
+        """Insert text with hyperlink detection into mini terminal."""
         url_pattern = re.compile(r'(https?://[^\s<>"\']+|www\.[^\s<>"\']+)')
         last_end = 0
         
+        # Default to normal if no tags specified
+        if not tags:
+            tags = ("normal",)
+        
         for match in url_pattern.finditer(text):
             start, end = match.span()
+            
             # Insert non-URL text
             if start > last_end:
-                self.mini_terminal.insert(tk.END, text[last_end:start])
+                self.mini_terminal.insert(tk.END, text[last_end:start], tags)
             
-            # Clean and insert URL
+            # Clean URL and insert with hyperlink tag
             url = text[start:end].rstrip('.,;:)]}\'"')
             if url.startswith('www.'):
                 url = 'http://' + url
-            self.mini_terminal.insert(tk.END, url, "hyperlink")
+                
+            # Add both hyperlink tag and original formatting tags
+            all_tags = ("hyperlink",) + (tags if isinstance(tags, tuple) else (tags,))
+            self.mini_terminal.insert(tk.END, url, all_tags)
+            
+            # Store the hyperlink for tracking
+            self.store_hyperlink(url, "mini_terminal")
             
             last_end = end
         
         # Insert remaining text
         if last_end < len(text):
-            self.mini_terminal.insert(tk.END, text[last_end:])
+            self.mini_terminal.insert(tk.END, text[last_end:], tags)
+        
+        # Make sure we're still at the bottom of the text
+        self.mini_terminal.see(tk.END)
+
+    def send_mini_message(self, event=None):
+        """Send message from mini mode input field."""
+        if not self.connected or not self.writer:
+            return
+            
+        message = self.mini_input_var.get().strip()
+        if not message:
+            # Just send a newline if nothing entered
+            self.mini_input_var.set("")
+            self.send_custom_message("\r\n")
+            return
+            
+        # Clear input field before sending
+        self.mini_input_var.set("")
+        
+        # Use the same sending mechanism as main input
+        full_message = message + "\r\n"
+        
+        async def send():
+            try:
+                self.writer.write(full_message.encode('latin1'))
+                await self.writer.drain()
+            except Exception as e:
+                print(f"Error sending mini message: {e}")
+                    
+        asyncio.run_coroutine_threadsafe(send(), self.loop)
+        
+        # Refocus the input field
+        self.master.after(50, self.mini_input.focus_set)
 
     def open_hyperlink_from_mini(self, event):
         """Handle clicking a hyperlink in the mini terminal."""
@@ -1220,7 +1318,10 @@ class BBSTerminalApp:
             # Get the URL
             url = self.mini_terminal.get(start_index, end_index).strip()
             
-            # Use the same handling as main terminal
+            # Store the URL in history
+            self.store_hyperlink(url, "mini_terminal_click")
+            
+            # Handle audio streams and other URLs appropriately
             if (url.lower().endswith(('.mp3', '.m3u', '.pls', '.aac', '.ogg')) or 
                 'redirect.mp3' in url.lower() or
                 'podcast' in url.lower() or
@@ -1229,6 +1330,9 @@ class BBSTerminalApp:
                 self.play_audio_stream(url)
             else:
                 webbrowser.open(url)
+                
+            # Refocus the input field after a short delay
+            self.master.after(100, self.mini_input.focus_set)
         except Exception as e:
             print(f"Error opening hyperlink from mini: {e}")
             traceback.print_exc()
@@ -3034,12 +3138,14 @@ class BBSTerminalApp:
             self.terminal_display.configure(state=tk.DISABLED)
             
             # If in mini mode, also update mini terminal
-            if hasattr(self, 'is_in_mini_mode') and self.is_in_mini_mode and hasattr(self, 'mini_terminal'):
+            if hasattr(self, 'is_in_mini_mode') and self.is_in_mini_mode and hasattr(self, 'mini_terminal') and self.mini_terminal.winfo_exists():
                 try:
                     self.mini_terminal.configure(state=tk.NORMAL)
                     self.parse_mini_terminal_text(text)
                     self.mini_terminal.see(tk.END)
                     self.mini_terminal.configure(state=tk.DISABLED)
+                    # Ensure focus goes back to input
+                    self.master.after_idle(self.mini_input.focus_set)
                 except Exception as mini_err:
                     print(f"[ERROR] Mini terminal update failed: {mini_err}")
         except Exception as e:
@@ -4923,6 +5029,29 @@ def main():
     root = tk.Tk()
     app = BBSTerminalApp(root)
 
+    async def cleanup(app):
+        """Async cleanup function to handle disconnection."""
+        try:
+            # Cancel all pending tasks first
+            for task in asyncio.all_tasks(app.loop):
+                if task is not asyncio.current_task():
+                    task.cancel()
+
+            # Clean up audio player
+            app.cleanup_audio()
+
+            # Clear only the active members list
+            app.clear_chat_members()
+
+            # Then handle the disconnect
+            if app.connected:
+                await app.disconnect_from_bbs()
+
+            # Finally close the loop 
+            app.loop.stop()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
     def on_closing():
         """Handle window closing event."""
         try:
@@ -4939,9 +5068,9 @@ def main():
         finally:
             # Force quit even if cleanup fails
             try:
-                root.quit()
-            finally:
                 root.destroy()
+            finally:
+                sys.exit(0)
 
     # Bind the closing handler
     root.protocol("WM_DELETE_WINDOW", on_closing)
