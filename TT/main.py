@@ -1580,6 +1580,25 @@ class BBSTerminalApp:
         # Set initial size based on current terminal
         self.mini_window.geometry(f"{terminal_width}x{terminal_height + 30}+{terminal_x}+{terminal_y}")
         
+        # IMPORTANT: Set bind events for showing/hiding title bar 
+        # These must be on the container_frame or mini_window
+        self.mini_window.bind("<Enter>", self.show_mini_controls)
+        self.mini_window.bind("<Leave>", self.hide_mini_controls)
+
+        # IMPORTANT: Create container_frame BEFORE referencing it
+        container_frame = tk.Frame(self.mini_window, bg="black")
+        container_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Bind events to container_frame specifically for better event handling
+        container_frame.bind("<Enter>", self.show_mini_controls)
+        container_frame.bind("<Leave>", self.hide_mini_controls)
+
+        # Configure the row weights to ensure input field is always visible
+        container_frame.grid_rowconfigure(0, weight=1)  # Terminal gets all extra space
+        container_frame.grid_rowconfigure(1, weight=0)  # Input maintains fixed height
+        container_frame.grid_columnconfigure(0, weight=1)  # Column expands with window
+
+
         # Configure the window content
         self.mini_window.configure(bg="black")
         self.mini_window.columnconfigure(0, weight=1)
@@ -1589,24 +1608,24 @@ class BBSTerminalApp:
         self.grip = ttk.Sizegrip(self.mini_window)
         self.grip.place(relx=1.0, rely=1.0, anchor="se")
         
-        # Create title bar (initially hidden)
-        self.mini_titlebar = tk.Frame(self.mini_window, bg="#333333", height=20)
-        self.mini_titlebar.pack(fill=tk.X, side=tk.TOP)
-        self.mini_titlebar.pack_forget()  # Hide initially
+        # IMPORTANT: Make sure titlebar starts HIDDEN
+        self.mini_titlebar = tk.Frame(container_frame, bg="#333333", height=20)
+        self.mini_titlebar.grid(row=0, column=0, sticky="ew")
+        self.mini_titlebar.grid_remove()  # Initially hidden - make sure this runs
         
         # Add exit button to titlebar
         self.exit_button = tk.Button(self.mini_titlebar, text="×", bg="#333333", fg="white", 
-                                   font=("Arial", 12), bd=0, command=self.exit_mini_mode)
+                                font=("Arial", 12), bd=0, command=self.exit_mini_mode)
         self.exit_button.pack(side=tk.RIGHT)
         
         # Add label to titlebar
         tk.Label(self.mini_titlebar, text="Terminal Mini Mode", bg="#333333", fg="white", 
                 font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
         
-        # Create a new terminal display
-        self.mini_terminal = tk.Text(self.mini_window, wrap=tk.WORD, bg="black", 
-                                   font=self.terminal_display.cget("font"), fg="white")
-        self.mini_terminal.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2, 0))
+         # Create a new terminal display - now in the grid layout
+        self.mini_terminal = tk.Text(container_frame, wrap=tk.WORD, bg="black", 
+                                font=self.terminal_display.cget("font"), fg="white")
+        self.mini_terminal.grid(row=0, column=0, sticky="nsew", padx=2, pady=(2, 0))
         
         # Copy content from main terminal
         content = self.terminal_display.get("1.0", tk.END)
@@ -1616,15 +1635,22 @@ class BBSTerminalApp:
         # Define ANSI tags directly instead of trying to copy from main terminal
         self.define_mini_terminal_tags()
         
-        # Create input field at bottom
-        self.mini_input_var = tk.StringVar()
-        self.mini_input = ttk.Entry(self.mini_window, textvariable=self.mini_input_var)
-        self.mini_input.pack(fill=tk.X, side=tk.BOTTOM, padx=2, pady=(0, 2))
-        self.mini_input.bind("<Return>", self.send_mini_message)
+        # Create input field at bottom - now in the grid layout
+        input_frame = tk.Frame(container_frame, bg="black")
+        input_frame.grid(row=1, column=0, sticky="ew", padx=2, pady=(0, 2))
+        input_frame.grid_columnconfigure(0, weight=1)
         
+        self.mini_input_var = tk.StringVar()
+        self.mini_input = ttk.Entry(input_frame, textvariable=self.mini_input_var)
+        self.mini_input.grid(row=0, column=0, sticky="ew")
+        self.mini_input.bind("<Return>", self.send_mini_message)
+
         # Add character limit to mini input
         self.mini_input_var.trace('w', self.limit_mini_input_length)
         
+        # Set minimum height for the window to ensure input is always visible
+        self.mini_window.minsize(200, 100)
+
         # Make window draggable
         self.mini_window.bind("<ButtonPress-1>", self.start_move)
         self.mini_window.bind("<ButtonRelease-1>", self.stop_move)
@@ -1645,7 +1671,8 @@ class BBSTerminalApp:
         # Scroll to the end of content to ensure latest messages are visible
         self.mini_terminal.see(tk.END)
         
-        # Set focus to input field after a short delay to ensure it works
+        # Set focus to input field right away and after a delay for reliability
+        self.mini_input.focus_set()
         self.master.after(100, self.mini_input.focus_set)
         
         # ANSI scrolling fix - ensure the terminal sees the latest content
@@ -1678,17 +1705,36 @@ class BBSTerminalApp:
     def show_mini_controls(self, event):
         """Show controls when mouse enters mini window."""
         if hasattr(self, 'mini_titlebar'):
-            self.mini_titlebar.pack(fill=tk.X, side=tk.TOP)
+            # Use grid_configure instead of pack
+            self.mini_titlebar.grid()  # This shows the titlebar
 
     def hide_mini_controls(self, event):
         """Hide controls when mouse leaves mini window."""
-        # Check if pointer is still in titlebar
-        if hasattr(self, 'mini_titlebar'):
-            x, y = self.mini_window.winfo_pointerxy()
-            widget_under_cursor = self.mini_window.winfo_containing(x, y)
-            
-            if not (widget_under_cursor and widget_under_cursor.winfo_toplevel() == self.mini_window):
-                self.mini_titlebar.pack_forget()
+        # Use after_idle to ensure this happens after other events
+        def do_hide():
+            if hasattr(self, 'mini_titlebar') and self.mini_titlebar.winfo_exists():
+                x, y = self.master.winfo_pointerxy()
+                widget_under_cursor = self.master.winfo_containing(x, y)
+                
+                # Check if cursor is still within mini_window
+                is_still_in_window = False
+                if widget_under_cursor:
+                    parent = widget_under_cursor
+                    while parent:
+                        if hasattr(self, 'mini_window') and parent == self.mini_window:
+                            is_still_in_window = True
+                            break
+                        try:
+                            parent = parent.master
+                        except:
+                            break
+                
+                # Only hide if actually outside the window
+                if not is_still_in_window:
+                    self.mini_titlebar.grid_remove()
+        
+        # Delay the hide check slightly to avoid flicker
+        self.master.after(100, do_hide)
 
     def define_mini_terminal_tags(self):
         """Define ANSI color tags directly for the mini terminal."""
@@ -1849,12 +1895,13 @@ class BBSTerminalApp:
         # Clear input field before sending
         self.mini_input_var.set("")
         
-        # Use the same sending mechanism as main input
+        # Use the same sending mechanism as main input - DON'T ENCODE HERE
         full_message = message + "\r\n"
         
         async def send():
             try:
-                self.writer.write(full_message.encode('latin1'))
+                # Remove the encode() call - the writer handles the encoding
+                self.writer.write(full_message)
                 await self.writer.drain()
             except Exception as e:
                 print(f"Error sending mini message: {e}")
