@@ -267,6 +267,11 @@ class BBSTerminalApp:
         self.favorites = self.load_favorites()
         self.favorites_window = None
 
+
+        self.forget_list = self.load_forget_list()
+
+
+
         # Triggers
         self.triggers = self.load_triggers()
         self.triggers_window = None
@@ -646,7 +651,10 @@ class BBSTerminalApp:
         self.remember_password_check.pack(side=tk.LEFT, padx=5, pady=5)
         self.send_password_button = ttk.Button(self.password_frame, text="Send", command=self.send_password)
         self.send_password_button.pack(side=tk.LEFT, padx=5, pady=5)
-        
+        self.forget_list_button = ttk.Button(self.password_frame, text="Forget List", 
+                                            command=self.show_forget_list_window,
+                                            style="Forget.TButton")
+        self.forget_list_button.pack(side=tk.LEFT, padx=5, pady=5)
         # --- Row 1: Paned container for BBS Output and Messages to You ---
         paned_container = ttk.Frame(main_frame)
         paned_container.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=5, pady=5)
@@ -1009,7 +1017,137 @@ class BBSTerminalApp:
         else:
             webbrowser.open(url)
 
+    def show_forget_list_window(self):
+        """Open a Toplevel window to manage the list of users to forget (block)."""
+        if hasattr(self, 'forget_window') and self.forget_window and self.forget_window.winfo_exists():
+            self.forget_window.lift()
+            self.forget_window.attributes('-topmost', True)
+            return
 
+        self.forget_window = tk.Toplevel(self.master)
+        self.forget_window.title("Forget List")
+        self.forget_window.attributes('-topmost', True)  # Keep window on top
+
+        row_index = 0
+        self.forget_listbox = tk.Listbox(self.forget_window, height=10, width=50)
+        self.forget_listbox.grid(row=row_index, column=0, columnspan=2, padx=5, pady=5)
+        self.update_forget_listbox()
+
+        row_index += 1
+        self.new_forget_var = tk.StringVar()
+        ttk.Entry(self.forget_window, textvariable=self.new_forget_var, width=40).grid(
+            row=row_index, column=0, padx=5, pady=5)
+
+        add_button = ttk.Button(self.forget_window, text="Add", command=self.add_to_forget_list)
+        add_button.grid(row=row_index, column=1, padx=5, pady=5)
+
+        row_index += 1
+        remove_button = ttk.Button(self.forget_window, text="Remove", command=self.remove_from_forget_list)
+        remove_button.grid(row=row_index, column=0, columnspan=2, pady=5)
+        
+        # Add a description of the functionality
+        row_index += 1
+        description = "Users in this list will be forgotten (/F) automatically when entering a chatroom."
+        ttk.Label(self.forget_window, text=description, wraplength=300).grid(
+            row=row_index, column=0, columnspan=2, padx=10, pady=10)
+
+    def update_forget_listbox(self):
+        """Update the forget list UI with current forgotten users."""
+        self.forget_listbox.delete(0, tk.END)
+        for username in self.forget_list:
+            self.forget_listbox.insert(tk.END, username)
+
+    def add_to_forget_list(self):
+        """Add a username to the forget list."""
+        new_username = self.new_forget_var.get().strip()
+        if new_username and new_username not in self.forget_list:
+            self.forget_list.append(new_username)
+            self.update_forget_listbox()
+            self.new_forget_var.set("")
+            self.save_forget_list()
+
+    def remove_from_forget_list(self):
+        """Remove a username from the forget list."""
+        selected_index = self.forget_listbox.curselection()
+        if selected_index:
+            username = self.forget_listbox.get(selected_index)
+            self.forget_list.remove(username)
+            self.update_forget_listbox()
+            self.save_forget_list()
+
+    def load_forget_list(self):
+        """Load the forget list from storage."""
+        if os.path.exists("forget_list.json"):
+            with open("forget_list.json", "r") as file:
+                return json.load(file)
+        return []
+
+    def save_forget_list(self):
+        """Save the forget list to storage."""
+        with open("forget_list.json", "w") as file:
+            json.dump(self.forget_list, file)
+
+    def process_forget_list_after_banner(self):
+        """Send forget commands only for users who are currently in the room."""
+        if not self.forget_list or not self.connected or not self.writer:
+            return
+            
+        print("[DEBUG] Processing forget list against current chat members")
+        
+        # Create a set of lowercase usernames for case-insensitive comparison
+        # Strip domain parts (@example.com) for more flexible matching
+        current_members_lower = {
+            member.split('@')[0].lower() for member in self.chat_members
+        }
+        
+        # Check which users in the forget list are currently present
+        present_users = []
+        absent_users = []
+        
+        for username in self.forget_list:
+            # Strip domain part if present
+            base_username = username.split('@')[0].lower()
+            
+            if base_username in current_members_lower:
+                present_users.append(username)
+            else:
+                absent_users.append(username)
+        
+        if absent_users:
+            print(f"[DEBUG] Skipping forget commands for absent users: {absent_users}")
+        
+        if not present_users:
+            print("[DEBUG] No users to forget in current room")
+            return
+            
+        print(f"[DEBUG] Will send forget commands for present users: {present_users}")
+        
+        # Create a sequence of commands with delays, but only for present users
+        def send_forgets():
+            for i, username in enumerate(present_users):
+                # Schedule each forget command with increasing delays
+                self.master.after(i * 250, lambda u=username: self.send_forget_command(u))
+                
+        # Start the sequence after a short delay to ensure banner processing is complete
+        self.master.after(500, send_forgets)
+
+    def send_forget_command(self, username):
+        """Send a single forget command."""
+        if not self.connected or not self.writer:
+            return
+            
+        print(f"[DEBUG] Sending forget command for: {username}")
+        forget_cmd = f"/F {username}\r\n"
+        
+        async def send():
+            try:
+                self.writer.write(forget_cmd)
+                await self.writer.drain()
+            except Exception as e:
+                print(f"[ERROR] Failed to send forget command: {e}")
+        
+        # Run the async function in the event loop
+        asyncio.run_coroutine_threadsafe(send(), self.loop)
     
      
 
@@ -1094,6 +1232,10 @@ class BBSTerminalApp:
         configure_button_style("Teleconference", "#20c997")  # Teal
         configure_button_style("BRB", "#6610f2")  # Purple
         configure_button_style("MiniMode", "#9932CC")  # Dark Orchid
+
+
+        configure_button_style("Forget", "#ff6b6b")  # Red-ish color for forget button
+
 
         # Configure bubble styles
         style.configure("Bubble.TButton",
@@ -2799,7 +2941,9 @@ class BBSTerminalApp:
                     
                     print("[DEBUG] Banner complete with colon delimiter")
                     self.update_chat_members([item[1] for item in banner_lines])
-                    
+                    self.process_forget_list_after_banner()
+
+
                     # In Bannerless Mode, replace banner with just the colon
                     if self.bannerless_mode.get():
                         self.append_terminal_text(":\n", "normal")
@@ -2822,7 +2966,7 @@ class BBSTerminalApp:
                     
                     print("[DEBUG] Banner complete with assistance line")
                     self.update_chat_members([item[1] for item in banner_lines])
-                    
+                    self.process_forget_list_after_banner()
                     # In Bannerless Mode, replace banner with minimal output
                     if self.bannerless_mode.get():
                         self.append_terminal_text("> \n", "normal")
