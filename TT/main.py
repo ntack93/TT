@@ -269,7 +269,7 @@ class BBSTerminalApp:
 
 
         self.forget_list = self.load_forget_list()
-
+        self.forgotten_users = set()  # Track already forgotten users in current session
 
 
         # Triggers
@@ -1088,39 +1088,55 @@ class BBSTerminalApp:
             json.dump(self.forget_list, file)
 
     def process_forget_list_after_banner(self):
-        """Send forget commands only for users who are currently in the room."""
+        """Send forget commands only for users who are currently in the room and haven't already been forgotten."""
         if not self.forget_list or not self.connected or not self.writer:
             return
             
         print("[DEBUG] Processing forget list against current chat members")
-        
+    
         # Create a set of lowercase usernames for case-insensitive comparison
         # Strip domain parts (@example.com) for more flexible matching
         current_members_lower = {
             member.split('@')[0].lower() for member in self.chat_members
         }
-        
-        # Check which users in the forget list are currently present
+    
+        # Check which users in the forget list are currently present AND not yet forgotten
         present_users = []
         absent_users = []
-        
+        already_forgotten = []
+    
         for username in self.forget_list:
             # Strip domain part if present
             base_username = username.split('@')[0].lower()
-            
+        
             if base_username in current_members_lower:
-                present_users.append(username)
+                if username not in self.forgotten_users:
+                    present_users.append(username)
+                else:
+                    already_forgotten.append(username)
             else:
                 absent_users.append(username)
-        
+    
         if absent_users:
             print(f"[DEBUG] Skipping forget commands for absent users: {absent_users}")
-        
+    
+        if already_forgotten:
+            print(f"[DEBUG] Skipping forget commands for already forgotten users: {already_forgotten}")
+    
         if not present_users:
-            print("[DEBUG] No users to forget in current room")
+            print("[DEBUG] No new users to forget in current room")
             return
             
         print(f"[DEBUG] Will send forget commands for present users: {present_users}")
+    
+        # Create a sequence of commands with delays, but only for present users
+        def send_forgets():
+            for i, username in enumerate(present_users):
+                # Schedule each forget command with increasing delays
+                self.master.after(i * 250, lambda u=username: self.send_forget_command(u))
+                
+        # Start the sequence after a short delay to ensure banner processing is complete
+        self.master.after(500, send_forgets)
         
         # Create a sequence of commands with delays, but only for present users
         def send_forgets():
@@ -1132,12 +1148,15 @@ class BBSTerminalApp:
         self.master.after(500, send_forgets)
 
     def send_forget_command(self, username):
-        """Send a single forget command."""
+        """Send a single forget command and track the user as forgotten."""
         if not self.connected or not self.writer:
             return
             
         print(f"[DEBUG] Sending forget command for: {username}")
         forget_cmd = f"/F {username}\r\n"
+        
+        # Mark this user as forgotten in this session
+        self.forgotten_users.add(username)
         
         async def send():
             try:
@@ -2662,7 +2681,8 @@ class BBSTerminalApp:
         try:
             self.stop_event.set()
             self.stop_keep_alive()
-            
+            # Add this line to reset forgotten users when disconnecting
+            self.forgotten_users = set()
             # Instead of directly calling clear_chat_members, update the members list safely
             def update_ui():
                 self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
@@ -2993,6 +3013,14 @@ class BBSTerminalApp:
                 self.append_terminal_text(original_with_ansi + "\n", "normal")
                 self.check_triggers(clean_line)  # Use clean line for trigger checking
                 self.parse_and_save_chatlog_message(clean_line, original_with_ansi)
+                if "You have already forgotten that user" in clean_line:
+                    # Extract the username from the message
+                    already_forgotten_match = re.search(r"already forgotten that user[^<]*<([^>]+)>", clean_line)
+                    if already_forgotten_match:
+                        forgotten_user = already_forgotten_match.group(1)
+                        print(f"[DEBUG] Already forgotten user detected: {forgotten_user}")
+                        # Add to our tracking set
+                        self.forgotten_users.add(forgotten_user)
 
         self.partial_line = lines[-1]
 
