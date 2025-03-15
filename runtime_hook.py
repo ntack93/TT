@@ -48,30 +48,17 @@ def setup_vlc():
             
         print(f"Base directory: {base_dir}")
         
-        # Set plugin paths in multiple places to maximize chances of discovery
-        plugin_paths = [
-            os.path.join(base_dir, 'plugins'),
-            os.path.join(base_dir, 'vlc', 'plugins'),
-            os.path.join(base_dir)
-        ]
+        # Make sure VLC can find its DLLs
+        os.environ['PATH'] = base_dir + os.pathsep + os.environ['PATH']
         
-        # Find the first path that exists
-        plugin_path = None
-        for path in plugin_paths:
-            if os.path.exists(path):
-                plugin_path = path
-                print(f"Found plugin path: {path}")
-                break
-        
-        if plugin_path:
+        # Set plugin path
+        plugin_path = os.path.join(base_dir, 'plugins')
+        if os.path.exists(plugin_path):
             os.environ['VLC_PLUGIN_PATH'] = plugin_path
             print(f"Set VLC_PLUGIN_PATH to {plugin_path}")
         else:
-            print("Warning: No VLC plugin path found")
+            print(f"Warning: VLC plugin path not found: {plugin_path}")
             
-        # Set the library path
-        os.environ['PYTHONPATH'] = base_dir
-        
         # Silence VLC messages
         os.environ['VLC_VERBOSE'] = '-1'
             

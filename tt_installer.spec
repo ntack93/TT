@@ -2,11 +2,28 @@
 
 block_cipher = None
 
-# Add this for better debugging
+# Define VLC path - adjust this to your VLC installation path
+vlc_path = 'C:\\Program Files\\VideoLAN\\VLC'
+
+# Add VLC binaries
+vlc_binaries = [
+    (os.path.join(vlc_path, 'libvlc.dll'), '.'),
+    (os.path.join(vlc_path, 'libvlccore.dll'), '.'),
+]
+
+# Add VLC plugins
+vlc_data = []
+for root, dirs, files in os.walk(os.path.join(vlc_path, 'plugins')):
+    for file in files:
+        if file.endswith('.dll'):
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(os.path.dirname(full_path), vlc_path)
+            vlc_data.append((full_path, rel_path))
+
 a = Analysis(
     ['TT/main.py'],
     pathex=['c:\\Users\\Noah\\OneDrive\\Documents\\TT'],
-    binaries=[],
+    binaries=vlc_binaries,  # Add VLC binaries here
     datas=[
         ('TT/chat.wav', 'TT'),
         ('TT/directed.wav', 'TT'),
@@ -15,7 +32,7 @@ a = Analysis(
         ('TT/init_config.py', 'TT'),
         ('TT/ASCII_EXT.py', 'TT'),
         ('TT/image_patch.py', 'TT'),
-    ],
+    ] + vlc_data,  # Add VLC plugin data here
     hiddenimports=[
         'PIL', 'PIL._tkinter_finder', 'PIL._imaging', 'PIL.Image', 'PIL.ImageTk',
         'PIL.ImageFile', 'PIL.GifImagePlugin', 'PIL.PngImagePlugin', 'PIL.JpegImagePlugin',

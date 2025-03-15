@@ -26,6 +26,17 @@ mkdir "dist\TeleconferenceTerminal\_internal" 2>nul
 copy "TT\chat.wav" "dist\TeleconferenceTerminal\_internal\" /y
 copy "TT\directed.wav" "dist\TeleconferenceTerminal\_internal\" /y
 
+echo Step 5a: Copying VLC files from installation
+set VLC_PATH=C:\Program Files\VideoLAN\VLC
+if not exist "%VLC_PATH%" (
+  echo ERROR: VLC not found at %VLC_PATH%. Please install VLC or update the path.
+  exit /b 1
+)
+copy "%VLC_PATH%\libvlc.dll" "dist\TeleconferenceTerminal\" /y
+copy "%VLC_PATH%\libvlccore.dll" "dist\TeleconferenceTerminal\" /y
+mkdir "dist\TeleconferenceTerminal\plugins" 2>nul
+xcopy "%VLC_PATH%\plugins\*" "dist\TeleconferenceTerminal\plugins\" /s /e /y
+
 echo Step 6: Creating redist directory
 mkdir "redist" 2>nul
 

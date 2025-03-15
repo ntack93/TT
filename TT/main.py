@@ -179,8 +179,8 @@ class BBSTerminalApp:
         self.current_sound = None
         self.last_sound_time = 0
         
-        
-
+        # Add panel width setting
+        self.panel_width = 130  # Fixed width for side panels
 
         print(f"[DEBUG] Chat sound path: {self.chat_sound_file}")
         print(f"[DEBUG] Directed sound path: {self.directed_sound_file}")
@@ -399,6 +399,9 @@ class BBSTerminalApp:
         # Create a main PanedWindow container
         container = ttk.PanedWindow(self.master, orient=tk.HORIZONTAL)
         container.pack(fill=tk.BOTH, expand=True)
+        
+        # Store reference to the container for use in maintain_panel_widths
+        self.paned_container = container
 
         # Create the main UI frame on the LEFT with weight 3
         main_frame = ttk.Frame(container, name='main_frame')
@@ -408,8 +411,8 @@ class BBSTerminalApp:
         main_frame.rowconfigure(2, weight=0)
         container.add(main_frame, weight=3)
 
-        # Define default width for side panels (1.5 inches * 96 DPI)
-        default_panel_width = 130
+        # Define default width for side panels - use the class variable
+        default_panel_width = self.panel_width
 
         # Create the Chatroom Members panel in the MIDDLE with fixed width
         members_frame = ttk.LabelFrame(container, text="Chatroom Members", width=default_panel_width)
@@ -789,6 +792,34 @@ class BBSTerminalApp:
                 self.master.after(100, lambda: self.paned.sash_place(0, pos, 0))
 
         self.update_display_font()
+
+        # Bind the resize event to maintain panel widths
+        self.master.bind("<Configure>", self.maintain_panel_widths)
+
+    def maintain_panel_widths(self, event):
+        """Maintain the side panel widths when the window is resized."""
+        # Only respond to root window resize events
+        if event.widget != self.master:
+            return
+            
+        # Don't process during initialization
+        if not hasattr(self, 'paned_container') or not self.paned_container.winfo_exists():
+            return
+            
+        try:
+            # Get the current width of the entire window
+            total_width = self.paned_container.winfo_width()
+            
+            # Calculate the desired width of the main panel
+            main_width = total_width - (2 * self.panel_width)
+            
+            # Only adjust if we have a reasonable size
+            if main_width > 200:  # Ensure main panel has at least 200px
+                # Set sash positions to maintain panel widths
+                self.paned_container.sashpos(0, main_width)  # Between main and members
+                self.paned_container.sashpos(1, main_width + self.panel_width)  # Between members and actions
+        except Exception as e:
+            print(f"Error maintaining panel widths: {e}")
 
     def start_keep_alive(self):
         """Start the keep-alive coroutine if enabled."""
@@ -2195,6 +2226,7 @@ class BBSTerminalApp:
                 self.show_thumbnail(url, event)
         except Exception as e:
             print(f"Error in directed message thumbnail preview: {e}")
+
 
 
 
@@ -4089,10 +4121,9 @@ class BBSTerminalApp:
         
         test_label.destroy()
         
-        # Set minimum width and add padding for scrollbar
-        panel_width = max(max_width, 100) + 30  # Minimum 100px + scrollbar width
+        # Set width using panel_width class variable rather than dynamically calculating
         members_frame = self.members_frame.master.master  # Get the outer frame
-        members_frame.configure(width=panel_width)
+        members_frame.configure(width=self.panel_width)
 
         # Create member buttons
         style = ttk.Style()
@@ -4265,7 +4296,7 @@ class BBSTerminalApp:
         
         # Set panel width
         actions_frame = self.actions_frame.master.master
-        actions_frame.configure(width=panel_width)
+        actions_frame.configure(width=self.panel_width)
 
         # Cleanup old mousewheel binding if it exists
         if hasattr(self, 'actions_canvas'):
