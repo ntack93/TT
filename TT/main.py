@@ -185,6 +185,11 @@ class BBSTerminalApp:
         print(f"[DEBUG] Chat sound path: {self.chat_sound_file}")
         print(f"[DEBUG] Directed sound path: {self.directed_sound_file}")
         
+
+        # Initialize forgotten users tracking
+        self.forgotten_users = set()
+        print("[DEBUG] Forgotten users set initialized")
+
         # Add at the start of __init__
         self.bannerless_mode = tk.BooleanVar(value=False)
         self.show_messages_to_you = tk.BooleanVar(value=True)
@@ -799,7 +804,7 @@ class BBSTerminalApp:
     def maintain_panel_widths(self, event):
         """Maintain the side panel widths when the window is resized."""
         # Only respond to root window resize events
-        if event.widget != self.master:
+        if (event.widget != self.master):
             return
             
         # Don't process during initialization
@@ -814,7 +819,7 @@ class BBSTerminalApp:
             main_width = total_width - (2 * self.panel_width)
             
             # Only adjust if we have a reasonable size
-            if main_width > 200:  # Ensure main panel has at least 200px
+            if (main_width > 200):  # Ensure main panel has at least 200px
                 # Set sash positions to maintain panel widths
                 self.paned_container.sashpos(0, main_width)  # Between main and members
                 self.paned_container.sashpos(1, main_width + self.panel_width)  # Between members and actions
@@ -1118,63 +1123,66 @@ class BBSTerminalApp:
         with open("forget_list.json", "w") as file:
             json.dump(self.forget_list, file)
 
-    def process_forget_list_after_banner(self):
+    def process_forget_list_after_banner(self, request_actions=False):
         """Send forget commands only for users who are currently in the room and haven't already been forgotten."""
         if not self.forget_list or not self.connected or not self.writer:
+            if request_actions:
+                self.master.after(500, self.request_actions_after_banner)
             return
-            
+
         print("[DEBUG] Processing forget list against current chat members")
-    
+        print(f"[DEBUG] Current forgotten_users set: {self.forgotten_users}")
+        
         # Create a set of lowercase usernames for case-insensitive comparison
         # Strip domain parts (@example.com) for more flexible matching
         current_members_lower = {
             member.split('@')[0].lower() for member in self.chat_members
         }
-    
+        
+        # Also create a set of lowercase forgotten users for comparison
+        forgotten_users_lower = {
+            user.split('@')[0].lower() for user in self.forgotten_users
+        }
+        
         # Check which users in the forget list are currently present AND not yet forgotten
         present_users = []
         absent_users = []
         already_forgotten = []
-    
-        for username in self.forget_list:
-            # Strip domain part if present
-            base_username = username.split('@')[0].lower()
         
-            if base_username in current_members_lower:
-                if username not in self.forgotten_users:
-                    present_users.append(username)
-                else:
-                    already_forgotten.append(username)
+        for username in self.forget_list:
+            # Get base name without domain
+            base_name = username.split('@')[0].lower()
+            
+            if base_name in forgotten_users_lower:
+                already_forgotten.append(username)
+            elif base_name in current_members_lower:
+                # User is present and not forgotten
+                present_users.append(username)
             else:
                 absent_users.append(username)
-    
+        
         if absent_users:
             print(f"[DEBUG] Skipping forget commands for absent users: {absent_users}")
-    
+        
         if already_forgotten:
             print(f"[DEBUG] Skipping forget commands for already forgotten users: {already_forgotten}")
-    
+        
         if not present_users:
             print("[DEBUG] No new users to forget in current room")
+            if request_actions:
+                self.master.after(500, self.request_actions_after_banner)
             return
             
         print(f"[DEBUG] Will send forget commands for present users: {present_users}")
-    
-        # Create a sequence of commands with delays, but only for present users
-        def send_forgets():
-            for i, username in enumerate(present_users):
-                # Schedule each forget command with increasing delays
-                self.master.after(i * 250, lambda u=username: self.send_forget_command(u))
-                
-        # Start the sequence after a short delay to ensure banner processing is complete
-        self.master.after(500, send_forgets)
         
         # Create a sequence of commands with delays, but only for present users
         def send_forgets():
-            for i, username in enumerate(present_users):
-                # Schedule each forget command with increasing delays
-                self.master.after(i * 250, lambda u=username: self.send_forget_command(u))
-                
+            for username in present_users:
+                self.send_forget_command(username)
+            # Request actions after forget commands if needed
+            if request_actions:
+                self.master.after(1000, self.request_actions_after_banner)
+        
         # Start the sequence after a short delay to ensure banner processing is complete
         self.master.after(500, send_forgets)
 
@@ -2369,6 +2377,10 @@ class BBSTerminalApp:
         # Reset flags
         self.first_banner_seen = False
         self.actions_requested = False
+        
+        # Reset forgotten users tracking for new connection
+        self.forgotten_users = set()
+        print("[DEBUG] Forgotten users set reset for new connection")
 
         # Reset session state
         self.actions_requested_this_session = False
@@ -2713,8 +2725,11 @@ class BBSTerminalApp:
         try:
             self.stop_event.set()
             self.stop_keep_alive()
-            # Add this line to reset forgotten users when disconnecting
+            
+            # Always reset forgotten users when disconnecting
             self.forgotten_users = set()
+            print("[DEBUG] Forgotten users list has been reset")
+            
             # Instead of directly calling clear_chat_members, update the members list safely
             def update_ui():
                 self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
@@ -2913,6 +2928,28 @@ class BBSTerminalApp:
             # Store initial ANSI state
             self.current_ansi_state = ''.join([f"\x1b[{code}m" for code in ansi_codes]) if ansi_codes else ''
             
+
+            # Check for "already forgotten user" response and add to forgotten_users set
+            if "You have already forgotten that user" in clean_line:
+                # Extract the username from the message
+                already_forgotten_match = re.search(r"REMEMBER\s+([^\.]+)", clean_line)
+                if already_forgotten_match:
+                    forgotten_user = already_forgotten_match.group(1).strip()
+                    print(f"[DEBUG] Detected already forgotten user: {forgotten_user}")
+                    # Add both the full name and base name to forgotten_users set
+                    self.forgotten_users.add(forgotten_user)
+                    base_name = forgotten_user.split('@')[0] if '@' in forgotten_user else forgotten_user
+                    self.forgotten_users.add(base_name)
+                    print(f"[DEBUG] Updated forgotten_users set: {self.forgotten_users}")
+
+            # Check for chatroom exit message and reset forgotten users
+            if "Exiting Teleconference..." in clean_line:
+                print("[DEBUG] Detected chatroom exit - resetting forgotten users tracking")
+                self.forgotten_users = set()
+                self.append_terminal_text(original_with_ansi + "\n", "normal")
+                continue
+
+
             # ENHANCED ACTION LIST DETECTION - Check this before banner detection
             # =================================================================
             if "Action listing for" in clean_line:
@@ -2928,23 +2965,30 @@ class BBSTerminalApp:
                 self.append_terminal_text(original_with_ansi + "\n", "normal")
                 
                 # Check for end of action list - either standalone colon or empty line
-                if clean_line == ":" or clean_line == "" or clean_line.endswith(":"):
+                if clean_line == ":" or clean_line == "" or clean_line.endswith(":") or "here with you" in clean_line:
                     if self.actions:
                         print(f"[DEBUG] Finished collecting actions: {self.actions}")
                         self.collecting_actions = False
                         self.master.after_idle(self.update_actions_listbox)
                     continue
                     
-                # Extract action words when in collection mode
+                # Skip lines that are part of banner text with keywords
+                if any(x in clean_line.lower() for x in ['topic:', 'you are in', 'channel', 'here with you', 'just press']):
+                    continue
+                    
+                # Extract action words when in collection mode - filter out more non-actions
                 action_matches = re.findall(r'\b[A-Za-z]{2,}\b', clean_line)
                 valid_actions = [
                     word for word in action_matches 
                     if (word.lower() not in {
                         'action', 'list', 'for', 'the', 'and', 'you', 'are',
-                        'can', 'use', 'these', 'actions', 'available', 'default'
-                    } and len(word) >= 2)
+                        'can', 'use', 'these', 'actions', 'available', 'default',
+                        'org', 'com', 'net', 'bbs', 'http', 'https', 'www',
+                        'here', 'with', 'just', 'press', 'if', 'need', 'any', 
+                        'assistance', 'thepenaltybox', 'sos'
+                    } and len(word) >= 2 and not re.match(r'.*(?:@|\.org|\.com|\.net).*', word))
                 ]
-                    
+                        
                 if valid_actions:
                     print(f"[DEBUG] Found valid actions: {valid_actions}")
                     self.actions.extend(valid_actions)
@@ -3057,25 +3101,31 @@ class BBSTerminalApp:
         self.partial_line = lines[-1]
 
     def send_actions_request(self):
-        """Send request for action list with improved reliability for MajorLink format."""
+        """Send request for action list with proper reliability measures."""
         if not self.connected or not self.writer:
+            print("[DEBUG] Cannot request actions - not connected")
             return
 
         print("[DEBUG] Sending action list request")
         
-        # Send the appropriate command to request actions - works for both PBX and MajorLink
+        # Send the command to request actions with proper error handling
         message = "actions\r\n"  
         
         async def send():
             try:
+                print("[DEBUG] Sending actions command...")
+                await asyncio.sleep(0.5)  # Add small delay for stability
                 self.writer.write(message)
                 await self.writer.drain()
-                print("[DEBUG] Action request sent")
+                print("[DEBUG] Action request sent successfully")
             except Exception as e:
                 print(f"[ERROR] Failed to send actions request: {e}")
         
-        # Run the async function in the event loop
+        # Use create_task instead of run_coroutine_threadsafe for better reliability
         asyncio.run_coroutine_threadsafe(send(), self.loop)
+        
+        # Add a flag to prevent duplicate requests
+        self.actions_requested_this_session = True
 
     def request_actions_after_banner(self):
         """Request actions list after banner is processed with delay."""
@@ -3096,24 +3146,33 @@ class BBSTerminalApp:
 
     def parse_and_save_chatlog_message(self, clean_line, original_line):
         """Parse chat messages with robust format detection and proper routing."""
-        # Skip system messages and noise
+        # Skip system messages and noise - MODIFY THIS PART
         skip_patterns = [
             r"You are in", r"Topic:", r"Just press", r"Just type", r"assistance",
-            r"are here with you", r"is here with you", r"^\s*$", r"^\s*:.*$",
+            r"are here with you", r"is here with you", r"^\s*$", 
+            r"^\s*:(?!\[).*$",  # Only skip colon lines that DON'T start with :[
             r"^\s*\(.*\)\s*$", r"\[Type your (?:User-ID|Password)[^]]*:\]",
             r"Type your (?:User-ID|Password)[^]]*:", 
             r"^\[?(?:Enter|Type)(?: your)? [Pp]assword[^]]*:\]\s*$",
             r"^\[?(?:Enter|Type)(?: your)? username[^]]*:\]\s*$",
             r"Action listing for:", r"^>", r"^\*", r"Welcome to", r"Connected to", r"^The "
         ]
+        
+        # Debug: Print ALL incoming message lines for troubleshooting
+        print(f"[DEBUG-MSG] Processing message: '{clean_line}'")
+        
         if any(re.search(pattern, clean_line, re.IGNORECASE) for pattern in skip_patterns):
+            if clean_line.startswith(":["):
+                print(f"[DEBUG] Colon message matched skip pattern: '{clean_line}'")
+            else:
+                print(f"[DEBUG] Skipping non-message: '{clean_line}'")
             return
 
         # Add timestamp if not present
         has_timestamp = bool(re.match(r'^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]', clean_line))
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S] ") if not has_timestamp else ""
         
-        # Enhanced message patterns for more robust detection
+        # Enhanced message patterns for more robust detection - ADJUST COLON PATTERNS
         patterns = {
             # Classic format patterns
             'classic_whisper': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(whispered(?:\s+to\s+you)?\):\]\s*(.+)$',
@@ -3121,6 +3180,11 @@ class BBSTerminalApp:
             'classic_public_direct': r'^\[([^@\]]+(?:@[^\]]+)?)\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\]\s*(.+)$',
             'classic_regular': r'^\[([^@\]]+(?:@[^\]]+)?):\]\s*(.+)$',
             
+            # Colon-prefixed format patterns with broader matching - This is the key change
+            'colon_whisper': r'^:\s*\[([^@\]]+(?:@[^\]]+)?)\]\s*\(whispered(?:\s+to\s+you)?\):\s*(.+)$',
+            'colon_direct_to_you': r'^:\s*\[([^@\]]+(?:@[^\]]+)?)\]\s*\(to\s+you\):\s*(.+)$',
+            'colon_public_direct': r'^:\s*\[([^@\]]+(?:@[^\]]+)?)\]\s*\(to\s+([^@\]]+(?:@[^\]]+)?)\):\s*(.+)$',
+            'colon_regular': r'^:\s*\[([^@\]]+(?:@[^\]]+)?)\]:\s*(.+)$',
             # Alternative format patterns - MAJORLINK STYLE
             'alt_whisper': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(whispered\):\s*(.+)$',
             'alt_direct_to_you': r'^From\s+([^@\(]+(?:@[^\(]+)?)\s*\(to\s+you\):\s*(.+)$',
@@ -3140,10 +3204,17 @@ class BBSTerminalApp:
         for msg_type, pattern in patterns.items():
             match = re.match(pattern, clean_line)
             if not match:
+                if clean_line.startswith(":[") and msg_type.startswith("colon_"):
+                    print(f"[DEBUG] Pattern '{msg_type}' failed to match colon message")
                 continue
+                
+            # Success match! Log it
+            if clean_line.startswith(":["):
+                print(f"[DEBUG] Successfully matched pattern '{msg_type}' for message: '{clean_line}'")
                 
             # Message successfully matched, extract parts
             sender = match.group(1).strip()
+        
             
             # Handle different message formats
             if 'whisper' in msg_type or 'direct_to_you' in msg_type:
@@ -3159,7 +3230,7 @@ class BBSTerminalApp:
                 # Always log whispers/directs in chatlog
                 self.save_chatlog_message(sender, formatted)
                 
-                # Store any hyperlinks in the message - MAKE SURE THIS IS CALLED
+                # Store any hyperlinks in the message
                 self.parse_and_store_hyperlinks(message, sender)
                 
             elif 'page_notification' in msg_type:
@@ -3175,17 +3246,25 @@ class BBSTerminalApp:
                 # Also log in chatlog
                 self.save_chatlog_message(sender, formatted)
                 
-                # Store any hyperlinks - MAKE SURE THIS IS CALLED
+                # Store any hyperlinks
                 self.parse_and_store_hyperlinks(message, sender)
                 
-            elif 'public_direct' in msg_type or ('pbx_direct' in msg_type and len(match.groups()) >= 3):
+            elif 'public_direct' in msg_type or ('pbx_direct' in msg_type and len(match.groups()) >= 3) or 'colon_public_direct' in msg_type:
                 # Message between others or to you
-                recipient_index = 2 if 'public_direct' in msg_type else 1
-                message_index = 3 if 'public_direct' in msg_type else 2
-                
-                recipient = match.group(recipient_index).strip()
-                message = match.group(message_index)
-                
+                if 'colon_public_direct' in msg_type:
+                    recipient = match.group(2).strip()
+                    message = match.group(3) if len(match.groups()) >= 3 else match.group(2)
+                elif 'public_direct' in msg_type:
+                    recipient_index = 2
+                    message_index = 3
+                    recipient = match.group(recipient_index).strip()
+                    message = match.group(message_index)
+                else:  # pbx_direct
+                    recipient_index = 1
+                    message_index = 2
+                    recipient = match.group(recipient_index).strip()
+                    message = match.group(message_index)
+                    
                 formatted = f"{timestamp}From {sender} (to {recipient}): {message}"
                 
                 # Check if the message is to the current user
@@ -3205,7 +3284,7 @@ class BBSTerminalApp:
                 # Always save to chatlog
                 self.save_chatlog_message(sender, formatted)
                 
-                # Store any hyperlinks - MAKE SURE THIS IS CALLED
+                # Store any hyperlinks
                 self.parse_and_store_hyperlinks(message, sender)
                 
             else:
@@ -3217,7 +3296,7 @@ class BBSTerminalApp:
                 self.save_chatlog_message(sender, formatted)
                 self.play_chat_sound()
                 
-                # Store any hyperlinks - MAKE SURE THIS IS CALLED
+                # Store any hyperlinks
                 self.parse_and_store_hyperlinks(message, sender)
             
             # We've matched and processed a message, so return
@@ -4156,25 +4235,36 @@ class BBSTerminalApp:
 
     def update_chat_members(self, lines_with_users):
         """Update chat members list with enhanced support for multiple banner formats."""
+        # Preserve important settings before any processing
+        auto_logon_state = self.auto_logon_enabled.get()
+        bannerless_mode_state = self.bannerless_mode.get()
+        keep_alive_state = self.keep_alive_enabled.get()
+        
+        print(f"[DEBUG] Preserving settings - Auto Logon: {auto_logon_state}, Bannerless: {bannerless_mode_state}, Keep Alive: {keep_alive_state}")
+        
         # Combine lines and clean ANSI codes
         combined = " ".join(lines_with_users)
         combined_clean = re.sub(r'\x1b\[[0-9;]*m', '', combined)
         print(f"[DEBUG] Raw banner: {combined_clean}")
+        
+        # Store previous members before updating with new members
+        previous_members = set(self.chat_members)
         
         # Extract users from multiple banner formats
         final_usernames = set()
         
         # Better topic extraction that doesn't grab user data
         topic_patterns = [
-            r'Topic:\s*\((.*?)\)',  # MajorLink format with parentheses: Topic: (General Chat)
-            r'Topic:\s*(.*?)(?=\s*\w+\@|\s*\w+,|\s*\w+\s+and|\s+\w+\s+are|\s+\w+\s+is)',  # Enhanced pattern
+            r'Topic:\s*\((.*?)\)',
+            r'Topic:\s*(.*?)(?=\s*\w+\@|\s*\w+,|\s*\w+\s+and|\s+\w+\s+are|\s+\w+\s+is)',
         ]
         
         for pattern in topic_patterns:
             topic_match = re.search(pattern, combined_clean)
             if topic_match:
-                self.current_topic = topic_match.group(1).strip()
-                print(f"[DEBUG] Topic found: {self.current_topic}")
+                topic = topic_match.group(1).strip()
+                print(f"[DEBUG] Topic found: {topic}")
+                self.current_topic = topic
                 break
         
         # Extract the user list more accurately
@@ -4182,97 +4272,115 @@ class BBSTerminalApp:
         
         # Try different methods to identify the user section
         user_list_patterns = [
-            # Look after "General Chat" until end marker
             r'Chat(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-            # Look after topic until end marker
             r'Topic:.*?(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-            # Generic pattern
             r'(.+?)(?:are here with you|is here with you|with you\.|with\s*you)'
         ]
         
         for pattern in user_list_patterns:
-            user_match = re.search(pattern, combined_clean, re.DOTALL)
+            user_match = re.search(pattern, combined_clean)
             if user_match:
                 user_section = user_match.group(1).strip()
-                if user_section:  # Only break if we found something
-                    print(f"[DEBUG] Found user section: {user_section}")
-                    break
+                print(f"[DEBUG] Found user section: {user_section}")
+                break
         
         # Process user section if found
         if user_section:
-            # Clean up the section
-            user_section = user_section.strip('.,)(')
+            # Replace "and" with comma for consistent splitting
+            user_section = re.sub(r'\s+and\s+', ', ', user_section)
             
-            # Special handling for the "and" pattern at the end
+            # Use regex to split by commas, but preserve @domain parts
+            # This pattern looks for username@domain.tld or just username patterns
+            user_matches = re.findall(r'[^,]+?@[^,]+\.[^,]+|[^,]+', user_section)
             users = []
             
-            # Split by "and" first to handle the last user properly
-            and_parts = re.split(r'\s+and\s+', user_section)
-            
-            if len(and_parts) > 1:
-                # Process the last part separately (after "and")
-                last_user = and_parts[-1].strip()
-                if last_user:
-                    users.append(last_user)
+            for match in user_matches:
+                # Clean up each username
+                username = match.strip()
+                # Remove leading dots or punctuation
+                username = re.sub(r'^[^A-Za-z0-9@]+', '', username)
                 
-                # Process all parts before "and" by splitting on commas
-                comma_parts = and_parts[0].split(',')
-                for part in comma_parts:
-                    if part.strip():
-                        users.append(part.strip())
-            else:
-                # No "and" found, just split by commas
-                users = [u.strip() for u in user_section.split(',') if u.strip()]
+                if len(username) >= 2:  # Ensure username is valid
+                    users.append(username)
             
             print(f"[DEBUG] Parsed users: {users}")
             
-            for user in users:
-                username = user.strip()
-                
-                # Skip empty or special strings
-                if (not username or 
-                    username.lower() in ["topic:", "just press", "just type"] or
-                    "assistance" in username.lower() or
-                    len(username) < 2):
-                    continue
-                
-                # Preserve domain information
-                if "@" in username:
-                    name_parts = username.split('@', 1)
-                    base_name = name_parts[0].strip()
-                    domain = "@" + name_parts[1].strip()
-                    
-                    # Clean base name but preserve dots
-                    clean_base = re.sub(r'[^A-Za-z0-9._-]', '', base_name)
-                    display_name = clean_base + domain
-                else:
-                    # Clean username but preserve dots
-                    clean_name = re.sub(r'[^A-Za-z0-9._-]', '', username)
-                    display_name = clean_name
-                
-                # Validate username
-                if len(display_name) >= 2:
-                    print(f"[DEBUG] Adding user: {display_name}")
-                    final_usernames.add(display_name)
+            # Clean up and extract usernames
+            for username in users:
+                # Clean up and validate
+                if len(username) >= 2:
+                    print(f"[DEBUG] Adding user: {username}")
+                    final_usernames.add(username)
         
-        # Always include Chatbot
-        final_usernames.add('Chatbot')
+        # Don't automatically add Chatbot - only if actually present in banner
         
         if final_usernames:
             print(f"[DEBUG] Final usernames: {final_usernames}")
-            self.chat_members = final_usernames
-            self.save_chat_members_file()
-            self.update_members_display()
             
-            # Request actions if not already done
-            if not self.actions_requested_this_session:
-                self.request_actions_after_banner()
+            # Check for users who left and came back
+            returning_users = final_usernames.intersection(set(self.forget_list)) - previous_members
+            if returning_users:
+                print(f"[DEBUG] Detected returning forgotten users: {returning_users}")
+                # Schedule re-forgetting of these users after banner processing
+                def re_forget_returning_users():
+                    for user in returning_users:
+                        print(f"[DEBUG] Re-forgetting returning user: {user}")
+                        self.send_forget_command(user)
+                # Add delay to ensure banner processing is complete
+                self.master.after(1000, re_forget_returning_users)
 
+            # Only update chat members if we found valid usernames
+            # This prevents the infinite loop by not overwriting with bad data
+            if any(len(name) > 1 for name in final_usernames):
+                self.chat_members = final_usernames
+                self.save_chat_members_file()
+                self.update_members_display()
+                
+                # Process forget list for any new users
+                self.process_forget_list_after_banner(request_actions=self.actions_requested_this_session == False)
+            
+            # Add a first_banner flag to prevent infinite carriage return loop
+            if not hasattr(self, 'first_banner_processed') or not self.first_banner_processed:
+                print("[DEBUG] First banner processed - sending carriage return")
+                # Send a carriage return after processing the first banner only
+                if self.connected and self.writer:
+                    self.master.after(500, lambda: self.send_custom_message("\r\n"))
+                    # Set flag to prevent further automatic carriage returns
+                    self.first_banner_processed = True
+        
+        # Restore important settings that might have been reset
+        self.auto_logon_enabled.set(auto_logon_state)
+        self.bannerless_mode.set(bannerless_mode_state)
+        self.keep_alive_enabled.set(keep_alive_state)
+        print(f"[DEBUG] Restored settings - Auto Logon: {auto_logon_state}, Bannerless: {bannerless_mode_state}, Keep Alive: {keep_alive_state}")
+        
+        # Toggle keep alive if it was enabled before
+        if keep_alive_state:
+            self.master.after(100, self.restart_keep_alive)
+                    
+        return self.chat_members
+        
+        # Request actions only once after banner processing completes
+        if not self.actions_requested_this_session:
+            print("[DEBUG] Scheduling action list request after banner")
+            # Send the request after a delay to ensure proper sequencing
+            self.master.after(1000, self.send_actions_request)
+            # Mark as requested to prevent duplicates
+            self.actions_requested_this_session = True
     
-
     
     
-
+    def restart_keep_alive(self):
+        """Restart the keep-alive mechanism without toggling the checkbox."""
+        # First stop any existing keep-alive
+        if hasattr(self, 'keep_alive_task') and self.keep_alive_task:
+            self.stop_keep_alive()
+            
+        # Then start it if enabled
+        if self.keep_alive_enabled.get():
+            print("[DEBUG] Restarting keep-alive mechanism")
+            self.start_keep_alive()
+            
     def play_ding_sound(self):
         """Play a standard ding sound effect."""
         winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
@@ -5215,7 +5323,7 @@ class BBSTerminalApp:
             if self.player.is_playing():
                 # Try to get stream metadata
                 media = self.player.get_media()
-                if media:
+                if (media):
                     title = media.get_meta(vlc.Meta.Title)
                     artist = media.get_meta(vlc.Meta.Artist)
                     
