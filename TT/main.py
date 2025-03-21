@@ -707,6 +707,11 @@ class BBSTerminalApp:
         # Only bind Return event, remove any other bindings
         self.input_box.bind("<Return>", self.send_message)
         self.create_context_menu(self.input_box)
+         # ADD THESE LINES to bind arrow keys for command history navigation
+        self.input_box.bind("<Up>", self.previous_command)
+        self.input_box.bind("<Down>", self.next_command)
+        self.input_box.bind("<FocusOut>", self.save_current_input)
+        self.input_box.bind("<FocusIn>", self.restore_current_input)
         # Make send button use command instead of bind
         self.send_button = ttk.Button(input_frame, text="Send", command=lambda: self.send_message(None))
         self.send_button.pack(side=tk.LEFT, padx=5, pady=5)
@@ -3417,7 +3422,49 @@ class BBSTerminalApp:
         self.command_index = -1
         self.current_command = ""
 
-    
+    def previous_command(self, event=None):
+        """Navigate to the previous command in history."""
+        if not self.command_history:
+            return "break"
+        
+        # Save current input if we're just starting to navigate
+        if self.command_index == -1:
+            self.current_command = self.input_var.get()
+        
+        # Move up in the history
+        if self.command_index < len(self.command_history) - 1:
+            self.command_index += 1
+            self.input_var.set(self.command_history[-(self.command_index + 1)])
+            self.input_box.icursor(tk.END)  # Move cursor to end of text
+        
+        return "break"  # Prevent default behavior
+
+    def next_command(self, event=None):
+        """Navigate to the next command in history."""
+        if self.command_index < 0:
+            return "break"
+        
+        self.command_index -= 1
+        if self.command_index == -1:
+            # Restore the command that was being typed
+            self.input_var.set(self.current_command)
+        else:
+            self.input_var.set(self.command_history[-(self.command_index + 1)])
+        
+        self.input_box.icursor(tk.END)  # Move cursor to end of text
+        return "break"  # Prevent default behavior
+
+    def save_current_input(self, event=None):
+        """Save the current input when focus is lost."""
+        # Only save if we're not navigating history
+        if self.command_index == -1:
+            self.current_command = self.input_var.get()
+
+    def restore_current_input(self, event=None):
+        """Restore saved input when focus returns."""
+        # Only restore if we're not navigating history
+        if self.command_index == -1 and hasattr(self, 'current_command'):
+            self.input_var.set(self.current_command)
 
     def check_triggers(self, message):
         """Check incoming messages for triggers and send automated response if matched."""
