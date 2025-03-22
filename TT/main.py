@@ -4300,7 +4300,8 @@ class BBSTerminalApp:
         # Extract users from multiple banner formats
         final_usernames = set()
         
-        # Better topic extraction that doesn't grab user data
+        # Extract topic first - we'll use this to clean up the user section
+        topic = ""
         topic_patterns = [
             r'Topic:\s*\((.*?)\)',
             r'Topic:\s*(.*?)(?=\s*\w+\@|\s*\w+,|\s*\w+\s+and|\s+\w+\s+are|\s+\w+\s+is)',
@@ -4333,6 +4334,16 @@ class BBSTerminalApp:
         
         # Process user section if found
         if user_section:
+            # IMPORTANT FIX: Clean up user section to remove topic text and closing parenthesis
+            if topic and f"({topic})" in user_section:
+                user_section = user_section.replace(f"({topic})", "")
+            
+            # Also handle cases where there's a closing parenthesis and period
+            user_section = re.sub(r'\)\.\s*', '', user_section)
+            user_section = re.sub(r'^\s*\.\s*', '', user_section) # Remove leading period
+            
+            print(f"[DEBUG] Cleaned user section: {user_section}")
+            
             # Replace "and" with comma for consistent splitting
             user_section = re.sub(r'\s+and\s+', ', ', user_section)
             
@@ -4352,15 +4363,13 @@ class BBSTerminalApp:
             
             print(f"[DEBUG] Parsed users: {users}")
             
-            # Clean up and extract usernames
+            # Add valid usernames to final set
             for username in users:
-                # Clean up and validate
                 if len(username) >= 2:
                     print(f"[DEBUG] Adding user: {username}")
                     final_usernames.add(username)
         
-        # Don't automatically add Chatbot - only if actually present in banner
-        
+        # Rest of function remains unchanged
         if final_usernames:
             print(f"[DEBUG] Final usernames: {final_usernames}")
             
@@ -4375,9 +4384,8 @@ class BBSTerminalApp:
                         self.send_forget_command(user)
                 # Add delay to ensure banner processing is complete
                 self.master.after(1000, re_forget_returning_users)
-
+    
             # Only update chat members if we found valid usernames
-            # This prevents the infinite loop by not overwriting with bad data
             if any(len(name) > 1 for name in final_usernames):
                 self.chat_members = final_usernames
                 self.save_chat_members_file()
@@ -4401,19 +4409,11 @@ class BBSTerminalApp:
         self.keep_alive_enabled.set(keep_alive_state)
         print(f"[DEBUG] Restored settings - Auto Logon: {auto_logon_state}, Bannerless: {bannerless_mode_state}, Keep Alive: {keep_alive_state}")
         
-        # Toggle keep alive if it was enabled before
+        # Instead of toggling, directly restart keep-alive if it was enabled
         if keep_alive_state:
             self.master.after(100, self.restart_keep_alive)
                     
         return self.chat_members
-        
-        # Request actions only once after banner processing completes
-        if not self.actions_requested_this_session:
-            print("[DEBUG] Scheduling action list request after banner")
-            # Send the request after a delay to ensure proper sequencing
-            self.master.after(1000, self.send_actions_request)
-            # Mark as requested to prevent duplicates
-            self.actions_requested_this_session = True
     
     
     
