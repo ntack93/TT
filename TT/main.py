@@ -10,6 +10,8 @@ import json
 import os
 import webbrowser
 import sys
+# Add with your other imports
+from PIL import ImageSequence
 # Add this at the beginning of main.py
 try:
     import PIL
@@ -191,6 +193,7 @@ class BBSTerminalApp:
         print("[DEBUG] Forgotten users set initialized")
 
         # Add at the start of __init__
+        self.show_preview_frame = tk.BooleanVar(value=True)  # Default to visible
         self.bannerless_mode = tk.BooleanVar(value=False)
         self.show_messages_to_you = tk.BooleanVar(value=True)
         self.actions_request_lock = asyncio.Lock()
@@ -485,6 +488,8 @@ class BBSTerminalApp:
         action_buttons_frame = ttk.Frame(top_frame)
         action_buttons_frame.grid(row=0, column=1, sticky="w", padx=5)
         
+        
+
         # Add Teleconference Action buttons with minimal spacing
         wave_button = ttk.Button(action_buttons_frame, text="Wave", 
                                 command=lambda: self.send_action("wave"), style="Wave.TButton")
@@ -526,11 +531,25 @@ class BBSTerminalApp:
                                      style="MiniMode.TButton")
         mini_mode_button.pack(side=tk.LEFT, padx=2)
 
+        # Add persistent image preview frame in the top right corner
+        self.latest_image_frame = ttk.LabelFrame(top_frame, text="Latest Image")
+        self.latest_image_frame.grid(row=0, column=3, rowspan=2, padx=(5, 15), pady=5, sticky="e")
+        self.latest_image_frame.configure(width=200, height=150)
+        self.latest_image_frame.grid_propagate(False)  # Prevent resizing (use grid_propagate instead of pack_propagate)
+
+        self.latest_image_label = ttk.Label(self.latest_image_frame, text="No images yet")
+        self.latest_image_label.pack(expand=True, fill=tk.BOTH)
+
+        # Initialize latest image tracking
+        self.latest_image_url = None
+        self.latest_image_photo = None
+
         # Connection settings example:
         self.conn_frame = ttk.LabelFrame(top_frame, text="Connection Settings")
-        self.conn_frame.grid(row=1, column=0, columnspan=6, sticky="ew", padx=5, pady=5)
+        self.conn_frame.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
         ttk.Label(self.conn_frame, text="BBS Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.E)
         self.host_entry = ttk.Entry(self.conn_frame, textvariable=self.host, width=30)
+        self.host_entry.bind("<Return>", self.connect_on_enter)  # Add this line
         self.host_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
         ttk.Label(self.conn_frame, text="Port:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.E)
         self.port_entry = ttk.Entry(self.conn_frame, textvariable=self.port, width=6)
@@ -593,12 +612,19 @@ class BBSTerminalApp:
         auto_logon_check.grid(row=0, column=7, padx=5, pady=5, sticky=tk.W)
 
 
-
+        # Add Preview Toggle checkbox
+        preview_toggle_check = ttk.Checkbutton(
+            checkbox_frame,
+            text="Toggle Preview",
+            variable=self.show_preview_frame,
+            command=self.toggle_preview_frame
+        )
+        preview_toggle_check.grid(row=0, column=8, padx=5, pady=5, sticky=tk.W)
 
 
         # Add the Keep Alive checkbox
         keep_alive_frame = ttk.Frame(self.conn_frame)
-        keep_alive_frame.grid(row=0, column=8, padx=5, pady=5)
+        keep_alive_frame.grid(row=0, column=7, padx=5, pady=5)
         
         keep_alive_check = ttk.Checkbutton(keep_alive_frame, text="Keep Alive", 
                                          variable=self.keep_alive_enabled, 
@@ -1036,8 +1062,142 @@ class BBSTerminalApp:
         if len(value) > 250:
             self.mini_input_var.set(value[:250])
 
+    def update_latest_image_frame(self, url):
+        """Update the persistent image frame with the given URL."""
+        # Always update the frame, even if URL is the same (might be a new instance)
+        self.latest_image_url = url
+        
+        # Stop any current animation by incrementing the animation ID
+        if not hasattr(self, 'animation_id'):
+            self.animation_id = 0
+        self.animation_id += 1
+        
+        # Clear any existing image
+        if hasattr(self, 'latest_image_label') and self.latest_image_label.winfo_exists():
+            self.master.after_idle(lambda: self.latest_image_label.configure(text="Loading..."))
+        
+        # Start a new thread to fetch and display the image
+        threading.Thread(target=self._fetch_latest_image, args=(url, self.animation_id), daemon=True).start()
+    
+    def _fetch_latest_image(self, url, anim_id):
+        """Fetch and display the latest image in the persistent frame with GIF animation support."""
+        try:
+            # Import proper modules
+            try:
+                from image_patch import Image, ImageTk, ImageSequence
+            except ImportError:
+                from PIL import Image, ImageTk
+                from PIL import ImageSequence
+            
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+            
+            # If animation ID has changed, abort this update
+            if not hasattr(self, 'animation_id') or self.animation_id != anim_id:
+                print(f"[DEBUG] Aborting image load - newer image requested")
+                return
+                
+            # Create a BytesIO object from the response content
+            self._latest_img_data = BytesIO(response.content)  # Keep reference as instance attribute
+            img = Image.open(self._latest_img_data)
+            
+            # Check if it's an animated GIF
+            is_animated_gif = url.lower().endswith('.gif') and getattr(img, 'is_animated', False)
+            
+            # Resize the image to fit the frame (keep aspect ratio)
+            max_size = (180, 130)  # Slightly smaller than frame to account for padding
+            
+            if is_animated_gif:
+                print(f"[DEBUG] Processing animated GIF for latest image frame with {getattr(img, 'n_frames', '?')} frames")
+                
+                # Extract all frames
+                frames = []
+                duration = img.info.get('duration', 100)
+                if duration < 20:  # Some GIFs have very short durations
+                    duration = 100
+                    
+                try:
+                    # Use ImageSequence iterator for frame extraction
+                    for frame in ImageSequence.Iterator(img):
+                        frame_copy = frame.copy()
+                        frame_copy.thumbnail(max_size)
+                        frames.append(ImageTk.PhotoImage(frame_copy))
+                    
+                    print(f"[DEBUG] Extracted {len(frames)} frames for latest image")
+                    
+                    # Check animation ID again before updating UI
+                    if not hasattr(self, 'animation_id') or self.animation_id != anim_id:
+                        print(f"[DEBUG] Aborting animation - newer image requested")
+                        return
+                    
+                    # Store frames as an instance attribute to prevent garbage collection
+                    self.latest_image_frames = frames
+                    
+                    # Update the label and start animation
+                    def update_label():
+                        if hasattr(self, 'latest_image_label') and self.latest_image_label.winfo_exists():
+                            # Show first frame and start animation
+                            self.latest_image_label.configure(image=frames[0], text="")
+                            # Start animation from first frame with current animation ID
+                            self.animate_latest_gif(0, duration, anim_id)
+                    
+                    self.master.after(0, update_label)
+                    return
+                    
+                except Exception as e:
+                    print(f"[DEBUG] Error extracting GIF frames: {e}")
+                    # Fall back to static image if extraction fails
+            
+            # For static images or fallback
+            img.thumbnail(max_size)
+            photo = ImageTk.PhotoImage(img)
+            
+            # Final animation ID check before updating UI
+            if not hasattr(self, 'animation_id') or self.animation_id != anim_id:
+                print(f"[DEBUG] Aborting static image display - newer image requested")
+                return
+                
+            # Update the label on the main thread
+            def update_label():
+                if hasattr(self, 'latest_image_label') and self.latest_image_label.winfo_exists():
+                    self.latest_image_label.configure(image=photo, text="")
+                    # Keep a reference to prevent garbage collection
+                    self.latest_image_photo = photo
+            
+            self.master.after(0, update_label)
+            
+        except Exception as e:
+            print(f"Error updating latest image frame: {e}")
+            def update_error():
+                if hasattr(self, 'latest_image_label') and self.latest_image_label.winfo_exists():
+                    self.latest_image_label.configure(image="", text=f"Error: {str(e)[:50]}")
+            self.master.after(0, update_error)
+    
+    def animate_latest_gif(self, frame_num, duration, anim_id):
+        """Animate the GIF in the latest image frame."""
+        # Only continue if animation ID still matches current one
+        if not hasattr(self, 'animation_id') or self.animation_id != anim_id:
+            return
+            
+        # Only continue if we have frames and the label still exists
+        if not hasattr(self, 'latest_image_frames') or not self.latest_image_frames or \
+           not hasattr(self, 'latest_image_label') or not self.latest_image_label.winfo_exists():
+            return
+            
+        # Get next frame number
+        next_frame = (frame_num + 1) % len(self.latest_image_frames)
+        
+        # Update label with the next frame
+        self.latest_image_label.configure(image=self.latest_image_frames[next_frame])
+        
+        # Schedule the next frame update with the same animation ID
+        self.master.after(duration, lambda: self.animate_latest_gif(next_frame, duration, anim_id))
 
-
+    def connect_on_enter(self, event=None):
+        """Handle Enter key in hostname field to connect/disconnect."""
+        self.toggle_connection()
+        return "break"  # Prevent default behavior
 
 
 
@@ -1417,7 +1577,13 @@ class BBSTerminalApp:
                 self.display_chatlog_messages(None)
                 break
 
-    
+    # Add this new method to handle toggling the frame visibility:
+    def toggle_preview_frame(self):
+        """Toggle visibility of the Latest Image preview frame."""
+        if self.show_preview_frame.get():
+            self.latest_image_frame.grid()
+        else:
+            self.latest_image_frame.grid_remove()
 
     # 1.3️⃣ SETTINGS WINDOW
     def show_chatlog_window(self):
@@ -2181,33 +2347,102 @@ class BBSTerminalApp:
     def show_thumbnail_preview(self, event):
         """Show a thumbnail preview of the hyperlink with improved error handling."""
         try:
-            index = self.terminal_display.index(f"@{event.x},{event.y}")
-            
-            # First try to search for https://
+            index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
             start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
-            
-            # If not found, try for http://
             if not start_index:
                 start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
-                
-            # If still not found, exit
-            if not start_index:
-                print("No URL found at cursor position")
-                return
-                
-            # Search for whitespace after the URL
             end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
-            
-            # If no whitespace found, use end of text
             if not end_index:
                 end_index = self.terminal_display.index("end")
-                
-            # Now safely get the URL
             url = self.terminal_display.get(start_index, end_index).strip()
-            if url:
-                self.show_thumbnail(url, event)
+            
+            # Store reference to prevent garbage collection
+            self._current_hover_url = url
+            
+            # Create a new thread specifically for hovering thumbnails
+            threading.Thread(target=self._fetch_hover_preview, args=(url,), daemon=True).start()
         except Exception as e:
-            print(f"Error in thumbnail preview: {e}")
+            print(f"Error showing thumbnail preview: {e}")
+            traceback.print_exc()
+    
+    def _fetch_hover_preview(self, url):
+        """Fetch hover preview image separately from the Latest Image frame."""
+        try:
+            # Check if URL is directly an image
+            if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                response = requests.get(url, headers=headers, timeout=5)
+                response.raise_for_status()
+                
+                # Use separate BytesIO object specifically for hover preview
+                img_data = BytesIO(response.content)
+                
+                # Create temporary window for preview if none exists
+                if not hasattr(self, 'preview_window') or not self.preview_window or not self.preview_window.winfo_exists():
+                    self.create_preview_window()
+                
+                # Update preview with image - using separate function
+                self.display_hover_preview(img_data, url.lower().endswith('.gif'))
+            else:
+                # Handle website preview as before
+                self._handle_website_preview(url)
+        except Exception as e:
+            print(f"Error fetching thumbnail preview: {e}")
+            if hasattr(self, 'preview_window') and self.preview_window:
+                self.preview_window.destroy()
+                self.preview_window = None
+    
+    def display_hover_preview(self, img_data, is_gif=False):
+        """Display hover preview separately from Latest Image frame."""
+        try:
+            # Use separate image handling code just for hover previews
+            from PIL import Image, ImageTk, ImageSequence
+            
+            img = Image.open(img_data)
+            
+            # Resize (keep aspect ratio)
+            max_size = (200, 150)
+            img.thumbnail(max_size)
+            
+            # Handle GIFs specially
+            if is_gif and getattr(img, 'is_animated', False):
+                # Create separate attribute for hover preview frames
+                self._hover_preview_frames = []
+                
+                for frame in ImageSequence.Iterator(img):
+                    frame_copy = frame.copy()
+                    frame_copy.thumbnail(max_size)
+                    self._hover_preview_frames.append(ImageTk.PhotoImage(frame_copy))
+                    
+                # Display first frame
+                self.preview_label.config(image=self._hover_preview_frames[0])
+                
+                # Start animation with separate animation function
+                self._animate_hover_preview(0, img.info.get('duration', 100))
+            else:
+                # Static image
+                self._hover_preview_photo = ImageTk.PhotoImage(img)
+                self.preview_label.config(image=self._hover_preview_photo)
+                
+        except Exception as e:
+            print(f"Error displaying hover preview: {e}")
+            if hasattr(self, 'preview_window') and self.preview_window:
+                self.preview_window.destroy()
+                self.preview_window = None
+    
+    def _animate_hover_preview(self, frame_index, duration):
+        """Animate hover preview GIF separate from Latest Image frame."""
+        if not hasattr(self, 'preview_window') or not self.preview_window or not self.preview_window.winfo_exists():
+            return
+            
+        if not hasattr(self, '_hover_preview_frames') or not self._hover_preview_frames:
+            return
+            
+        next_frame = (frame_index + 1) % len(self._hover_preview_frames)
+        self.preview_label.config(image=self._hover_preview_frames[next_frame])
+        
+        # Schedule next frame update
+        self.master.after(max(40, duration), lambda: self._animate_hover_preview(next_frame, duration))
 
     def show_directed_message_thumbnail_preview(self, event):
         """Show a thumbnail preview of the hyperlink from directed messages with improved error handling."""
@@ -2678,45 +2913,82 @@ class BBSTerminalApp:
                 json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
         except Exception as e:
             print(f"Error saving command history: {e}")
+
+
     async def telnet_client_task(self, host, port):
-        """Async function connecting via telnetlib3 (CP437 + ANSI)."""
+        """Async function connecting via telnetlib3 (CP437 + ANSI) with improved error handling."""
         try:
-            reader, writer = await telnetlib3.open_connection(
-                host=host,
-                port=port,
-                term=self.terminal_mode.get().lower(),
-                encoding='cp437',  # Use 'latin1' if your BBS uses it
-                cols=self.cols,    # Use the configured number of columns
-                rows=self.rows     # Use the configured number of rows
+            # Connect to the BBS
+            reader, writer = await asyncio.wait_for(
+                telnetlib3.open_connection(
+                    host=host,
+                    port=port,
+                    term=self.terminal_mode.get().lower(),
+                    encoding='cp437',  # Use 'latin1' if your BBS uses it
+                    cols=self.cols,    # Use the configured number of columns
+                    rows=self.rows     # Use the configured number of rows
+                ), 
+                timeout=30  # Add connection timeout
             )
+            
             self.reader = reader
             self.writer = writer
             self.connected = True
-            self.connect_button.config(text="Disconnect")
+            
+            # Update UI on main thread
+            self.master.after_idle(lambda: self.connect_button.config(text="Disconnect", style="Disconnect.TButton"))
             self.msg_queue.put_nowait(f"Connected to {host}:{port}\n")
-
+    
+            # Main read loop with improved error handling
             while not self.stop_event.is_set():
                 try:
-                    # Use shield to prevent cancellation during critical operations
+                    # Use shield to prevent cancellation during read operation
                     data = await asyncio.shield(
                         asyncio.wait_for(reader.read(4096), timeout=30)
                     )
+                    
+                    # Check for EOF
                     if not data:
+                        print("[DEBUG] End of stream reached")
                         break
+                    
+                    # Process the received data
                     self.msg_queue.put_nowait(data)
+                    
                 except asyncio.TimeoutError:
+                    # This is normal, just try reading again
+                    if self.stop_event.is_set():
+                        break
                     continue
+                    
+                except asyncio.CancelledError:
+                    print("[DEBUG] Telnet read operation was cancelled")
+                    break
+                    
                 except ConnectionResetError:
                     print("[DEBUG] Connection reset by peer")
+                    self.msg_queue.put_nowait("Connection reset by server\n")
                     break
+                    
                 except Exception as e:
                     print(f"[DEBUG] Error reading data: {e}")
+                    self.msg_queue.put_nowait(f"Connection error: {e}\n")
                     break
-
+    
+        except asyncio.CancelledError:
+            print("[DEBUG] Telnet client task cancelled")
+            # Task was cancelled, exit gracefully
+            
+        except asyncio.TimeoutError:
+            print(f"[DEBUG] Connection timeout to {host}:{port}")
+            self.msg_queue.put_nowait(f"Connection timeout to {host}:{port}\n")
+            
         except Exception as e:
             print(f"[DEBUG] Connection failed: {e}")
             self.msg_queue.put_nowait(f"Connection failed: {e}\n")
+            
         finally:
+            # Always ensure we disconnect cleanly
             await self.disconnect_from_bbs()
 
     # In the disconnect_from_bbs method, before the final line:
@@ -3600,6 +3872,8 @@ class BBSTerminalApp:
             if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
                 response = requests.get(url, headers=headers, timeout=5)
                 response.raise_for_status()
+                # Update latest image frame for image URLs
+                self.update_latest_image_frame(url)
                 self._handle_image_preview(response.content, label, is_gif=url.lower().endswith('.gif'))
             else:
                 # Try to get webpage first to check for proper image content type
@@ -3607,7 +3881,8 @@ class BBSTerminalApp:
                 content_type = response.headers.get("Content-Type", "").lower()
 
                 if "image" in content_type:
-                    self._handle_image_preview(response.content, label, is_gif='gif' in content_type)
+                    # Also update latest image frame for content with image type
+                    self.update_latest_image_frame(url)
                 else:
                     self._handle_website_preview(url, label)
 
@@ -4663,10 +4938,22 @@ class BBSTerminalApp:
         
         timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
         
+
+
         for url in cleaned_urls:
             print(f"[DEBUG] Storing URL: {url} from {sender}")  # Debug line
+
+        for match in url_pattern.finditer(message):
+            url = match.group(1).strip()
+            if url.startswith('www.'):
+                url = 'http://' + url
+
             self.store_hyperlink(url, sender, timestamp)
             
+             # Check if it's an image/GIF URL and update the preview frame
+            if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                self.update_latest_image_frame(url)
+
             # Make sure to update the links display if window is open
             if hasattr(self, 'chatlog_window') and self.chatlog_window and self.chatlog_window.winfo_exists():
                 self.master.after(0, self.display_stored_links)

@@ -2,3 +2,6 @@ requests
 Pillow
 telnetlib3
 pyspellchecker
+python-vlc  # For VLC integration
+pyinstaller  # For packaging the application
+pyenchant  # For spell checking functionality
