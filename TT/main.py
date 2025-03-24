@@ -4819,97 +4819,108 @@ class BBSTerminalApp:
             topic_match = re.search(pattern, combined_clean)
             if topic_match:
                 topic = topic_match.group(1).strip()
-                print(f"[DEBUG] Topic found: {topic}")
-                self.current_topic = topic
+                print(f"[DEBUG] Extracted topic: {topic}")
                 break
         
-        # Extract the user list more accurately
-        user_section = ""
-        
-        # Try different methods to identify the user section
-        user_list_patterns = [
-            r'Chat(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-            r'Topic:.*?(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-            r'(.+?)(?:are here with you|is here with you|with you\.|with\s*you)'
+        # Improved direct username extraction patterns - more specific to common formats
+        username_patterns = [
+            # Pattern for "X is here with you"
+            r'(\w+(?:@\w+)?)\s+is\s+here\s+with\s+you',
+            # Pattern for "X, Y, and Z are here with you"
+            r'(\w+(?:@\w+)?),?\s+(\w+(?:@\w+)?),?\s+and\s+(\w+(?:@\w+)?)\s+are\s+here',
+            # Pattern for "X and Y are here with you"
+            r'(\w+(?:@\w+)?)\s+and\s+(\w+(?:@\w+)?)\s+are\s+here',
+            # Pattern for comma-separated list
+            r'(\w+(?:@\w+)?),\s+(\w+(?:@\w+)?),\s+(\w+(?:@\w+)?)'
         ]
         
-        for pattern in user_list_patterns:
-            user_match = re.search(pattern, combined_clean)
-            if user_match:
-                user_section = user_match.group(1).strip()
-                print(f"[DEBUG] Found user section: {user_section}")
-                break
-        
-        # Process user section if found
-        if user_section:
-            # IMPORTANT FIX: Clean up user section to remove topic text and closing parenthesis
-            if topic and f"({topic})" in user_section:
-                user_section = user_section.replace(f"({topic})", "")
-            
-            # Also handle cases where there's a closing parenthesis and period
-            user_section = re.sub(r'\)\.\s*', '', user_section)
-            user_section = re.sub(r'^\s*\.\s*', '', user_section) # Remove leading period
-            
-            print(f"[DEBUG] Cleaned user section: {user_section}")
-            
-            # Replace "and" with comma for consistent splitting
-            user_section = re.sub(r'\s+and\s+', ', ', user_section)
-            
-            # Use regex to split by commas, but preserve @domain parts
-            # This pattern looks for username@domain.tld or just username patterns
-            user_matches = re.findall(r'[^,]+?@[^,]+\.[^,]+|[^,]+', user_section)
-            users = []
-            
-            for match in user_matches:
-                # Clean up each username
-                username = match.strip()
-                # Remove leading dots or punctuation
-                username = re.sub(r'^[^A-Za-z0-9@]+', '', username)
+        # Try direct username extraction first
+        users_found = set()
+        for pattern in username_patterns:
+            matches = re.findall(pattern, combined_clean)
+            if matches:
+                # Handle both tuple results and string results
+                for match in matches:
+                    if isinstance(match, tuple):
+                        for username in match:
+                            if username and len(username) > 1:  # Valid username check
+                                users_found.add(username.strip())
+                    else:
+                        if match and len(match) > 1:  # Valid username check
+                            users_found.add(match.strip())
                 
-                if len(username) >= 2:  # Ensure username is valid
-                    users.append(username)
-            
-            print(f"[DEBUG] Parsed users: {users}")
-            
-            # Add valid usernames to final set
-            for username in users:
-                if len(username) >= 2:
-                    print(f"[DEBUG] Adding user: {username}")
-                    final_usernames.add(username)
+                if users_found:
+                    print(f"[DEBUG] Found users directly: {users_found}")
+                    break
         
-        # Rest of function remains unchanged
+        # If direct extraction failed, fall back to section extraction
+        if not users_found:
+            # Extract the user section more accurately
+            user_section = ""
+            
+            # Try different methods to identify the user section
+            user_list_patterns = [
+                r'in the .*? channel\.\s+(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
+                r'Chat(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
+                r'Topic:.*?(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
+                r'(.+?)(?:are here with you|is here with you|with you\.|with\s*you)'
+            ]
+            
+            for pattern in user_list_patterns:
+                user_match = re.search(pattern, combined_clean)
+                if user_match:
+                    user_section = user_match.group(1).strip()
+                    print(f"[DEBUG] Extracted user section: {user_section}")
+                    break
+            
+            # Process user section if found
+            if user_section:
+                # Clean up user section - remove channel references
+                user_section = re.sub(r'the\s+\w+\s+channel\.?\s*', '', user_section)
+                user_section = re.sub(r'channel\s+\w+\.?\s*', '', user_section)
+                
+                # Remove common conjunctions and articles that aren't usernames
+                user_section = re.sub(r'\b(and|with|the|in|of|on|at)\b', ' ', user_section)
+                
+                # Split by common separators and process each part
+                for separator in [',', ' and ', ' or ', ' with ']:
+                    if separator in user_section:
+                        for part in user_section.split(separator):
+                            username = part.strip()
+                            if username and len(username) > 1:  # Valid username check
+                                users_found.add(username)
+                        break
+                
+                # If no separators found, treat the whole section as one username
+                if not users_found and user_section.strip():
+                    username = user_section.strip()
+                    if len(username) > 1:  # Valid username check
+                        users_found.add(username)
+        
+        # Merge all found usernames
+        final_usernames = users_found
+        
+        # Always include Chatbot in the list
+        final_usernames.add('Chatbot')
+        
+        # Update the chat members if we found valid usernames
         if final_usernames:
-            print(f"[DEBUG] Final usernames: {final_usernames}")
+            self.chat_members = final_usernames
+            print(f"[DEBUG] Updated chat members: {self.chat_members}")
+            self.save_chat_members_file()
             
-            # Check for users who left and came back
-            returning_users = final_usernames.intersection(set(self.forget_list)) - previous_members
-            if returning_users:
-                print(f"[DEBUG] Detected returning forgotten users: {returning_users}")
-                # Schedule re-forgetting of these users after banner processing
-                def re_forget_returning_users():
-                    for user in returning_users:
-                        print(f"[DEBUG] Re-forgetting returning user: {user}")
-                        self.send_forget_command(user)
-                # Add delay to ensure banner processing is complete
-                self.master.after(1000, re_forget_returning_users)
-    
-            # Only update chat members if we found valid usernames
-            if any(len(name) > 1 for name in final_usernames):
-                self.chat_members = final_usernames
-                self.save_chat_members_file()
+            # Update last seen time for each user
+            current_time = time.time()
+            for member in self.chat_members:
+                self.last_seen[member] = current_time
+            self.save_last_seen_file()
+            
+            # Update the UI display on the main thread
+            if threading.current_thread() is threading.main_thread():
                 self.update_members_display()
-                
-                # Process forget list for any new users
-                self.process_forget_list_after_banner(request_actions=self.actions_requested_this_session == False)
-            
-            # Add a first_banner flag to prevent infinite carriage return loop
-            if not hasattr(self, 'first_banner_processed') or not self.first_banner_processed:
-                print("[DEBUG] First banner processed - sending carriage return")
-                # Send a carriage return after processing the first banner only
-                if self.connected and self.writer:
-                    self.master.after(500, lambda: self.send_custom_message("\r\n"))
-                    # Set flag to prevent further automatic carriage returns
-                    self.first_banner_processed = True
+            else:
+                # Schedule UI update on main thread
+                self.master.after_idle(self.update_members_display)
         
         # Restore important settings that might have been reset
         self.auto_logon_enabled.set(auto_logon_state)
@@ -4919,7 +4930,7 @@ class BBSTerminalApp:
         
         # Instead of toggling, directly restart keep-alive if it was enabled
         if keep_alive_state:
-            self.master.after(100, self.restart_keep_alive)
+            self.restart_keep_alive()
                     
         return self.chat_members
     
