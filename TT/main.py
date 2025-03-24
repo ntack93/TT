@@ -12,6 +12,9 @@ import webbrowser
 import sys
 # Add with your other imports
 from PIL import ImageSequence
+import requests  # Make sure requests is imported for URL handling
+import traceback  # For better error reporting
+from io import BytesIO
 # Add this at the beginning of main.py
 try:
     import PIL
@@ -27,6 +30,11 @@ except ImportError as e:
         import subprocess
         subprocess.call([sys.executable, "-m", "pip", "install", "pillow"])
         import PIL
+        import PIL.Image
+        import PIL.ImageTk
+        print("Installed PIL successfully")
+    except Exception as e:
+        print(f"Could not install PIL: {e}")
         import PIL.Image
         import PIL.ImageTk
         print("Installed PIL successfully")
@@ -1752,6 +1760,150 @@ class BBSTerminalApp:
         except Exception as e:
             tk.messagebox.showerror("Error", f"Error applying settings: {str(e)}")
 
+    def show_thumbnail(self, url, event):
+        """Display a thumbnail preview near the mouse pointer."""
+        if self.preview_window is not None:
+            self.preview_window.destroy()
+
+        # Create a new preview window with unique tracking ID
+        self.preview_window = tk.Toplevel(self.master)
+        self.preview_window.overrideredirect=True
+        self.preview_window.attributes("-topmost", True)
+        
+        # Create a unique ID for this preview to prevent conflicts with latest_image_frame
+        if not hasattr(self, 'preview_id'):
+            self.preview_id = 0
+        self.preview_id += 1
+        current_preview_id = self.preview_id
+
+        # Position the preview window near the mouse pointer
+        x = self.master.winfo_pointerx() + 10
+        y = self.master.winfo_pointery() + 10
+        self.preview_window.geometry(f"+{x}+{y}")
+
+        label = tk.Label(self.preview_window, text="Loading preview...", background="white")
+        label.pack()
+
+        # Start a new thread to fetch the preview - pass the preview ID
+        threading.Thread(target=self._fetch_preview, args=(url, label, current_preview_id), daemon=True).start()
+
+    def _fetch_preview(self, url, label, preview_id=None):
+        """Fetch either an image thumbnail or website favicon with separate tracking from main image frame."""
+        try:
+            # Ensure we have the Image modules - explicitly import again here
+            try:
+                from image_patch import Image, ImageTk
+            except ImportError:
+                from PIL import Image, ImageTk
+
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            # Check if URL is directly an image
+            if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                response = requests.get(url, headers=headers, timeout=5)
+                response.raise_for_status()
+                
+                # Process preview with separate tracking ID from latest_image_frame
+                self._handle_image_preview(response.content, label, 
+                                          is_gif=url.lower().endswith('.gif'),
+                                          preview_id=preview_id)
+            else:
+                # Try to get a preview of the website
+                self._handle_website_preview(url, label)
+
+        except Exception as e:
+            print(f"Image preview error: {str(e)}")
+            traceback.print_exc()  # Add this to get more details
+            def update_label_error():
+                if label.winfo_exists():
+                    label.config(text=f"Error: {str(e)[:50]}")
+            self.master.after(0, update_label_error)
+
+    def _handle_image_preview(self, image_data, label, is_gif=False, preview_id=None):
+        """Process and display image thumbnail with separate tracking from main image."""
+        try:
+            # Import proper modules
+            from PIL import Image, ImageTk
+            
+            # Create a persistent BytesIO object with specific preview ID to prevent it from closing
+            preview_attr = f"_preview_img_data_{preview_id}"
+            setattr(self, preview_attr, BytesIO(image_data))  # Store reference as instance attribute
+            img = Image.open(getattr(self, preview_attr))
+            
+            # Check if it's an animated GIF
+            is_animated_gif = is_gif or (hasattr(img, 'is_animated') and img.is_animated)
+            
+            # Resize the image if it's too large
+            max_size = (200, 200)
+            
+            # Create the first frame's PhotoImage for initial display
+            first_frame = img.copy()
+            first_frame.thumbnail(max_size)
+            photo = ImageTk.PhotoImage(first_frame)
+            
+            if is_animated_gif:
+                # Process all frames for animation
+                frames = []
+                duration = img.info.get('duration', 100)  # Default to 100ms if not specified
+                
+                # Process all frames for animation
+                try:
+                    from PIL import ImageSequence
+                    for frame in ImageSequence.Iterator(img):
+                        frame_copy = frame.copy()
+                        frame_copy.thumbnail(max_size)
+                        frames.append(ImageTk.PhotoImage(frame_copy))
+                except Exception as e:
+                    print(f"Error extracting GIF frames: {e}")
+                
+                # Store frames with preview-specific ID
+                preview_frames_attr = f"_preview_frames_{preview_id}"
+                setattr(self, preview_frames_attr, frames)
+                
+                # Update label with the first frame and start animation
+                def update_label():
+                    if label.winfo_exists():
+                        label.config(image=frames[0], text="")
+                        # Start the animation
+                        self.animate_preview_gif(label, preview_id, frames, 0, duration)
+                self.master.after(0, update_label)
+            else:
+                # Non-animated image - just display it
+                def update_label():
+                    if label.winfo_exists():
+                        label.config(image=photo, text="")
+                        # Keep a reference to the photo to prevent garbage collection
+                        setattr(self, f"_preview_photo_{preview_id}", photo)
+                self.master.after(0, update_label)
+
+        except Exception as e:
+            print(f"Error handling image preview: {e}")
+            def update_label_error():
+                if label.winfo_exists():
+                    label.config(text=f"Error: {str(e)[:50]}")
+            self.master.after(0, update_label_error)
+
+    def animate_preview_gif(self, label, preview_id, frames, frame_num, duration):
+        """Animate a GIF preview with separate tracking."""
+        # Stop if window closed or label destroyed
+        if not hasattr(self, 'preview_window') or not self.preview_window or not label.winfo_exists():
+            return
+            
+        # Safety check for empty frames list
+        if not frames:
+            return
+            
+        # Update to next frame
+        next_frame_num = (frame_num + 1) % len(frames)
+        next_photo = frames[next_frame_num]  # Already a PhotoImage object
+        
+        # Update label with new frame
+        label.config(image=next_photo)
+        label.image = next_photo  # Keep reference to prevent garbage collection
+        
+        # Schedule next frame update with preview-specific tracking
+        self.master.after(duration, 
+                         lambda: self.animate_preview_gif(label, preview_id, frames, next_frame_num, duration))
+
     # 1.4️⃣ ANSI PARSING
     def define_ansi_tags(self):
         """Define text tags for ANSI colors and attributes."""
@@ -2347,102 +2499,33 @@ class BBSTerminalApp:
     def show_thumbnail_preview(self, event):
         """Show a thumbnail preview of the hyperlink with improved error handling."""
         try:
-            index = self.terminal_display.index("@%s,%s" % (event.x, event.y))
+            index = self.terminal_display.index(f"@{event.x},{event.y}")
+            
+            # First try to search for https://
             start_index = self.terminal_display.search("https://", index, backwards=True, stopindex="1.0")
+            
+            # If not found, try for http://
             if not start_index:
                 start_index = self.terminal_display.search("http://", index, backwards=True, stopindex="1.0")
+                
+            # If still not found, exit
+            if not start_index:
+                print("No URL found at cursor position")
+                return
+                
+            # Search for whitespace after the URL
             end_index = self.terminal_display.search(r"\s", start_index, stopindex="end", regexp=True)
+            
+            # If no whitespace found, use end of text
             if not end_index:
                 end_index = self.terminal_display.index("end")
+                
+            # Now safely get the URL
             url = self.terminal_display.get(start_index, end_index).strip()
-            
-            # Store reference to prevent garbage collection
-            self._current_hover_url = url
-            
-            # Create a new thread specifically for hovering thumbnails
-            threading.Thread(target=self._fetch_hover_preview, args=(url,), daemon=True).start()
+            if url:
+                self.show_thumbnail(url, event)
         except Exception as e:
-            print(f"Error showing thumbnail preview: {e}")
-            traceback.print_exc()
-    
-    def _fetch_hover_preview(self, url):
-        """Fetch hover preview image separately from the Latest Image frame."""
-        try:
-            # Check if URL is directly an image
-            if any(url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif']):
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                response = requests.get(url, headers=headers, timeout=5)
-                response.raise_for_status()
-                
-                # Use separate BytesIO object specifically for hover preview
-                img_data = BytesIO(response.content)
-                
-                # Create temporary window for preview if none exists
-                if not hasattr(self, 'preview_window') or not self.preview_window or not self.preview_window.winfo_exists():
-                    self.create_preview_window()
-                
-                # Update preview with image - using separate function
-                self.display_hover_preview(img_data, url.lower().endswith('.gif'))
-            else:
-                # Handle website preview as before
-                self._handle_website_preview(url)
-        except Exception as e:
-            print(f"Error fetching thumbnail preview: {e}")
-            if hasattr(self, 'preview_window') and self.preview_window:
-                self.preview_window.destroy()
-                self.preview_window = None
-    
-    def display_hover_preview(self, img_data, is_gif=False):
-        """Display hover preview separately from Latest Image frame."""
-        try:
-            # Use separate image handling code just for hover previews
-            from PIL import Image, ImageTk, ImageSequence
-            
-            img = Image.open(img_data)
-            
-            # Resize (keep aspect ratio)
-            max_size = (200, 150)
-            img.thumbnail(max_size)
-            
-            # Handle GIFs specially
-            if is_gif and getattr(img, 'is_animated', False):
-                # Create separate attribute for hover preview frames
-                self._hover_preview_frames = []
-                
-                for frame in ImageSequence.Iterator(img):
-                    frame_copy = frame.copy()
-                    frame_copy.thumbnail(max_size)
-                    self._hover_preview_frames.append(ImageTk.PhotoImage(frame_copy))
-                    
-                # Display first frame
-                self.preview_label.config(image=self._hover_preview_frames[0])
-                
-                # Start animation with separate animation function
-                self._animate_hover_preview(0, img.info.get('duration', 100))
-            else:
-                # Static image
-                self._hover_preview_photo = ImageTk.PhotoImage(img)
-                self.preview_label.config(image=self._hover_preview_photo)
-                
-        except Exception as e:
-            print(f"Error displaying hover preview: {e}")
-            if hasattr(self, 'preview_window') and self.preview_window:
-                self.preview_window.destroy()
-                self.preview_window = None
-    
-    def _animate_hover_preview(self, frame_index, duration):
-        """Animate hover preview GIF separate from Latest Image frame."""
-        if not hasattr(self, 'preview_window') or not self.preview_window or not self.preview_window.winfo_exists():
-            return
-            
-        if not hasattr(self, '_hover_preview_frames') or not self._hover_preview_frames:
-            return
-            
-        next_frame = (frame_index + 1) % len(self._hover_preview_frames)
-        self.preview_label.config(image=self._hover_preview_frames[next_frame])
-        
-        # Schedule next frame update
-        self.master.after(max(40, duration), lambda: self._animate_hover_preview(next_frame, duration))
+            print(f"Error in thumbnail preview: {e}")
 
     def show_directed_message_thumbnail_preview(self, event):
         """Show a thumbnail preview of the hyperlink from directed messages with improved error handling."""
@@ -2913,88 +2996,198 @@ class BBSTerminalApp:
                 json.dump(self.command_history[-100:], file)  # Keep only last 100 commands
         except Exception as e:
             print(f"Error saving command history: {e}")
-
-
     async def telnet_client_task(self, host, port):
-        """Async function connecting via telnetlib3 (CP437 + ANSI) with improved error handling."""
+        """Async function connecting via telnetlib3 (CP437 + ANSI)."""
         try:
-            # Connect to the BBS
-            reader, writer = await asyncio.wait_for(
-                telnetlib3.open_connection(
-                    host=host,
-                    port=port,
-                    term=self.terminal_mode.get().lower(),
-                    encoding='cp437',  # Use 'latin1' if your BBS uses it
-                    cols=self.cols,    # Use the configured number of columns
-                    rows=self.rows     # Use the configured number of rows
-                ), 
-                timeout=30  # Add connection timeout
+            reader, writer = await telnetlib3.open_connection(
+                host=host,
+                port=port,
+                term=self.terminal_mode.get().lower(),
+                encoding='cp437',  # Use 'latin1' if your BBS uses it
+                cols=self.cols,    # Use the configured number of columns
+                rows=self.rows     # Use the configured number of rows
             )
-            
             self.reader = reader
             self.writer = writer
             self.connected = True
-            
-            # Update UI on main thread
-            self.master.after_idle(lambda: self.connect_button.config(text="Disconnect", style="Disconnect.TButton"))
+            self.connect_button.config(text="Disconnect")
             self.msg_queue.put_nowait(f"Connected to {host}:{port}\n")
-    
-            # Main read loop with improved error handling
+
             while not self.stop_event.is_set():
                 try:
-                    # Use shield to prevent cancellation during read operation
+                    # Use shield to prevent cancellation during critical operations
                     data = await asyncio.shield(
                         asyncio.wait_for(reader.read(4096), timeout=30)
                     )
-                    
-                    # Check for EOF
                     if not data:
-                        print("[DEBUG] End of stream reached")
                         break
-                    
-                    # Process the received data
                     self.msg_queue.put_nowait(data)
-                    
-                except asyncio.TimeoutError:
-                    # This is normal, just try reading again
-                    if self.stop_event.is_set():
-                        break
-                    continue
-                    
                 except asyncio.CancelledError:
-                    print("[DEBUG] Telnet read operation was cancelled")
+                    print("[DEBUG] Telnet reader task was cancelled, shutting down gracefully")
                     break
-                    
+                except asyncio.TimeoutError:
+                    continue
                 except ConnectionResetError:
                     print("[DEBUG] Connection reset by peer")
-                    self.msg_queue.put_nowait("Connection reset by server\n")
                     break
-                    
                 except Exception as e:
                     print(f"[DEBUG] Error reading data: {e}")
-                    self.msg_queue.put_nowait(f"Connection error: {e}\n")
                     break
-    
+
         except asyncio.CancelledError:
-            print("[DEBUG] Telnet client task cancelled")
-            # Task was cancelled, exit gracefully
-            
-        except asyncio.TimeoutError:
-            print(f"[DEBUG] Connection timeout to {host}:{port}")
-            self.msg_queue.put_nowait(f"Connection timeout to {host}:{port}\n")
-            
+            print("[DEBUG] Connection task cancelled during setup")
+            # Handle cancellation gracefully
+            self.msg_queue.put_nowait("Connection attempt cancelled\n")
         except Exception as e:
             print(f"[DEBUG] Connection failed: {e}")
             self.msg_queue.put_nowait(f"Connection failed: {e}\n")
-            
         finally:
-            # Always ensure we disconnect cleanly
+            try:
+                await self.disconnect_from_bbs()
+            except asyncio.CancelledError:
+                print("[DEBUG] Disconnect during cleanup was cancelled")
+                # Still need to clean up
+                self.connected = False
+                self.reader = None
+                self.writer = None
+        try:
+            reader, writer = await telnetlib3.open_connection(
+                host=host,
+                port=port,
+                term=self.terminal_mode.get().lower(),
+                encoding='cp437',  # Use 'latin1' if your BBS uses it
+                cols=self.cols,    # Use the configured number of columns
+                rows=self.rows     # Use the configured number of rows
+            )
+            self.reader = reader
+            self.writer = writer
+            self.connected = True
+            self.connect_button.config(text="Disconnect")
+            self.msg_queue.put_nowait(f"Connected to {host}:{port}\n")
+
+            while not self.stop_event.is_set():
+                try:
+                    # Use shield to prevent cancellation during critical operations
+                    data = await asyncio.shield(
+                        asyncio.wait_for(reader.read(4096), timeout=30)
+                    )
+                    if not data:
+                        break
+                    self.msg_queue.put_nowait(data)
+                except asyncio.TimeoutError:
+                    continue
+                except ConnectionResetError:
+                    print("[DEBUG] Connection reset by peer")
+                    break
+                except Exception as e:
+                    print(f"[DEBUG] Error reading data: {e}")
+                    break
+
+        except Exception as e:
+            print(f"[DEBUG] Connection failed: {e}")
+            self.msg_queue.put_nowait(f"Connection failed: {e}\n")
+        finally:
             await self.disconnect_from_bbs()
 
     # In the disconnect_from_bbs method, before the final line:
 
     async def disconnect_from_bbs(self):
         """Stop the background thread and close connections."""
+        if not self.connected or getattr(self, '_disconnecting', False):
+            return
+
+        self._disconnecting = True
+        try:
+            self.stop_event.set()
+            self.stop_keep_alive()
+            
+            # Always reset forgotten users when disconnecting
+            self.forgotten_users = set()
+            print("[DEBUG] Forgotten users list has been reset")
+            
+            # Instead of directly calling clear_chat_members, update the members list safely
+            def update_ui():
+                self.chat_members = set(['Chatbot'])  # Only keep Chatbot in the list
+                self.save_chat_members_file()
+                self.update_members_display()
+            
+            # Schedule UI update on main thread
+            self.master.after_idle(update_ui)
+
+            if self.writer:
+                try:
+                    # Send disconnect command if still connected
+                    try:
+                        self.writer.write('quit\r\n')
+                        await asyncio.shield(self.writer.drain())
+                    except (asyncio.CancelledError, Exception):
+                        print("[DEBUG] Exception during quit message, continuing with close")
+                        pass  # Ignore errors during quit command
+                    
+                    # Close the writer safely with cancel protection
+                    try:
+                        if not self.writer.is_closing():
+                            self.writer.close()
+                            # Some telnet writers may not have wait_closed
+                            if hasattr(self.writer, 'wait_closed'):
+                                try:
+                                    await asyncio.shield(
+                                        asyncio.wait_for(self.writer.wait_closed(), timeout=2.0)
+                                    )
+                                except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+                                    print(f"[DEBUG] Writer wait_closed timed out or was cancelled: {e}")
+                                except Exception as e:
+                                    print(f"[DEBUG] Error waiting for writer to close: {e}")
+                            else:
+                                # No wait_closed method, just continue
+                                pass
+                    except asyncio.CancelledError:
+                        print("[DEBUG] Writer close operation was cancelled")
+                    except Exception as e:
+                        print(f"[DEBUG] Error closing writer: {e}")
+                            
+                except Exception as e:
+                    print(f"Warning: Error closing writer: {e}")
+
+            # Mark the connection as closed
+            self.connected = False
+            self.reader = None
+            self.writer = None
+
+            def update_connect_button():
+                if self.connect_button and self.connect_button.winfo_exists():
+                    self.connect_button.config(text="Connect")
+            if threading.current_thread() is threading.main_thread():
+                update_connect_button()
+            else:
+                self.master.after_idle(update_connect_button)
+
+            self.msg_queue.put_nowait("Disconnected from BBS.\n")
+            
+            # Start auto-reconnect sequence if enabled
+            if self.auto_logon_enabled.get():
+                if threading.current_thread() is threading.main_thread():
+                    self.start_auto_reconnect()
+                else:
+                    self.master.after_idle(self.start_auto_reconnect)
+        except asyncio.CancelledError:
+            print("[DEBUG] Disconnect task was cancelled during cleanup")
+            # Still clean up the connection state
+            self.connected = False
+            self.reader = None
+            self.writer = None
+            
+            def emergency_ui_update():
+                if self.connect_button and self.connect_button.winfo_exists():
+                    self.connect_button.config(text="Connect")
+                self.msg_queue.put_nowait("Connection closed (cancelled).\n")
+            
+            self.master.after_idle(emergency_ui_update)
+        finally:
+            self._disconnecting = False
+
+        # Reset the action request flag on disconnect
+        self.has_requested_actions = False
         if not self.connected or getattr(self, '_disconnecting', False):
             return
 
@@ -3041,7 +3234,7 @@ class BBSTerminalApp:
             self.connected = False
             self.reader = None
             self.writer = None
-
+    
             def update_connect_button():
                 if self.connect_button and self.connect_button.winfo_exists():
                     self.connect_button.config(text="Connect")
@@ -3049,8 +3242,15 @@ class BBSTerminalApp:
                 update_connect_button()
             else:
                 self.master.after_idle(update_connect_button)
-
+    
             self.msg_queue.put_nowait("Disconnected from BBS.\n")
+                
+            # Add this: Start auto-reconnect sequence if enabled
+            if self.auto_logon_enabled.get():
+                if threading.current_thread() is threading.main_thread():
+                    self.start_auto_reconnect()
+                else:
+                    self.master.after_idle(self.start_auto_reconnect)
             
             # Add this: Start auto-reconnect sequence if enabled
             if self.auto_logon_enabled.get():
@@ -4033,11 +4233,44 @@ class BBSTerminalApp:
                     label.config(text=parsed_url.netloc)
             self.master.after(0, update_label)
 
-    def hide_thumbnail_preview(self, event):
-        """Hide the thumbnail preview."""
+    def hide_thumbnail_preview(self, event=None):
+        """Hide the thumbnail preview with a delay to prevent flicker."""
+        # Cancel any existing timer
+        if hasattr(self, 'hide_preview_timer') and self.hide_preview_timer:
+            self.master.after_cancel(self.hide_preview_timer)
+        
+        # Set a short delay before hiding to avoid flicker and allow moving cursor to preview
+        self.hide_preview_timer = self.master.after(300, self._do_hide_preview)
+    
+    def _do_hide_preview(self):
+        """Actually hide the preview window."""
         if self.preview_window:
             self.preview_window.destroy()
             self.preview_window = None
+        self.hide_preview_timer = None
+        self.current_preview_id = None
+
+    # Make the preview window itself detect mouse enter/leave to persist while hovering
+    def create_persistent_preview(self, label, url):
+        """Create a preview window that stays visible while cursor is over it."""
+        if self.preview_window:
+            # Bind mouse enter/leave events to the preview window
+            self.preview_window.bind("<Enter>", lambda e: self.preview_enter(e))
+            self.preview_window.bind("<Leave>", lambda e: self.preview_leave(e))
+        
+    def preview_enter(self, event):
+        """Handle mouse entering the preview window."""
+        # Cancel any pending hide operation
+        if hasattr(self, 'hide_preview_timer') and self.hide_preview_timer:
+            self.master.after_cancel(self.hide_preview_timer)
+            self.hide_preview_timer = None
+        
+    def preview_leave(self, event):
+        """Handle mouse leaving the preview window."""
+        # Set timer to hide after leaving
+        self.hide_preview_timer = self.master.after(300, self._do_hide_preview)
+        self.preview_window.destroy()
+        self.preview_window = None
 
     def get_thumbnail(self, url):
         """Attempt to load a thumbnail image from an image URL.
@@ -4904,6 +5137,13 @@ class BBSTerminalApp:
     def show_chatlog_thumbnail_preview(self, event):
         """Show thumbnail preview for links in the chatlog links panel."""
         index = self.links_display.index("@%s,%s" % (event.x, event.y))
+        for tag_name in self.links_display.tag_names(index):
+            if tag_name.startswith("link-"):
+                url = tag_name[5:]  # Remove 'link-' prefix
+                # Create a specific ID for this thumbnail preview
+                self.thumbnail_id = getattr(self, 'thumbnail_id', 0) + 1
+                self.show_thumbnail(url, event, preview_id=f"thumb_{self.thumbnail_id}")
+                return
         for tag_name in self.links_display.tag_names(index):
             if tag_name == "hyperlink":
                 line_start = self.links_display.index(f"{index} linestart")
