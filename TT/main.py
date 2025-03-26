@@ -4822,83 +4822,74 @@ class BBSTerminalApp:
                 print(f"[DEBUG] Extracted topic: {topic}")
                 break
         
-        # Improved direct username extraction patterns - more specific to common formats
-        username_patterns = [
-            # Pattern for "X is here with you"
-            r'(\w+(?:@\w+)?)\s+is\s+here\s+with\s+you',
-            # Pattern for "X, Y, and Z are here with you"
-            r'(\w+(?:@\w+)?),?\s+(\w+(?:@\w+)?),?\s+and\s+(\w+(?:@\w+)?)\s+are\s+here',
-            # Pattern for "X and Y are here with you"
-            r'(\w+(?:@\w+)?)\s+and\s+(\w+(?:@\w+)?)\s+are\s+here',
-            # Pattern for comma-separated list
-            r'(\w+(?:@\w+)?),\s+(\w+(?:@\w+)?),\s+(\w+(?:@\w+)?)'
-        ]
+        # First try to identify the "X Y and Z are here with you" pattern
+        # This pattern specifically handles names with spaces when followed by "and"
+        names_with_spaces_pattern = re.compile(r'(\w+(?:\s+\w+)?(?:@\w+)?)\s+and\s+(\w+(?:@\w+)?)\s+are\s+here')
+        names_match = names_with_spaces_pattern.search(combined_clean)
         
-        # Try direct username extraction first
-        users_found = set()
-        for pattern in username_patterns:
-            matches = re.findall(pattern, combined_clean)
-            if matches:
-                # Handle both tuple results and string results
-                for match in matches:
-                    if isinstance(match, tuple):
-                        for username in match:
-                            if username and len(username) > 1:  # Valid username check
-                                users_found.add(username.strip())
-                    else:
-                        if match and len(match) > 1:  # Valid username check
-                            users_found.add(match.strip())
-                
-                if users_found:
-                    print(f"[DEBUG] Found users directly: {users_found}")
-                    break
-        
-        # If direct extraction failed, fall back to section extraction
-        if not users_found:
-            # Extract the user section more accurately
-            user_section = ""
+        if names_match:
+            # Found names with potential spaces
+            first_name = names_match.group(1).strip()
+            second_name = names_match.group(2).strip()
             
-            # Try different methods to identify the user section
-            user_list_patterns = [
-                r'in the .*? channel\.\s+(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-                r'Chat(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-                r'Topic:.*?(?:\.|\))?(.+?)(?:are here with you|is here with you|with you\.|with\s*you)',
-                r'(.+?)(?:are here with you|is here with you|with you\.|with\s*you)'
+            # Check if these are valid names
+            if first_name and len(first_name) > 1:
+                final_usernames.add(first_name)
+            
+            if second_name and len(second_name) > 1:
+                final_usernames.add(second_name)
+                
+            print(f"[DEBUG] Found multi-word usernames: {final_usernames}")
+        
+        # If no username with spaces found, fall back to regular patterns
+        if not final_usernames:
+            # Try standard patterns for usernames
+            username_patterns = [
+                # Pattern for "X is here with you"
+                r'(\w+(?:@\w+)?)\s+is\s+here\s+with\s+you',
+                # Pattern for "X, Y, and Z are here with you"
+                r'(\w+(?:@\w+)?),?\s+(\w+(?:@\w+)?),?\s+and\s+(\w+(?:@\w+)?)\s+are\s+here',
+                # Pattern for "X and Y are here with you"
+                r'(\w+(?:@\w+)?)\s+and\s+(\w+(?:@\w+)?)\s+are\s+here',
+                # Pattern for comma-separated list
+                r'(\w+(?:@\w+)?),\s+(\w+(?:@\w+)?),\s+(\w+(?:@\w+)?)'
             ]
             
-            for pattern in user_list_patterns:
-                user_match = re.search(pattern, combined_clean)
-                if user_match:
-                    user_section = user_match.group(1).strip()
-                    print(f"[DEBUG] Extracted user section: {user_section}")
-                    break
-            
-            # Process user section if found
-            if user_section:
-                # Clean up user section - remove channel references
-                user_section = re.sub(r'the\s+\w+\s+channel\.?\s*', '', user_section)
-                user_section = re.sub(r'channel\s+\w+\.?\s*', '', user_section)
-                
-                # Remove common conjunctions and articles that aren't usernames
-                user_section = re.sub(r'\b(and|with|the|in|of|on|at)\b', ' ', user_section)
-                
-                # Split by common separators and process each part
-                for separator in [',', ' and ', ' or ', ' with ']:
-                    if separator in user_section:
-                        for part in user_section.split(separator):
-                            username = part.strip()
-                            if username and len(username) > 1:  # Valid username check
-                                users_found.add(username)
+            for pattern in username_patterns:
+                matches = re.findall(pattern, combined_clean)
+                if matches:
+                    # Handle both tuple results and string results
+                    for match in matches:
+                        if isinstance(match, tuple):
+                            for username in match:
+                                if username and len(username) > 1:  # Valid username check
+                                    final_usernames.add(username.strip())
+                        else:
+                            if match and len(match) > 1:  # Valid username check
+                                final_usernames.add(match.strip())
+                    
+                    if final_usernames:
+                        print(f"[DEBUG] Found users with standard patterns: {final_usernames}")
                         break
-                
-                # If no separators found, treat the whole section as one username
-                if not users_found and user_section.strip():
-                    username = user_section.strip()
-                    if len(username) > 1:  # Valid username check
-                        users_found.add(username)
         
-        # Merge all found usernames
-        final_usernames = users_found
+        # If still no usernames found, try the more complex extraction
+        if not final_usernames:
+            # Add more complex extraction here...
+            # Try to extract usernames from common phrases in BBS banners
+            
+            # Extract the "are here with you" section which usually contains usernames
+            here_with_you_match = re.search(r'(.*?)\s+are\s+here\s+with\s+you', combined_clean)
+            if here_with_you_match:
+                user_section = here_with_you_match.group(1).strip()
+                
+                # Try to identify names with capitalized first letters (better indicator of proper names)
+                capitalized_names = re.findall(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', user_section)
+                
+                for name in capitalized_names:
+                    if name and len(name) > 1 and name.lower() not in ['topic', 'channel']:
+                        final_usernames.add(name)
+                
+                print(f"[DEBUG] Found capitalized usernames: {final_usernames}")
         
         # Always include Chatbot in the list
         final_usernames.add('Chatbot')
@@ -4931,7 +4922,7 @@ class BBSTerminalApp:
         # Instead of toggling, directly restart keep-alive if it was enabled
         if keep_alive_state:
             self.restart_keep_alive()
-                    
+                
         return self.chat_members
     
     
